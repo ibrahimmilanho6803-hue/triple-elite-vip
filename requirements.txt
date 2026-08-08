@@ -2,3 +2,4 @@ flask
 requests
 stripe
 gunicorn
+psycopg2-binary

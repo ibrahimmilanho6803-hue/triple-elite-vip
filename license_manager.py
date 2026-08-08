@@ -1,12 +1,36 @@
 import hashlib
-import json
 import datetime
 import uuid
+import os
+import psycopg2
 
 class LicenseManager:
     def __init__(self):
         self.secret_key = "TRIPLE_ELITE_2026_SECRET"
-        self.licenses_file = "licenses.json"
+        self.db_url = os.environ.get("DATABASE_URL")
+        self.init_db()
+    
+    def get_conn(self):
+        return psycopg2.connect(self.db_url)
+    
+    def init_db(self):
+        try:
+            conn = self.get_conn()
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS licenses (
+                    email TEXT PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    created TEXT,
+                    expires TEXT,
+                    active BOOLEAN DEFAULT TRUE
+                )
+            ''')
+            conn.commit()
+            conn.close()
+            print("Base de donnees initialisee")
+        except Exception as e:
+            print(f"Erreur DB: {e}")
     
     def generate_license(self, email, duration_months):
         unique_id = str(uuid.uuid4())[:8]
@@ -15,50 +39,47 @@ class LicenseManager:
         
         expiration = datetime.datetime.now() + datetime.timedelta(days=30*duration_months)
         
-        license_data = {
-            "email": email,
-            "key": license_key,
-            "created": str(datetime.datetime.now()),
-            "expires": str(expiration),
-            "active": True
-        }
-        
         try:
-            with open(self.licenses_file, 'r') as f:
-                licenses = json.load(f)
-        except:
-            licenses = []
+            conn = self.get_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO licenses (email, key, created, expires, active) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (email) DO UPDATE SET key=%s, expires=%s, active=TRUE",
+                (email, license_key, str(datetime.datetime.now()), str(expiration), True, license_key, str(expiration))
+            )
+            conn.commit()
+            conn.close()
+            print(f"Licence sauvegardee pour {email}")
+        except Exception as e:
+            print(f"Erreur sauvegarde licence: {e}")
         
-        licenses.append(license_data)
-        
-        with open(self.licenses_file, 'w') as f:
-            json.dump(licenses, f, indent=4)
-        
-        print(f"Licence sauvegardee: {self.licenses_file}, total: {len(licenses)}")
         return license_key
     
     def verify_license(self, email, license_key):
         try:
-            with open(self.licenses_file, 'r') as f:
-                licenses = json.load(f)
+            conn = self.get_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT key, active, expires FROM licenses WHERE email = %s",
+                (email,)
+            )
+            result = cursor.fetchone()
+            conn.close()
             
-            for lic in licenses:
-                if lic["email"] == email and lic["key"] == license_key:
-                    if not lic["active"]:
-                        return False, "Licence desactivee"
-                    
-                    expiration = datetime.datetime.strptime(lic["expires"], "%Y-%m-%d %H:%M:%S.%f")
-                    if expiration < datetime.datetime.now():
-                        return False, "Licence expiree"
-                    
-                    return True, "Licence valide"
+            if not result:
+                return False, "Licence introuvable"
             
-            return False, "Licence introuvable"
-        except:
+            key, active, expires = result
+            
+            if not active:
+                return False, "Licence desactivee"
+            
+            if datetime.datetime.strptime(expires, "%Y-%m-%d %H:%M:%S.%f") < datetime.datetime.now():
+                return False, "Licence expiree"
+            
+            if key != license_key:
+                return False, "Cle invalide"
+            
+            return True, "Licence valide"
+        except Exception as e:
+            print(f"Erreur verification: {e}")
             return False, "Erreur de verification"
-
-if __name__ == "__main__":
-    lm = LicenseManager()
-    key = lm.generate_license("test@email.com", 1)
-    print(f"Licence generee : {key}")
-    print(lm.verify_license("test@email.com", key))
