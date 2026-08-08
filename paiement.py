@@ -95,7 +95,7 @@ PAGE_PAIEMENT = """
 </div>
         </div>
         
-        <a href="/" class="back-link">Retour a l'accueil</a>
+        <a href="https://triple-elite-vip.com" class="back-link">Retour a l'accueil</a>
     </div>
     
     <script>
