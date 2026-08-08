@@ -4,7 +4,7 @@ sys.path.insert(0, r"C:\Users\HP\Desktop\Triple_Elite_VIP")
 
 from flask import Flask, jsonify, request, redirect
 from license_manager import LicenseManager
-from email_sender import envoyer_licence
+from email_sender import envoyer_licence_async
 import stripe
 
 app = Flask(__name__)
@@ -185,7 +185,7 @@ def create_checkout_session():
         
         # Envoyer l'email IMMEDIATEMENT
         try:
-            envoyer_licence(email, license_key, plan_nom)
+            envoyer_licence_async(email, license_key, plan_nom)
             print(f"Email envoye a {email}")
         except Exception as e:
             print(f"Erreur email: {e}")
