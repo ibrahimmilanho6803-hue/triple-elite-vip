@@ -55,31 +55,19 @@ class LicenseManager:
         return license_key
     
     def verify_license(self, email, license_key):
-        try:
-            conn = self.get_conn()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT key, active, expires FROM licenses WHERE email = %s",
-                (email,)
-            )
-            result = cursor.fetchone()
-            conn.close()
-            
-            if not result:
-                return False, "Licence introuvable"
-            
-            key, active, expires = result
-            
-            if not active:
-                return False, "Licence desactivee"
-            
-            if datetime.datetime.strptime(expires, "%Y-%m-%d %H:%M:%S.%f") < datetime.datetime.now():
-                return False, "Licence expiree"
-            
-            if key != license_key:
-                return False, "Cle invalide"
-            
-            return True, "Licence valide"
-        except Exception as e:
-            print(f"Erreur verification: {e}")
-            return False, "Erreur de verification"
+    try:
+        print(f"Verification pour: {email}, cle: {license_key}")
+        conn = self.get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM licenses WHERE email = %s", (email,))
+        result = cursor.fetchone()
+        print(f"Resultat DB: {result}")
+        conn.close()
+        
+        if not result:
+            return False, "Licence introuvable"
+        
+        # Suite du code...
+    except Exception as e:
+        print(f"Erreur verification: {e}")
+        return False, "Erreur de verification"
