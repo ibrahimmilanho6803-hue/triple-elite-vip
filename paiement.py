@@ -197,8 +197,8 @@ def create_checkout_session():
                 'quantity': 1,
             }],
             mode='payment',
-            success_url='http://localhost:5001/succes?key=' + license_key + '&email=' + email,
-            cancel_url='http://localhost:5001/paiement',
+            success_url='https://triple-elite-vip-paiement.onrender.com/paiement?success=true&key=' + license_key,
+cancel_url='https://triple-elite-vip-paiement.onrender.com/paiement',
             customer_email=email,
             metadata={'license_key': license_key}
         )
