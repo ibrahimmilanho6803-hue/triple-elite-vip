@@ -66,7 +66,7 @@ PAGE_ACCUEIL = """
     <div class="hero">
         <h1>Triple Elite VIP</h1>
         <p>Le logiciel qui analyse 3 championnats et génère 3 combinés optimisers a 2.50+ chaque semaine</p>
-        <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
+        <a href="https://triple-elite-vip.com" class="btn btn-green">S'abonner maintenant</a>
         <a href="/login" class="btn">Accès Client VIP</a>
     </div>
     <div class="features">
@@ -165,7 +165,7 @@ HTML_TEMPLATE = """
         {% else %}
         <div style="text-align: center; padding: 20px;">
             <button onclick="generateCombos()" class="btn">Générer les combinés</button>
-            <button onclick="window.location.href='https://triple-elite-vip-paiement.onrender.com'" class="btn btn-green">Renouveler</button>
+            <button onclick="window.location.href='https://triple-elite-vip.com'" class="btn btn-green">Renouveler</button>
             <button onclick="showHistory()" class="btn">Historique</button>
             <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Deconnexion</button></a>
         </div>
