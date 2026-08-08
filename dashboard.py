@@ -66,7 +66,7 @@ PAGE_ACCUEIL = """
     <div class="hero">
         <h1>Triple Elite VIP</h1>
         <p>Le logiciel qui analyse 3 championnats et génère 3 combinés optimisers a 2.50+ chaque semaine</p>
-        <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green"> class="btn btn-green">S'abonner maintenant</a>
+        <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
         <a href="/login" class="btn">Accès Client VIP</a>
     </div>
     <div class="features">
