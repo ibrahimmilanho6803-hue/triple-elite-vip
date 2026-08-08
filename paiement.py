@@ -91,7 +91,7 @@ PAGE_PAIEMENT = """
         <p style="color:#aaa;">Conservez cette cle precieusement</p>
         <p style="color:#aaa;">Vérifiez vos SPAM si vous ne trouvez pas le message</p>
     </div>
-    <a href="https://triple-elite-vip-dashboard.onrender.com/login" class="btn">Se connecter au Dashboard</a>
+    <a href="https://triple-elite-vip-dashboard.onrender.com/login" class="btn">Se connecter</a>
 </div>
         </div>
         
