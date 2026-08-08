@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: triple-elite-vip-dashboard
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn dashboard:app --bind 0.0.0.0:10000
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        value: sk_live_VOTRE_CLE_SECRETE
+
+  - type: web
+    name: triple-elite-vip-paiement
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn paiement:app --bind 0.0.0.0:10001
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        value: sk_live_VOTRE_CLE_SECRETE
