@@ -8,35 +8,36 @@ class LicenseManager:
         self.secret_key = "TRIPLE_ELITE_2026_SECRET"
         self.licenses_file = "licenses.json"
     
-    def generate_license(self, email, duration_months):
-        """Génère une clé de licence unique"""
-        unique_id = str(uuid.uuid4())[:8]
-        raw = f"{email}{unique_id}{self.secret_key}"
-        license_key = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        
-        expiration = datetime.datetime.now() + datetime.timedelta(days=30*duration_months)
-        
-        license_data = {
-            "email": email,
-            "key": license_key,
-            "created": str(datetime.datetime.now()),
-            "expires": str(expiration),
-            "active": True
-        }
-        
-        # Sauvegarder dans le fichier
-        try:
-            with open(self.licenses_file, 'r') as f:
-                licenses = json.load(f)
-        except:
-            licenses = []
-        
-        licenses.append(license_data)
-        
-        with open(self.licenses_file, 'w') as f:
-            json.dump(licenses, f, indent=4)
-        
-        return license_key
+   def generate_license(self, email, duration_months):
+    unique_id = str(uuid.uuid4())[:8]
+    raw = f"{email}{unique_id}{self.secret_key}"
+    license_key = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    
+    expiration = datetime.datetime.now() + datetime.timedelta(days=30*duration_months)
+    
+    license_data = {
+        "email": email,
+        "key": license_key,
+        "created": str(datetime.datetime.now()),
+        "expires": str(expiration),
+        "active": True
+    }
+    
+    # FORCER l'écriture avec chemin absolu
+    try:
+        with open(self.licenses_file, 'r') as f:
+            licenses = json.load(f)
+    except:
+        licenses = []
+    
+    licenses.append(license_data)
+    
+    with open(self.licenses_file, 'w') as f:
+        json.dump(licenses, f, indent=4)
+    
+    print(f"Licence sauvegardée: {self.licenses_file}, total: {len(licenses)}")
+    
+    return license_key
     
     def verify_license(self, email, license_key):
         """Vérifie si une licence est valide"""
