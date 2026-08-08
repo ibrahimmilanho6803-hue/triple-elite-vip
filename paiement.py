@@ -91,7 +91,7 @@ PAGE_PAIEMENT = """
         <p style="color:#aaa;">Conservez cette cle precieusement</p>
         <p style="color:#aaa;">Vérifiez vos SPAM si vous ne trouvez pas le message</p>
     </div>
-    <a href="https://triple-elite-vip-dashboard.onrender.com/login" class="btn">Se connecter</a>
+    <a href="https://triple-elite-vip.com/login" class="btn">Se connecter</a>
 </div>
         </div>
         
@@ -183,6 +183,13 @@ def create_checkout_session():
         
         license_key = lm.generate_license(email, duration_months)
         
+        # Envoyer l'email IMMEDIATEMENT
+        try:
+            envoyer_licence(email, license_key, plan_nom)
+            print(f"Email envoye a {email}")
+        except Exception as e:
+            print(f"Erreur email: {e}")
+        
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[{
@@ -198,7 +205,7 @@ def create_checkout_session():
             }],
             mode='payment',
             success_url='https://triple-elite-vip-paiement.onrender.com/paiement?success=true&key=' + license_key,
-cancel_url='https://triple-elite-vip-paiement.onrender.com/paiement',
+            cancel_url='https://triple-elite-vip-paiement.onrender.com/paiement',
             customer_email=email,
             metadata={'license_key': license_key}
         )
