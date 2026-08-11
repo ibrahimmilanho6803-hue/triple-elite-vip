@@ -10,9 +10,9 @@ import uuid
 app = Flask(__name__)
 lm = LicenseManager()
 
-PAYPAL_LINK_MENSUEL = "https://www.paypal.com/ncp/payment/VQLWDAY9P9RYQ"
+PAYPAL_LINK_MENSUEL = "https://www.paypal.com/ncp/payment/SKS2PPBYQWCA2"
 # Ajoutez un autre lien pour l'annuel quand vous l'aurez créé
-PAYPAL_LINK_ANNUEL = "https://www.paypal.com/ncp/payment/SKS2PPBYQWCA2"
+PAYPAL_LINK_ANNUEL = "= https://www.paypal.com/ncp/payment/DXQ4TNVK8JW9S"
 
 PAGE_PAIEMENT = """
 <!DOCTYPE html>
