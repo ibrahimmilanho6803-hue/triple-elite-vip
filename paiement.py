@@ -12,7 +12,7 @@ lm = LicenseManager()
 
 PAYPAL_LINK_MENSUEL = "https://www.paypal.com/ncp/payment/VQLWDAY9P9RYQ"
 # Ajoutez un autre lien pour l'annuel quand vous l'aurez créé
-PAYPAL_LINK_ANNUEL = "https://www.paypal.com/ncp/payment/VQLWDAY9P9RYQ"  # À changer
+PAYPAL_LINK_ANNUEL = "https://www.paypal.com/ncp/payment/VOTRE_AUTRE_LIEN"
 
 PAGE_PAIEMENT = """
 <!DOCTYPE html>
@@ -52,17 +52,17 @@ PAGE_PAIEMENT = """
         
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
-            <div class="price">30<span>/mois</span></div>
+            <div class="price">30€<span>/ 1mois</span></div>
             <ul>
                 <li>Acces complet au logiciel</li>
-                <li>3 combines optimises par semaine</li>
-                <li>Support Telegram</li>
+                <li>3 combinés optimisés par semaine</li>
+                <li>Support Télégram</li>
             </ul>
         </div>
         
         <div class="plan" id="plan-yearly" onclick="selectPlan('yearly')">
             <h2>Abonnement Annuel</h2>
-            <div class="price">60<span>/an</span></div>
+            <div class="price">60€<span>/ 1ans</span></div>
             <ul>
                 <li>Tout l'abonnement mensuel</li>
                 <li>Support prioritaire</li>
@@ -113,6 +113,15 @@ def accueil():
 @app.route('/paiement')
 def paiement():
     return PAGE_PAIEMENT
+
+@app.route('/generer-licence', methods=['POST'])
+def generer_licence():
+    email = request.form.get('email')
+    plan = request.form.get('plan', 'Mensuel')
+    duree = 12 if 'Annuel' in plan else 1
+    license_key = lm.generate_license(email, duree)
+    envoyer_licence_async(email, license_key, plan)
+    return f"Licence envoyee a {email}: {license_key}"
 
 if __name__ == '__main__':
     print("Page de paiement : http://localhost:5001/paiement")
