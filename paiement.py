@@ -123,6 +123,25 @@ def generer_licence():
     envoyer_licence_async(email, license_key, plan)
     return f"Licence envoyee a {email}: {license_key}"
 
+@app.route('/ipn', methods=['POST'])
+def ipn_paypal():
+    data = request.form
+    print("Notification PayPal recue:", data)
+    
+    # Vérifier que le paiement est complet
+    if data.get('payment_status') == 'Completed':
+        email_acheteur = data.get('payer_email')
+        montant = data.get('mc_gross')
+        
+        if email_acheteur:
+            plan = "Annuel" if float(montant) >= 60 else "Mensuel"
+            duree = 12 if float(montant) >= 60 else 1
+            license_key = lm.generate_license(email_acheteur, duree)
+            envoyer_licence_async(email_acheteur, license_key, plan)
+            print(f"Licence envoyee automatiquement a {email_acheteur}")
+    
+    return "OK", 200
+
 if __name__ == '__main__':
     print("Page de paiement : http://localhost:5001/paiement")
     app.run(host='0.0.0.0', port=5001, debug=True)
