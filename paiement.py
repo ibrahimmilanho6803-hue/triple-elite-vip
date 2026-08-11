@@ -52,7 +52,7 @@ PAGE_PAIEMENT = """
         
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
-            <div class="price">30€<span>/ 1mois</span></div>
+            <div class="price">1€<span>/ test</span></div>
             <ul>
                 <li>Acces complet au logiciel</li>
                 <li>3 combinés optimisés par semaine</li>
