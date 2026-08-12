@@ -136,10 +136,10 @@ def payer():
                 }
             },
             headers={
-                "PAYDUNYA-MASTER-KEY": "live_public_wzRWpl7tPEAtgcZwDJM8Sf5MJbc",
-                "PAYDUNYA-PRIVATE-KEY": "live_private_gWtjdpTWtq7PcZedG7mqokS5EdX",
-                "PAYDUNYA-TOKEN": "MZ51kyNWqlw3hXYsrEu4"
-            }
+    "PAYDUNYA-MASTER-KEY": "IFtnnd5E-CmRw-3GSn-e6FZ-P5cZgTUOd06X",
+    "PAYDUNYA-PRIVATE-KEY": "live_private_gWtjdpTWtq7PcZedG7mqokS5EdX",
+    "PAYDUNYA-TOKEN": "MZ51kyNWqlw3hXYsrEu4"
+}
         )
         print("Status:", response.status_code)
         print("Reponse brute:", response.text[:500])
