@@ -156,7 +156,8 @@ def payer():
         
         # Créer la facture PayDunya
         invoice = paydunya.Invoice()
-        invoice.add_item("Triple Elite VIP - " + plan_nom, 1, amount, amount)
+        invoice.add_item("Triple Elite VIP - " + plan_nom, 1, amount, amount, "Service de predictions football")
+        invoice.total_amount = amount
         invoice.total_amount = amount
         invoice.description = "Logiciel de predictions football"
         
