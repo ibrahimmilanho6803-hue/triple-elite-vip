@@ -9,13 +9,6 @@ from email_sender import envoyer_licence_async
 app = Flask(__name__)
 lm = LicenseManager()
 
-# Configuration PayDunya
-paydunya.api_keys = {
-    "PAYDUNYA-MASTER-KEY": "**************************",
-    "PAYDUNYA-PRIVATE-KEY": "**************************",
-    "PAYDUNYA-TOKEN": "**************************"
-}
-
 PAGE_PAIEMENT = """
 <!DOCTYPE html>
 <html lang="fr">
