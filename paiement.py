@@ -122,7 +122,7 @@ def payer():
             duree = 12
         import requests as req
         response = req.post(
-            "https://app.paydunya.com/api/v1/checkout-invoice/create",
+            "https://app.paydunya.com/api/v1/checkout-invoice/create"
             json={
                 "invoice": {
                     "items": [{"name": "Triple Elite VIP - " + plan_nom, "quantity": 1, "unit_price": amount, "total_price": amount}],
@@ -136,10 +136,10 @@ def payer():
                 }
             },
             headers={
-                "PAYDUNYA-MASTER-KEY": "live_public_wzRWpl7tPEAtgcZwDJM8Sf5MJbc",
-                "PAYDUNYA-PRIVATE-KEY": "live_private_gWtjdpTWtq7PcZedG7mqokS5EdX",
-                "PAYDUNYA-TOKEN": "MZ51kyNWqlw3hXYsrEu4"
-            }
+    "PAYDUNYA-MASTER-KEY": "live_public_wzRWpl7tPEAtgcZwDJM8Sf5MJbc",
+    "PAYDUNYA-PRIVATE-KEY": "live_private_gWtjdpTWtq7PcZedG7mqokS5EdX",
+    "PAYDUNYA-TOKEN": "MZ51kyNWqlw3hXYsrEu4"
+}
         )
         print("Status:", response.status_code)
         print("Reponse brute:", response.text[:500])
