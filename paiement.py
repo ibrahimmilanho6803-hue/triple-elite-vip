@@ -122,7 +122,7 @@ def payer():
             duree = 12
         import requests as req
         response = req.post(
-            "https://paydunya.com/api/v1/checkout-invoice/create",
+            "https://app.paydunya.com/api/v1/checkout-invoice/create",
             json={
                 "invoice": {
                     "items": [{"name": "Triple Elite VIP - " + plan_nom, "quantity": 1, "unit_price": amount, "total_price": amount}],
