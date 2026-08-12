@@ -170,12 +170,14 @@ def payer():
             }
         )
         
-        result = response.json()
+                result = response.json()
+        print("Reponse PayDunya:", response.text)  # Debug
         if result.get("response_code") == "00":
             return jsonify({'url': result.get("invoice_url")})
         else:
             return jsonify({'error': result.get("response_text", "Erreur PayDunya")})
     except Exception as e:
+        print("Erreur PayDunya:", str(e))  # Debug
         return jsonify({'error': str(e)})
 
 @app.route('/succes')
