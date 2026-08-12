@@ -141,6 +141,8 @@ def payer():
                 "PAYDUNYA-TOKEN": "**************************"
             }
         )
+        print("Status:", response.status_code)
+        print("Reponse brute:", response.text[:500])
         result = response.json()
         if result.get("response_code") == "00":
             return jsonify({'url': result.get("invoice_url")})
