@@ -5,7 +5,6 @@ sys.path.insert(0, r"C:\Users\HP\Desktop\Triple_Elite_VIP")
 from flask import Flask, render_template_string, request, redirect, jsonify
 from license_manager import LicenseManager
 from email_sender import envoyer_licence_async
-import paydunya
 
 app = Flask(__name__)
 lm = LicenseManager()
@@ -16,9 +15,6 @@ paydunya.api_keys = {
     "PAYDUNYA-PRIVATE-KEY": "**************************",
     "PAYDUNYA-TOKEN": "**************************"
 }
-
-# Mode test (True) ou production (False)
-paydunya.mode = "test"  # Passez à "live" pour la production
 
 PAGE_PAIEMENT = """
 <!DOCTYPE html>
@@ -146,28 +142,46 @@ def payer():
         plan = data.get('plan')
         
         if plan == 'monthly':
-            amount = 30000  # 30€ en FCFA (environ 19680 FCFA, ajustez)
+            amount = 30000
             plan_nom = "Mensuel"
             duree = 1
         else:
-            amount = 60000  # 60€
+            amount = 60000
             plan_nom = "Annuel"
             duree = 12
         
-        # Créer la facture PayDunya
-        invoice = paydunya.Invoice()
-        invoice.add_item("Triple Elite VIP", amount)
-invoice.total_amount = amount
-        invoice.description = "Logiciel de predictions football"
+        # Appel API PayDunya direct
+        import requests as req
         
-        # URLs de retour
-        invoice.return_url = "https://triple-elite-vip-paiement.onrender.com/succes?email=" + email + "&plan=" + plan_nom + "&duree=" + str(duree)
-        invoice.cancel_url = "https://triple-elite-vip-paiement.onrender.com/paiement"
+        response = req.post(
+            "https://paydunya.com/api/v1/checkout-invoice/create",
+            json={
+                "invoice": {
+                    "items": [{"name": "Triple Elite VIP - " + plan_nom, "quantity": 1, "unit_price": amount, "total_price": amount}],
+                    "total_amount": amount,
+                    "description": "Logiciel de predictions football"
+                },
+                "store": {
+                    "name": "Triple Elite VIP",
+                    "website_url": "https://triple-elite-vip.com"
+                },
+                "actions": {
+                    "return_url": "https://triple-elite-vip-paiement.onrender.com/succes?email=" + email + "&plan=" + plan_nom + "&duree=" + str(duree),
+                    "cancel_url": "https://triple-elite-vip-paiement.onrender.com/paiement"
+                }
+            },
+            headers={
+                "PAYDUNYA-MASTER-KEY": "**************************",
+                "PAYDUNYA-PRIVATE-KEY": "**************************",
+                "PAYDUNYA-TOKEN": "**************************"
+            }
+        )
         
-        if invoice.create():
-            return jsonify({'url': invoice.invoice_url})
+        result = response.json()
+        if result.get("response_code") == "00":
+            return jsonify({'url': result.get("invoice_url")})
         else:
-            return jsonify({'error': 'Erreur creation facture'})
+            return jsonify({'error': result.get("response_text", "Erreur PayDunya")})
     except Exception as e:
         return jsonify({'error': str(e)})
 
