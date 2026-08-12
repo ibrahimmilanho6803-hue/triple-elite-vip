@@ -3,4 +3,4 @@ requests
 stripe
 gunicorn
 psycopg2-binary
-paydunya
+git+https://github.com/PayDunya/PayDunya-Python.git
