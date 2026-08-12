@@ -36,68 +36,48 @@ PAGE_PAIEMENT = """
         .btn-pay:hover { background: #005ea6; }
         .back-link { color: #ffd700; margin-top: 20px; display: inline-block; }
         .info { color: #aaa; font-size: 0.9em; margin: 15px 0; }
-        .success-box { background: #1a3a1a; border: 2px solid #4caf50; padding: 20px; border-radius: 10px; margin-top: 20px; }
-        .success-box h2 { color: #4caf50; }
-        .license-key { background: #0d1137; padding: 12px; font-size: 1em; color: #ffd700; font-family: monospace; border-radius: 5px; margin: 10px 0; word-break: break-all; }
         .error { color: #f44336; margin: 10px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Choisissez votre abonnement</h1>
-        
         <input type="email" id="email" placeholder="Votre adresse email" required>
-        
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
-            <div class="price">30€<span>/ 1mois</span></div>
+            <div class="price">30<span>/mois</span></div>
             <ul>
                 <li>Acces complet au logiciel</li>
-                <li>3 combinés optimisés par semaine</li>
+                <li>3 combines optimises par semaine</li>
                 <li>Support Telegram</li>
             </ul>
         </div>
-        
         <div class="plan" id="plan-yearly" onclick="selectPlan('yearly')">
             <h2>Abonnement Annuel</h2>
-            <div class="price">60€<span>/ 1ans</span></div>
+            <div class="price">60<span>/an</span></div>
             <ul>
                 <li>Tout l'abonnement mensuel</li>
                 <li>Support prioritaire</li>
             </ul>
         </div>
-        
-        <button id="pay-btn" class="btn btn-pay" onclick="payer()">
-            Payer avec Mobile Money / Carte
-        </button>
-        
+        <button id="pay-btn" class="btn btn-pay" onclick="payer()">Payer avec Mobile Money / Carte</button>
         <p class="info">Orange Money, MTN, Moov, Wave et Carte Bancaire acceptes.</p>
         <p class="info">Apres paiement, votre licence sera envoyee par email.</p>
-        
         <div id="error-message" class="error"></div>
-        
         <a href="https://triple-elite-vip.com" class="back-link">Retour a l'accueil</a>
     </div>
-    
     <script>
         var selectedPlan = 'monthly';
-        
         function selectPlan(plan) {
             selectedPlan = plan;
             document.querySelectorAll('.plan').forEach(function(p) { p.classList.remove('selected'); });
             document.getElementById('plan-' + plan).classList.add('selected');
         }
-        
         function payer() {
             var email = document.getElementById('email').value;
-            if (!email) {
-                document.getElementById('error-message').textContent = 'Veuillez entrer votre email';
-                return;
-            }
-            
+            if (!email) { document.getElementById('error-message').textContent = 'Veuillez entrer votre email'; return; }
             document.getElementById('pay-btn').disabled = true;
             document.getElementById('pay-btn').textContent = 'Redirection vers PayDunya...';
-            
             fetch('/payer', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -105,9 +85,8 @@ PAGE_PAIEMENT = """
             })
             .then(function(response) { return response.json(); })
             .then(function(data) {
-                if (data.url) {
-                    window.location.href = data.url;
-                } else {
+                if (data.url) { window.location.href = data.url; }
+                else {
                     document.getElementById('error-message').textContent = data.error || 'Erreur';
                     document.getElementById('pay-btn').disabled = false;
                     document.getElementById('pay-btn').textContent = 'Payer avec Mobile Money / Carte';
@@ -133,7 +112,6 @@ def payer():
         data = request.json
         email = data.get('email')
         plan = data.get('plan')
-        
         if plan == 'monthly':
             amount = 30000
             plan_nom = "Mensuel"
@@ -142,10 +120,7 @@ def payer():
             amount = 60000
             plan_nom = "Annuel"
             duree = 12
-        
-        # Appel API PayDunya direct
         import requests as req
-        
         response = req.post(
             "https://paydunya.com/api/v1/checkout-invoice/create",
             json={
@@ -154,10 +129,7 @@ def payer():
                     "total_amount": amount,
                     "description": "Logiciel de predictions football"
                 },
-                "store": {
-                    "name": "Triple Elite VIP",
-                    "website_url": "https://triple-elite-vip.com"
-                },
+                "store": {"name": "Triple Elite VIP", "website_url": "https://triple-elite-vip.com"},
                 "actions": {
                     "return_url": "https://triple-elite-vip-paiement.onrender.com/succes?email=" + email + "&plan=" + plan_nom + "&duree=" + str(duree),
                     "cancel_url": "https://triple-elite-vip-paiement.onrender.com/paiement"
@@ -169,15 +141,12 @@ def payer():
                 "PAYDUNYA-TOKEN": "**************************"
             }
         )
-        
-                result = response.json()
-        print("Reponse PayDunya:", response.text)  # Debug
+        result = response.json()
         if result.get("response_code") == "00":
             return jsonify({'url': result.get("invoice_url")})
         else:
             return jsonify({'error': result.get("response_text", "Erreur PayDunya")})
     except Exception as e:
-        print("Erreur PayDunya:", str(e))  # Debug
         return jsonify({'error': str(e)})
 
 @app.route('/succes')
@@ -185,48 +154,11 @@ def succes():
     email = request.args.get('email')
     plan = request.args.get('plan', 'Mensuel')
     duree = int(request.args.get('duree', 1))
-    
     if email:
         license_key = lm.generate_license(email, duree)
         envoyer_licence_async(email, license_key, plan)
-        print(f"Licence envoyee a {email}")
-        
-        return f"""
-        <!DOCTYPE html>
-        <html lang="fr">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Paiement reussi</title>
-            <style>
-                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-                body {{ font-family: 'Segoe UI', sans-serif; background: #0a0e27; color: #fff; text-align: center; }}
-                .container {{ max-width: 500px; margin: 50px auto; padding: 30px; background: #1a1f3a; border-radius: 15px; }}
-                h1 {{ color: #4caf50; margin-bottom: 20px; }}
-                .key {{ background: #0d1137; padding: 15px; font-size: 1.2em; color: #ffd700; font-family: monospace; border-radius: 5px; margin: 20px 0; }}
-                .btn {{ background: #ffd700; color: #0a0e27; padding: 15px 40px; font-weight: bold; border-radius: 5px; text-decoration: none; display: inline-block; margin: 10px; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Paiement reussi !</h1>
-                <p>Votre cle de licence :</p>
-                <div class="key">{license_key}</div>
-                <p style="color:#aaa;">Elle a aussi ete envoyee par email.</p>
-                <a href="https://triple-elite-vip.com/login" class="btn">Se connecter</a>
-            </div>
-        </body>
-        </html>
-        """
-    
+        return "<h1 style='color:green;text-align:center;padding:50px;'>Paiement reussi ! Licence envoyee par email.</h1><p style='text-align:center;'><a href='https://triple-elite-vip.com/login'>Se connecter</a></p>"
     return redirect('/paiement')
 
-@app.route('/ipn-paydunya', methods=['POST'])
-def ipn_paydunya():
-    data = request.json
-    print("IPN PayDunya:", data)
-    return "OK", 200
-
 if __name__ == '__main__':
-    print("Page de paiement : http://localhost:5001/paiement")
     app.run(host='0.0.0.0', port=5001, debug=True)
