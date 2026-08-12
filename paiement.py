@@ -2,17 +2,23 @@ import sys
 import os
 sys.path.insert(0, r"C:\Users\HP\Desktop\Triple_Elite_VIP")
 
-from flask import Flask, render_template_string, request, redirect
+from flask import Flask, render_template_string, request, redirect, jsonify
 from license_manager import LicenseManager
 from email_sender import envoyer_licence_async
-import uuid
+import paydunya
 
 app = Flask(__name__)
 lm = LicenseManager()
 
-PAYPAL_LINK_MENSUEL = "https://www.paypal.com/ncp/payment/SKS2PPBYQWCA2"
-# Ajoutez un autre lien pour l'annuel quand vous l'aurez créé
-PAYPAL_LINK_ANNUEL = "= https://www.paypal.com/ncp/payment/DXQ4TNVK8JW9S"
+# Configuration PayDunya
+paydunya.api_keys = {
+    "PAYDUNYA-MASTER-KEY": "**************************",
+    "PAYDUNYA-PRIVATE-KEY": "**************************",
+    "PAYDUNYA-TOKEN": "**************************"
+}
+
+# Mode test (True) ou production (False)
+paydunya.mode = "test"  # Passez à "live" pour la production
 
 PAGE_PAIEMENT = """
 <!DOCTYPE html>
@@ -37,11 +43,14 @@ PAGE_PAIEMENT = """
         input[type=email] { width: 100%; padding: 12px; margin: 15px 0; background: #0d1137; border: 1px solid #333; color: #fff; border-radius: 5px; font-size: 1em; }
         .btn { background: #ffd700; color: #0a0e27; padding: 15px; font-weight: bold; border-radius: 5px; cursor: pointer; border: none; font-size: 1.1em; margin-top: 15px; width: 100%; text-decoration: none; display: block; text-align: center; }
         .btn:hover { background: #ffed4a; }
-        .btn:disabled { background: #555; cursor: not-allowed; }
-        .btn-paypal { background: #0070ba; color: #fff; }
-        .btn-paypal:hover { background: #005ea6; }
+        .btn-pay { background: #0070ba; color: #fff; }
+        .btn-pay:hover { background: #005ea6; }
         .back-link { color: #ffd700; margin-top: 20px; display: inline-block; }
         .info { color: #aaa; font-size: 0.9em; margin: 15px 0; }
+        .success-box { background: #1a3a1a; border: 2px solid #4caf50; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .success-box h2 { color: #4caf50; }
+        .license-key { background: #0d1137; padding: 12px; font-size: 1em; color: #ffd700; font-family: monospace; border-radius: 5px; margin: 10px 0; word-break: break-all; }
+        .error { color: #f44336; margin: 10px 0; }
     </style>
 </head>
 <body>
@@ -52,11 +61,11 @@ PAGE_PAIEMENT = """
         
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
-            <div class="price">1€<span>/ test</span></div>
+            <div class="price">30€<span>/ 1mois</span></div>
             <ul>
                 <li>Acces complet au logiciel</li>
                 <li>3 combinés optimisés par semaine</li>
-                <li>Support Télégram</li>
+                <li>Support Telegram</li>
             </ul>
         </div>
         
@@ -69,37 +78,52 @@ PAGE_PAIEMENT = """
             </ul>
         </div>
         
-        <a id="paypal-btn" href="PAYPAL_LINK_MENSUEL" class="btn btn-paypal" onclick="return verifierEmail()">
-            Payer avec PayPal
-        </a>
+        <button id="pay-btn" class="btn btn-pay" onclick="payer()">
+            Payer avec Mobile Money / Carte
+        </button>
         
-        <p class="info">Vous serez redirige vers PayPal pour finaliser le paiement.</p>
+        <p class="info">Orange Money, MTN, Moov, Wave et Carte Bancaire acceptes.</p>
         <p class="info">Apres paiement, votre licence sera envoyee par email.</p>
+        
+        <div id="error-message" class="error"></div>
         
         <a href="https://triple-elite-vip.com" class="back-link">Retour a l'accueil</a>
     </div>
     
     <script>
         var selectedPlan = 'monthly';
-        var linkMensuel = '""" + PAYPAL_LINK_MENSUEL + """';
-        var linkAnnuel = '""" + PAYPAL_LINK_ANNUEL + """';
         
         function selectPlan(plan) {
             selectedPlan = plan;
             document.querySelectorAll('.plan').forEach(function(p) { p.classList.remove('selected'); });
             document.getElementById('plan-' + plan).classList.add('selected');
-            document.getElementById('paypal-btn').href = (plan === 'monthly') ? linkMensuel : linkAnnuel;
         }
         
-        function verifierEmail() {
+        function payer() {
             var email = document.getElementById('email').value;
             if (!email) {
-                alert('Veuillez entrer votre adresse email');
-                return false;
+                document.getElementById('error-message').textContent = 'Veuillez entrer votre email';
+                return;
             }
-            // Stocker l'email pour envoi de licence
-            localStorage.setItem('email_achat', email);
-            return true;
+            
+            document.getElementById('pay-btn').disabled = true;
+            document.getElementById('pay-btn').textContent = 'Redirection vers PayDunya...';
+            
+            fetch('/payer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email, plan: selectedPlan })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                if (data.url) {
+                    window.location.href = data.url;
+                } else {
+                    document.getElementById('error-message').textContent = data.error || 'Erreur';
+                    document.getElementById('pay-btn').disabled = false;
+                    document.getElementById('pay-btn').textContent = 'Payer avec Mobile Money / Carte';
+                }
+            });
         }
     </script>
 </body>
@@ -114,32 +138,84 @@ def accueil():
 def paiement():
     return PAGE_PAIEMENT
 
-@app.route('/generer-licence', methods=['POST'])
-def generer_licence():
-    email = request.form.get('email')
-    plan = request.form.get('plan', 'Mensuel')
-    duree = 12 if 'Annuel' in plan else 1
-    license_key = lm.generate_license(email, duree)
-    envoyer_licence_async(email, license_key, plan)
-    return f"Licence envoyee a {email}: {license_key}"
-
-@app.route('/ipn', methods=['POST'])
-def ipn_paypal():
-    data = request.form
-    print("Notification PayPal recue:", data)
-    
-    # Vérifier que le paiement est complet
-    if data.get('payment_status') == 'Completed':
-        email_acheteur = data.get('payer_email')
-        montant = data.get('mc_gross')
+@app.route('/payer', methods=['POST'])
+def payer():
+    try:
+        data = request.json
+        email = data.get('email')
+        plan = data.get('plan')
         
-        if email_acheteur:
-            plan = "Annuel" if float(montant) >= 60 else "Mensuel"
-            duree = 12 if float(montant) >= 60 else 1
-            license_key = lm.generate_license(email_acheteur, duree)
-            envoyer_licence_async(email_acheteur, license_key, plan)
-            print(f"Licence envoyee automatiquement a {email_acheteur}")
+        if plan == 'monthly':
+            amount = 30000  # 30€ en FCFA (environ 19680 FCFA, ajustez)
+            plan_nom = "Mensuel"
+            duree = 1
+        else:
+            amount = 60000  # 60€
+            plan_nom = "Annuel"
+            duree = 12
+        
+        # Créer la facture PayDunya
+        invoice = paydunya.Invoice()
+        invoice.add_item("Triple Elite VIP - " + plan_nom, 1, amount, amount)
+        invoice.total_amount = amount
+        invoice.description = "Logiciel de predictions football"
+        
+        # URLs de retour
+        invoice.return_url = "https://triple-elite-vip-paiement.onrender.com/succes?email=" + email + "&plan=" + plan_nom + "&duree=" + str(duree)
+        invoice.cancel_url = "https://triple-elite-vip-paiement.onrender.com/paiement"
+        
+        if invoice.create():
+            return jsonify({'url': invoice.invoice_url})
+        else:
+            return jsonify({'error': 'Erreur creation facture'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/succes')
+def succes():
+    email = request.args.get('email')
+    plan = request.args.get('plan', 'Mensuel')
+    duree = int(request.args.get('duree', 1))
     
+    if email:
+        license_key = lm.generate_license(email, duree)
+        envoyer_licence_async(email, license_key, plan)
+        print(f"Licence envoyee a {email}")
+        
+        return f"""
+        <!DOCTYPE html>
+        <html lang="fr">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Paiement reussi</title>
+            <style>
+                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                body {{ font-family: 'Segoe UI', sans-serif; background: #0a0e27; color: #fff; text-align: center; }}
+                .container {{ max-width: 500px; margin: 50px auto; padding: 30px; background: #1a1f3a; border-radius: 15px; }}
+                h1 {{ color: #4caf50; margin-bottom: 20px; }}
+                .key {{ background: #0d1137; padding: 15px; font-size: 1.2em; color: #ffd700; font-family: monospace; border-radius: 5px; margin: 20px 0; }}
+                .btn {{ background: #ffd700; color: #0a0e27; padding: 15px 40px; font-weight: bold; border-radius: 5px; text-decoration: none; display: inline-block; margin: 10px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Paiement reussi !</h1>
+                <p>Votre cle de licence :</p>
+                <div class="key">{license_key}</div>
+                <p style="color:#aaa;">Elle a aussi ete envoyee par email.</p>
+                <a href="https://triple-elite-vip.com/login" class="btn">Se connecter</a>
+            </div>
+        </body>
+        </html>
+        """
+    
+    return redirect('/paiement')
+
+@app.route('/ipn-paydunya', methods=['POST'])
+def ipn_paydunya():
+    data = request.json
+    print("IPN PayDunya:", data)
     return "OK", 200
 
 if __name__ == '__main__':
