@@ -45,16 +45,16 @@ PAGE_PAIEMENT = """
         <input type="email" id="email" placeholder="Votre adresse email" required>
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
-            <div class="price">30<span>/mois</span></div>
+            <div class="price">30€<span>/ 1mois</span></div>
             <ul>
                 <li>Acces complet au logiciel</li>
-                <li>3 combines optimises par semaine</li>
+                <li>3 combinés optimisés par semaine</li>
                 <li>Support Telegram</li>
             </ul>
         </div>
         <div class="plan" id="plan-yearly" onclick="selectPlan('yearly')">
             <h2>Abonnement Annuel</h2>
-            <div class="price">60<span>/an</span></div>
+            <div class="price">60€<span>/ 1ans</span></div>
             <ul>
                 <li>Tout l'abonnement mensuel</li>
                 <li>Support prioritaire</li>
