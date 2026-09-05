@@ -141,26 +141,32 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("  Collecte terminee !")
 
-    def get_upcoming_matches(self):
+        def get_upcoming_matches(self):
         upcoming = []
-        for league_name, league_code in self.leagues.items():
-            url = f"{self.base_url}/competitions/{league_code}/matches"
+        
+        leagues_ids = {
+            "Premier League": "4328",
+            "La Liga": "4335",
+            "Bundesliga": "4332"
+        }
+        
+        for league_name, league_id in leagues_ids.items():
+            url = f"https://www.thesportsdb.com/api/v1/json/1/eventsnextleague.php?id={league_id}"
             try:
-                response = requests.get(url, headers=self.headers, params={
-                    "status": "SCHEDULED",
-                    "dateFrom": datetime.now().strftime("%Y-%m-%d"),
-                    "dateTo": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
-                })
-                for match in response.json().get("matches", []):
-                    if match.get("homeTeam") and match.get("awayTeam"):
+                response = requests.get(url)
+                data = response.json()
+                
+                if data.get("events"):
+                    for event in data["events"]:
                         upcoming.append({
-                            "id": match["id"],
-                            "date": match.get("utcDate", ""),
-                            "home_team": match["homeTeam"]["name"],
-                            "away_team": match["awayTeam"]["name"],
+                            "id": event.get("idEvent"),
+                            "date": event.get("dateEvent", "") + " " + event.get("strTime", "15:00"),
+                            "home_team": event.get("strHomeTeam"),
+                            "away_team": event.get("strAwayTeam"),
                             "league": league_name
                         })
                 time.sleep(1)
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
-        return upcoming
+        
+        return upcoming[:20]
