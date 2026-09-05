@@ -73,10 +73,10 @@ class MatchAnalyzer:
                 scored = home_score or 0
                 conceded = away_score or 0
                 
-                if home_score > away_score:
+                if (home_score or 0) > (away_score or 0):
                     form["points"] += 3
                     form["results"].append("V")
-                elif home_score == away_score:
+                elif (home_score or 0) == (away_score or 0):
                     form["points"] += 1
                     form["results"].append("N")
                 else:
@@ -136,7 +136,7 @@ class MatchAnalyzer:
             total_goals += (home_score or 0) + (away_score or 0)
             
             if home == team1:
-                if home_score > away_score:
+                if (home_score or 0) > (away_score or 0):
                     stats["team1_wins"] += 1
                 elif home_score == away_score:
                     stats["draws"] += 1
