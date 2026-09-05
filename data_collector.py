@@ -55,7 +55,7 @@ class DataCollector:
                 hs, aws,
                 m["competition"]["name"], m["season"].get("startDate", "")[:4],
                 m.get("status")))
-        except Exception as e:
+        except Exception:
             pass
         conn.commit()
         conn.close()
@@ -126,14 +126,14 @@ class DataCollector:
     def collect_all_data(self):
         print("  Collecte des donnees...")
         for league_name, league_code in self.leagues.items():
-            matches = self.fetch_matches(league_code, days_back=10)
+            matches = self.fetch_matches(league_code, days_back=30)
             print(f"  {league_name}: {len(matches)} matchs")
             for match in matches:
                 self.save_match(match)
             time.sleep(2)
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT name FROM teams")
+        cursor.execute("SELECT DISTINCT home_team FROM matches")
         teams = cursor.fetchall()
         conn.close()
         print(f"  Mise a jour de {len(teams)} equipes...")
@@ -141,7 +141,7 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("  Collecte terminee !")
 
-                def get_upcoming_matches(self):
+    def get_upcoming_matches(self):
         upcoming = []
         for league_name, league_code in self.leagues.items():
             url = f"{self.base_url}/competitions/{league_code}/matches"
@@ -163,23 +163,4 @@ class DataCollector:
                 time.sleep(1)
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
-        
-        if len(upcoming) == 0:
-            print("  Aucun match a venir, utilisation des derniers matchs...")
-            conn = sqlite3.connect('triple_elite.db')
-            cursor = conn.cursor()
-            for league_name in self.leagues.keys():
-                cursor.execute('''SELECT DISTINCT home_team, away_team, league 
-                    FROM matches WHERE league = ? AND home_score IS NOT NULL 
-                    ORDER BY date DESC LIMIT 10''', (league_name,))
-                for row in cursor.fetchall():
-                    upcoming.append({
-                        "id": hash(f"{row[0]}{row[1]}"),
-                        "date": "2026-08-15",
-                        "home_team": row[0],
-                        "away_team": row[1],
-                        "league": row[2]
-                    })
-            conn.close()
-        
         return upcoming
