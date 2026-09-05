@@ -265,6 +265,8 @@ def api_generate():
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
         
+        print(f"Matchs a venir: {len(upcoming)}")
+        
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs (minimum 3 requis)"})
         
@@ -272,6 +274,8 @@ def api_generate():
         for match in upcoming:
             preds = generator.get_match_predictions(match)
             all_preds.extend(preds)
+        
+        print(f"Pronostics valides: {len(all_preds)}")
         
         from itertools import combinations, product
         preds_by_match = {}
@@ -295,10 +299,8 @@ def api_generate():
                         "avg_confidence": round(avg_conf, 1),
                         "score": score
                     })
-
-print(f"Matchs a venir: {len(upcoming)}")
-print(f"Pronostics valides: {len(all_preds)}")
-print(f"Combinaisons cote >= 2.50: {len(all_combos)}")
+        
+        print(f"Combinaisons cote >= 2.50: {len(all_combos)}")
         
         all_combos.sort(key=lambda x: x["score"], reverse=True)
         top3 = all_combos[:3]
