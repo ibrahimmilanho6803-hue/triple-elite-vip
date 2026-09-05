@@ -141,7 +141,7 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("  Collecte terminee !")
 
-    def get_upcoming_matches(self):
+        def get_upcoming_matches(self):
         upcoming = []
         for league_name, league_code in self.leagues.items():
             url = f"{self.base_url}/competitions/{league_code}/matches"
@@ -152,29 +152,34 @@ class DataCollector:
                     "dateTo": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
                 })
                 for match in response.json().get("matches", []):
-                    upcoming.append({
-                        "id": match["id"], "date": match["utcDate"],
-                        "home_team": match["homeTeam"]["name"],
-                        "away_team": match["awayTeam"]["name"],
-                        "league": league_name
-                    })
+                    if match.get("homeTeam") and match.get("awayTeam"):
+                        upcoming.append({
+                            "id": match["id"],
+                            "date": match.get("utcDate", ""),
+                            "home_team": match["homeTeam"]["name"],
+                            "away_team": match["awayTeam"]["name"],
+                            "league": league_name
+                        })
                 time.sleep(1)
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
+        
         if len(upcoming) == 0:
             print("  Aucun match a venir, utilisation des derniers matchs...")
             conn = sqlite3.connect('triple_elite.db')
             cursor = conn.cursor()
             for league_name in self.leagues.keys():
                 cursor.execute('''SELECT DISTINCT home_team, away_team, league 
-                    FROM matches WHERE league = ? ORDER BY date DESC LIMIT 10''',
-                    (league_name,))
+                    FROM matches WHERE league = ? AND home_score IS NOT NULL 
+                    ORDER BY date DESC LIMIT 10''', (league_name,))
                 for row in cursor.fetchall():
                     upcoming.append({
                         "id": hash(f"{row[0]}{row[1]}"),
                         "date": "2026-08-15",
-                        "home_team": row[0], "away_team": row[1],
+                        "home_team": row[0],
+                        "away_team": row[1],
                         "league": row[2]
                     })
             conn.close()
+        
         return upcoming
