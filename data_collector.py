@@ -6,7 +6,7 @@ import time
 class DataCollector:
     def __init__(self):
         self.api_key = "ec81bb7e12c7449abe7e57c66defbf78"
-        self.base_url = "https://api.football-data.org/v4"
+        self.base_url = f"https://www.thesportsdb.com/api/v1/json/1/eventsnextleague.php?id={league_id}"
         self.headers = {"X-Auth-Token": self.api_key}
         self.leagues = {"Premier League": "PL", "La Liga": "PD", "Bundesliga": "BL1"}
         self.init_database()
