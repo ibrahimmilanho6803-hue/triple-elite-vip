@@ -295,6 +295,10 @@ def api_generate():
                         "avg_confidence": round(avg_conf, 1),
                         "score": score
                     })
+
+print(f"Matchs a venir: {len(upcoming)}")
+print(f"Pronostics valides: {len(all_preds)}")
+print(f"Combinaisons cote >= 2.50: {len(all_combos)}")
         
         all_combos.sort(key=lambda x: x["score"], reverse=True)
         top3 = all_combos[:3]
