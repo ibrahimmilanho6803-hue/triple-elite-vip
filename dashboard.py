@@ -259,19 +259,48 @@ def logout():
 
 @app.route('/api/generate')
 def api_generate():
-    print("API GENERATE APPELEE")  # Log
     try:
         collector = DataCollector()
         generator = ComboGenerator()
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
-        print(f"Matchs trouves: {len(upcoming)}")  # Log
         
         if len(upcoming) < 3:
-            print("Pas assez de matchs")  # Log
             return jsonify({"error": "Pas assez de matchs (minimum 3 requis)"})
         
-        return jsonify({"combos": [], "file": "test"})
+        all_preds = []
+        for match in upcoming:
+            preds = generator.get_match_predictions(match)
+            all_preds.extend(preds)
+        
+        from itertools import combinations, product
+        preds_by_match = {}
+        for pred in all_preds:
+            key = f"{pred['home_team']} vs {pred['away_team']}"
+            if key not in preds_by_match:
+                preds_by_match[key] = []
+            preds_by_match[key].append(pred)
+        
+        all_combos = []
+        for m1, m2, m3 in combinations(preds_by_match.keys(), 3):
+            for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
+                combo = [p1, p2, p3]
+                total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
+                if total_odds >= 2.50:
+                    avg_conf = sum(p["confidence"] for p in combo) / 3
+                    score = round(avg_conf * 0.6 + len(set(p["type"] for p in combo)) * 5 + len(set(p["league"] for p in combo)) * 5, 1)
+                    all_combos.append({
+                        "predictions": combo,
+                        "total_odds": total_odds,
+                        "avg_confidence": round(avg_conf, 1),
+                        "score": score
+                    })
+        
+        all_combos.sort(key=lambda x: x["score"], reverse=True)
+        top3 = all_combos[:3]
+        
+        generator.close()
+        return jsonify({"combos": top3})
     except Exception as e:
         print(f"ERREUR: {e}")
         return jsonify({"error": str(e)})
