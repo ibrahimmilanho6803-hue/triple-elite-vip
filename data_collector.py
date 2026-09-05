@@ -141,7 +141,7 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("  Collecte terminee !")
 
-            def get_upcoming_matches(self):
+                def get_upcoming_matches(self):
         upcoming = []
         for league_name, league_code in self.leagues.items():
             url = f"{self.base_url}/competitions/{league_code}/matches"
