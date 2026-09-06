@@ -5,9 +5,14 @@ import time
 
 class DataCollector:
     def __init__(self):
-    self.base_url = "https://www.thesportsdb.com/api/v1/json/0531916234"
-    self.leagues = {"Premier League": "4328", "La Liga": "4335", "Bundesliga": "4332"}
-    self.init_database()
+        self.api_key = "0531916234"
+        self.base_url = f"https://www.thesportsdb.com/api/v1/json/{self.api_key}"
+        self.leagues = {
+            "Premier League": "4328",
+            "La Liga": "4335",
+            "Bundesliga": "4332"
+        }
+        self.init_database()
 
     def init_database(self):
         conn = sqlite3.connect('triple_elite.db')
@@ -70,7 +75,9 @@ class DataCollector:
             url = f"{self.base_url}/eventsnextleague.php?id={league_id}"
             try:
                 response = requests.get(url)
+                print(f"  {league_name} status: {response.status_code}")
                 events = response.json().get("events", [])
+                print(f"  {league_name}: {len(events)} matchs a venir")
                 for event in events:
                     upcoming.append({
                         "id": event.get("idEvent"),
@@ -82,4 +89,5 @@ class DataCollector:
                 time.sleep(1)
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
+        print(f"  Total matchs a venir: {len(upcoming)}")
         return upcoming[:20]
