@@ -265,6 +265,9 @@ def api_generate():
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
         
+        print(f"DEBUG upcoming: {upcoming}")
+        print(f"DEBUG nombre: {len(upcoming)}")
+        
         print(f"Matchs a venir: {len(upcoming)}")
         
         if len(upcoming) < 3:
