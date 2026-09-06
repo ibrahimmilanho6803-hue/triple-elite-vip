@@ -5,7 +5,7 @@ import time
 
 class DataCollector:
     def __init__(self):
-        self.base_url = "https://www.thesportsdb.com/api/v1/json/1"
+        self.base_url = f"https://www.thesportsdb.com/api/v1/json/0531916234/eventsnextleague.php?id={league_id}"
         self.leagues = {"Premier League": "4328", "La Liga": "4335", "Bundesliga": "4332"}
         self.init_database()
 
