@@ -44,7 +44,7 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("Collecte terminee")
 
-   def save_match(self, event, league_name):
+    def save_match(self, event, league_name):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
         try:
@@ -61,15 +61,9 @@ class DataCollector:
             cursor.execute('''INSERT OR IGNORE INTO matches 
                 (id, date, home_team, away_team, home_score, away_score, league, season, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', (
-                event.get("idEvent"),
-                event.get("dateEvent", ""),
-                event.get("strHomeTeam", ""),
-                event.get("strAwayTeam", ""),
-                hs, aws,
-                league_name,
-                event.get("strSeason", ""),
-                event.get("strStatus", "")
-            ))
+                event.get("idEvent"), event.get("dateEvent", ""),
+                event.get("strHomeTeam", ""), event.get("strAwayTeam", ""),
+                hs, aws, league_name, event.get("strSeason", ""), event.get("strStatus", "")))
         except Exception:
             pass
         conn.commit()
