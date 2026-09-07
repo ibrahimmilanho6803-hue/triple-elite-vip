@@ -5,7 +5,7 @@ class ComboGenerator:
     def __init__(self):
         self.collector = DataCollector()
         self.analyzer = MatchAnalyzer()
-        self.min_confidence = 65
+        self.min_confidence = 30
         self.base_odds = {
             "1": {"min": 1.15, "max": 1.80},
             "1X": {"min": 1.05, "max": 1.25},
