@@ -8,12 +8,7 @@ class MatchAnalyzer:
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
 
-    def get_team_elo(self, team_name):
-        self.cursor.execute("SELECT elo_rating FROM teams WHERE name = ?", (team_name,))
-        result = self.cursor.fetchone()
-        return result[0] if result else 1500
-
-        def get_team_stats(self, team_name):
+    def get_team_stats(self, team_name):
         self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
         result = self.cursor.fetchone()
         if not result:
@@ -42,14 +37,10 @@ class MatchAnalyzer:
             "predictions": {}
         }
 
-        # Calculer la confiance pour chaque type de pronostic
-        # Toujours donner au moins 50% de confiance de base
         base_confidence = 50
-
-        # Victoire à domicile (1)
         home_stats = self.get_team_stats(home_team)
         away_stats = self.get_team_stats(away_team)
-        
+
         if home_stats and away_stats:
             home_win_rate = (home_stats["wins"] / max(1, home_stats["matches_played"])) * 100
             away_loss_rate = (away_stats["losses"] / max(1, away_stats["matches_played"])) * 100
@@ -62,13 +53,11 @@ class MatchAnalyzer:
             "details": {}
         }
 
-        # Double chance (1X)
         analysis["predictions"]["1X"] = {
             "confidence": min(95, max(40, round(confidence_1) + 15)),
             "details": {}
         }
 
-        # Plus de 2.5 buts
         if home_stats and away_stats:
             total_goals = home_stats["goals_for_avg"] + away_stats["goals_for_avg"]
             confidence_over = base_confidence + (total_goals - 2.0) * 15
@@ -79,9 +68,8 @@ class MatchAnalyzer:
             "details": {}
         }
 
-        # BTTS OUI
         if home_stats and away_stats:
-            btts_rate = ((home_stats["btts_yes"] / max(1, home_stats["matches_played"])) + 
+            btts_rate = ((home_stats["btts_yes"] / max(1, home_stats["matches_played"])) +
                          (away_stats["btts_yes"] / max(1, away_stats["matches_played"]))) / 2 * 100
             confidence_btts_yes = base_confidence + (btts_rate - 50) / 2
         else:
@@ -91,13 +79,12 @@ class MatchAnalyzer:
             "details": {}
         }
 
-        # BTTS NON
         analysis["predictions"]["BTTS_NO"] = {
             "confidence": max(35, min(90, round(100 - confidence_btts_yes))),
             "details": {}
         }
 
-        analysis["elo_diff"] = self.get_team_elo(home_team) - self.get_team_elo(away_team)
+        analysis["elo_diff"] = 0
         analysis["predicted_goals"] = (home_stats["goals_for_avg"] + away_stats["goals_against_avg"]) / 2 if home_stats and away_stats else 2.5
         analysis["btts_probability"] = round(confidence_btts_yes, 1)
 
