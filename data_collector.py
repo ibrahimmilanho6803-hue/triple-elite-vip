@@ -14,9 +14,10 @@ class DataCollector:
         }
         self.init_database()
 
-    def init_database(self):
+        def init_database(self):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
+        cursor.execute('''DROP TABLE IF EXISTS team_stats''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY, name TEXT UNIQUE, league TEXT, elo_rating REAL DEFAULT 1500)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS matches (id INTEGER PRIMARY KEY, date TEXT, home_team TEXT, away_team TEXT, home_score INTEGER, away_score INTEGER, league TEXT, season TEXT, status TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS team_stats (id INTEGER PRIMARY KEY, team_name TEXT UNIQUE, matches_played INTEGER, wins INTEGER, draws INTEGER, losses INTEGER, goals_for REAL, goals_against REAL, btts_yes INTEGER, btts_no INTEGER, home_wins INTEGER, home_draws INTEGER, home_losses INTEGER, away_wins INTEGER, away_draws INTEGER, away_losses INTEGER, last_updated TEXT)''')
