@@ -44,13 +44,32 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("Collecte terminee")
 
-    def save_match(self, event, league_name):
+        def save_match(self, event, league_name):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
         try:
-            hs = int(event.get("intHomeScore", 0)) if event.get("intHomeScore") else None
-            aws = int(event.get("intAwayScore", 0)) if event.get("intAwayScore") else None
-            cursor.execute('''INSERT OR IGNORE INTO matches (id, date, home_team, away_team, home_score, away_score, league, season, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', (event.get("idEvent"), event.get("dateEvent", ""), event.get("strHomeTeam", ""), event.get("strAwayTeam", ""), hs, aws, league_name, event.get("strSeason", ""), event.get("strStatus", "")))
+            hs_raw = event.get("intHomeScore")
+            aws_raw = event.get("intAwayScore")
+            try:
+                hs = int(hs_raw) if hs_raw else None
+            except:
+                hs = None
+            try:
+                aws = int(aws_raw) if aws_raw else None
+            except:
+                aws = None
+            cursor.execute('''INSERT OR IGNORE INTO matches 
+                (id, date, home_team, away_team, home_score, away_score, league, season, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', (
+                event.get("idEvent"),
+                event.get("dateEvent", ""),
+                event.get("strHomeTeam", ""),
+                event.get("strAwayTeam", ""),
+                hs, aws,
+                league_name,
+                event.get("strSeason", ""),
+                event.get("strStatus", "")
+            ))
         except Exception:
             pass
         conn.commit()
