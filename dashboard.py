@@ -41,26 +41,7 @@ PAGE_ACCUEIL = """
     .btn:hover { background: #ffed4a; }
     .btn-green { background: #4caf50; color: #fff; }
     .btn-green:hover { background: #66bb6a; }
-    @media (max-width: 768px) {
-        .hero { padding: 40px 15px; }
-        .hero h1 { font-size: 2em; }
-        .hero p { font-size: 1em; }
-        .features { gap: 15px; padding: 30px 10px; }
-        .feature { width: 100%; max-width: 300px; padding: 20px; }
-        .pricing { padding: 30px 10px; }
-        .pricing h2 { font-size: 1.8em; }
-        .price-cards { gap: 15px; }
-        .price-card { width: 100%; max-width: 300px; padding: 25px 20px; }
-        .price { font-size: 2em; }
-        .btn { padding: 12px 25px; font-size: 0.95em; margin: 10px 5px; }
-    }
-    @media (max-width: 480px) {
-        .hero h1 { font-size: 1.6em; }
-        .hero p { font-size: 0.9em; }
-        .btn { display: block; width: 80%; margin: 10px auto; }
-        .price { font-size: 1.8em; }
-    }
-</style>
+    </style>
 </head>
 <body>
     <div class="hero">
@@ -136,7 +117,6 @@ HTML_TEMPLATE = """
     .btn { background: #ffd700; color: #0a0e27; border: none; padding: 12px 30px; font-size: 1em; font-weight: bold; border-radius: 5px; cursor: pointer; margin: 10px; }
     .btn:hover { background: #ffed4a; }
     .btn-green { background: #4caf50; color: #fff; }
-    .btn-green:hover { background: #66bb6a; }
     .login-box { max-width: 400px; margin: 100px auto; background: #1a1f3a; padding: 30px; border-radius: 10px; text-align: center; }
     .login-box input { width: 100%; padding: 10px; margin: 10px 0; background: #0d1137; border: 1px solid #333; color: #fff; border-radius: 5px; }
     .error { color: #f44336; margin: 10px 0; }
@@ -184,17 +164,17 @@ HTML_TEMPLATE = """
             .then(function(data) {
                 document.getElementById('loading').style.display = 'none';
                 if (data.error) {
-                    document.getElementById('results').innerHTML = '<p style="color:#ff9800; text-align:center; padding:20px; font-size:1.1em;">' + data.error + '</p>';
+                    document.getElementById('results').innerHTML = '<p style="color:#ff9800;">' + data.error + '</p>';
                     return;
                 }
                 if (data.combos.length === 0) {
-                    document.getElementById('results').innerHTML = '<p style="color:#ff9800; text-align:center; padding:20px; font-size:1.1em;">Aucun combine trouve</p>';
+                    document.getElementById('results').innerHTML = '<p style="color:#ff9800;">Aucun combine trouve</p>';
                     return;
                 }
                 var html = '';
                 data.combos.forEach(function(combo, index) {
                     html += '<div class="combo-card">';
-                    html += '<h2>COMBINE #' + (index + 1) + '</h2>';
+                    html += '<h2>COMBINE #' + (index + 1) + ' - ' + combo.league + '</h2>';
                     html += '<div class="combo-stats">';
                     html += '<div class="stat"><div class="stat-label">Cote totale</div><div class="stat-value">' + combo.total_odds + '</div></div>';
                     html += '<div class="stat"><div class="stat-label">Confiance</div><div class="stat-value">' + combo.avg_confidence + '%</div></div>';
@@ -223,9 +203,8 @@ HTML_TEMPLATE = """
             .then(function(response) { return response.json(); })
             .then(function(data) {
                 var html = '<h2>Historique des generations</h2>';
-                if (data.length === 0) {
-                    html += '<p>Aucun historique</p>';
-                } else {
+                if (data.length === 0) { html += '<p>Aucun historique</p>'; }
+                else {
                     data.forEach(function(file) {
                         html += '<p>' + file + ' <a href="/api/download/' + file + '" style="color:#ffd700;">Telecharger</a></p>';
                     });
@@ -266,8 +245,6 @@ def api_generate():
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
         
-        print(f"Matchs a venir: {len(upcoming)}")
-        
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs (minimum 3 requis)"})
         
@@ -275,8 +252,6 @@ def api_generate():
         for match in upcoming:
             preds = generator.get_match_predictions(match)
             all_preds.extend(preds)
-        
-        print(f"Pronostics valides: {len(all_preds)}")
         
         from itertools import combinations, product
         
@@ -287,7 +262,6 @@ def api_generate():
             matchs_par_championnat[pred["league"]].append(pred)
         
         all_combos = []
-        
         for league, preds_league in matchs_par_championnat.items():
             preds_by_match = {}
             for pred in preds_league:
@@ -295,27 +269,32 @@ def api_generate():
                 if key not in preds_by_match:
                     preds_by_match[key] = []
                 preds_by_match[key].append(pred)
-            
             for m1, m2, m3 in combinations(preds_by_match.keys(), 3):
                 for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
                     combo = [p1, p2, p3]
                     total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
                     if total_odds >= 2.50:
                         avg_conf = sum(p["confidence"] for p in combo) / 3
-                        if avg_conf >= 50:
-                            score = round(avg_conf * 0.6 + len(set(p["type"] for p in combo)) * 5 + 5, 1)
-                            all_combos.append({
-                                "predictions": combo,
-                                "total_odds": total_odds,
-                                "avg_confidence": round(avg_conf, 1),
-                                "score": score,
-                                "league": league
-                            })
-        
-        print(f"Combinaisons cote >= 2.50: {len(all_combos)}")
+                        score = round(avg_conf * 0.6 + 5, 1)
+                        all_combos.append({
+                            "predictions": combo,
+                            "total_odds": total_odds,
+                            "avg_confidence": round(avg_conf, 1),
+                            "score": score,
+                            "league": league
+                        })
         
         all_combos.sort(key=lambda x: x["score"], reverse=True)
-        top3 = all_combos[:3]
+        
+        top3 = []
+        leagues_seen = set()
+        for combo in all_combos:
+            league = combo.get("league", "")
+            if league not in leagues_seen:
+                top3.append(combo)
+                leagues_seen.add(league)
+            if len(top3) >= 3:
+                break
         
         generator.close()
         return jsonify({"combos": top3})
@@ -351,6 +330,4 @@ def api_clear_history():
 
 if __name__ == '__main__':
     print("\nDashboard Triple Elite VIP")
-    print("Page d'accueil : http://localhost:5000")
-    print("Connexion VIP : http://localhost:5000/login")
     app.run(host='0.0.0.0', port=5000, debug=True)
