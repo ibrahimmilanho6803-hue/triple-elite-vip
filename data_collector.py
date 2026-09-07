@@ -31,7 +31,7 @@ class DataCollector:
         conn.commit()
         conn.close()
 
-    def collect_all_data(self):
+        def collect_all_data(self):
         print("  Collecte des donnees...")
         for league_name, league_id in self.leagues.items():
             url = f"{self.base_url}/eventspastleague.php?id={league_id}"
@@ -44,6 +44,16 @@ class DataCollector:
                 time.sleep(2)
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
+        
+        # Mise à jour des stats des équipes
+        conn = sqlite3.connect('triple_elite.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT home_team FROM matches")
+        teams = cursor.fetchall()
+        conn.close()
+        print(f"  Mise a jour de {len(teams)} equipes...")
+        for (team_name,) in teams:
+            self.update_team_stats(team_name)
         print("  Collecte terminee !")
 
     def save_match(self, event, league_name):
