@@ -53,25 +53,42 @@ class ComboGenerator:
             print(f"Erreur odds: {e}")
             return None
 
-    def get_match_predictions(self, match):
+        def get_match_predictions(self, match):
         analysis = self.analyzer.analyze_match(match["home_team"], match["away_team"])
         real_odds = self.get_real_odds(match["home_team"], match["away_team"])
         
         valid = []
         for ptype, data in analysis["predictions"].items():
             if data["confidence"] >= self.min_confidence:
-                estimated = data["confidence"]
+                estimated = None
                 
                 # Utiliser les cotes réelles si disponibles
                 if real_odds:
                     if ptype == "1" and "home" in real_odds:
                         estimated = real_odds["home"]
+                    elif ptype == "1X" and "home" in real_odds and "draw" in real_odds:
+                        estimated = round(1 / (1/real_odds["home"] + 1/real_odds["draw"]), 2)
                     elif ptype == "+2.5" and "over_2_5" in real_odds:
                         estimated = real_odds["over_2_5"]
                     elif ptype == "BTTS_YES" and "btts_yes" in real_odds:
                         estimated = real_odds["btts_yes"]
                     elif ptype == "BTTS_NO" and "btts_no" in real_odds:
                         estimated = real_odds["btts_no"]
+                
+                # Fallback si pas de cote réelle
+                if estimated is None:
+                    if ptype == "1":
+                        estimated = 1.80
+                    elif ptype == "1X":
+                        estimated = 1.25
+                    elif ptype == "+2.5":
+                        estimated = 1.70
+                    elif ptype == "BTTS_YES":
+                        estimated = 1.65
+                    elif ptype == "BTTS_NO":
+                        estimated = 1.60
+                    else:
+                        estimated = 1.50
                 
                 valid.append({
                     "match_id": match["id"],
