@@ -65,22 +65,22 @@ PAGE_ACCUEIL = """
 <body>
     <div class="hero">
         <h1>Triple Elite VIP</h1>
-        <p>Le logiciel qui analyse 3 championnats et génère 3 combinés optimisers a 2.50+ chaque semaine</p>
+        <p>Le logiciel qui analyse 3 championnats et genere 3 combines optimises a 2.50+ chaque semaine</p>
         <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
-        <a href="/login" class="btn">Accès Client VIP</a>
+        <a href="/login" class="btn">Acces Client VIP</a>
     </div>
     <div class="features">
         <div class="feature">
             <h3>Premier League</h3>
-            <p>Analyse complète du championnat Anglais</p>
+            <p>Analyse complete du championnat Anglais</p>
         </div>
         <div class="feature">
             <h3>La Liga</h3>
-            <p>Analyse complète du championnat Espagnol</p>
+            <p>Analyse complete du championnat Espagnol</p>
         </div>
         <div class="feature">
             <h3>Bundesliga</h3>
-            <p>Analyse complète du championnat Allemand</p>
+            <p>Analyse complete du championnat Allemand</p>
         </div>
     </div>
     <div class="pricing">
@@ -88,16 +88,16 @@ PAGE_ACCUEIL = """
         <div class="price-cards">
             <div class="price-card">
                 <h3>Mensuel</h3>
-                <div class="price">30€<span>/ 1mois</span></div>
-                <p>Accès complet</p>
-                <p>3 combinés/semaine</p>
-                <p>Support Télégram</p>
+                <div class="price">30<span>/mois</span></div>
+                <p>Acces complet</p>
+                <p>3 combines/semaine</p>
+                <p>Support Telegram</p>
             </div>
             <div class="price-card premium">
                 <h3>Annuel</h3>
-                <div class="price">60€<span>/ 1ans</span></div>
-                <p>Accès complet</p>
-                <p>3 combinés/semaine</p>
+                <div class="price">60<span>/an</span></div>
+                <p>Acces complet</p>
+                <p>3 combines/semaine</p>
                 <p>Support prioritaire</p>
             </div>
         </div>
@@ -146,7 +146,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="header">
         <h1>Triple Elite VIP</h1>
-        <p>Predictions Football - 3 Championnats - Combinés 2.50+</p>
+        <p>Predictions Football - 3 Championnats - Combines 2.50+</p>
     </div>
     <div class="container">
         {% if not authenticated %}
@@ -164,7 +164,7 @@ HTML_TEMPLATE = """
         </div>
         {% else %}
         <div style="text-align: center; padding: 20px;">
-            <button onclick="generateCombos()" class="btn">Générer les combinés</button>
+            <button onclick="generateCombos()" class="btn">Generer les combines</button>
             <button onclick="window.location.href='https://triple-elite-vip.com'" class="btn btn-green">Renouveler</button>
             <button onclick="showHistory()" class="btn">Historique</button>
             <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Deconnexion</button></a>
@@ -177,52 +177,52 @@ HTML_TEMPLATE = """
     </div>
     <script>
     function generateCombos() {
-    document.getElementById('loading').style.display = 'block';
-    document.getElementById('results').innerHTML = '';
-    fetch('/api/generate')
-        .then(function(response) { return response.json(); })
-        .then(function(data) {
-            document.getElementById('loading').style.display = 'none';
-            if (data.error) {
-                document.getElementById('results').innerHTML = '<p style="color:#ff9800; text-align:center; padding:20px; font-size:1.1em;">' + data.error + '</p>';
-                return;
-            }
-            if (data.combos.length === 0) {
-                document.getElementById('results').innerHTML = '<p style="color:#ff9800; text-align:center; padding:20px; font-size:1.1em;">Aucun combiné trouver</p>';
-                return;
-            }
-            var html = '';
-            data.combos.forEach(function(combo, index) {
-                html += '<div class="combo-card">';
-                html += '<h2>COMBINE #' + (index + 1) + '</h2>';
-                html += '<div class="combo-stats">';
-                html += '<div class="stat"><div class="stat-label">Cote totale</div><div class="stat-value">' + combo.total_odds + '</div></div>';
-                html += '<div class="stat"><div class="stat-label">Confiance</div><div class="stat-value">' + combo.avg_confidence + '%</div></div>';
-                html += '<div class="stat"><div class="stat-label">Score</div><div class="stat-value">' + combo.score + '/100</div></div>';
-                html += '</div>';
-                combo.predictions.forEach(function(p) {
-                    html += '<div class="match-row">';
-                    html += '<div><div class="match-teams">' + p.home_team + ' vs ' + p.away_team + '</div>';
-                    html += '<div class="match-league">' + p.league + '</div></div>';
-                    html += '<div class="match-prediction">' + p.type_name + '</div>';
-                    html += '<div class="match-odds">Cote: ' + p.estimated_odds + '</div>';
-                    html += '<div class="match-confidence">' + p.confidence + '%</div>';
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('results').innerHTML = '';
+        fetch('/api/generate')
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                document.getElementById('loading').style.display = 'none';
+                if (data.error) {
+                    document.getElementById('results').innerHTML = '<p style="color:#ff9800; text-align:center; padding:20px; font-size:1.1em;">' + data.error + '</p>';
+                    return;
+                }
+                if (data.combos.length === 0) {
+                    document.getElementById('results').innerHTML = '<p style="color:#ff9800; text-align:center; padding:20px; font-size:1.1em;">Aucun combine trouve</p>';
+                    return;
+                }
+                var html = '';
+                data.combos.forEach(function(combo, index) {
+                    html += '<div class="combo-card">';
+                    html += '<h2>COMBINE #' + (index + 1) + '</h2>';
+                    html += '<div class="combo-stats">';
+                    html += '<div class="stat"><div class="stat-label">Cote totale</div><div class="stat-value">' + combo.total_odds + '</div></div>';
+                    html += '<div class="stat"><div class="stat-label">Confiance</div><div class="stat-value">' + combo.avg_confidence + '%</div></div>';
+                    html += '<div class="stat"><div class="stat-label">Score</div><div class="stat-value">' + combo.score + '/100</div></div>';
+                    html += '</div>';
+                    combo.predictions.forEach(function(p) {
+                        html += '<div class="match-row">';
+                        html += '<div><div class="match-teams">' + p.home_team + ' vs ' + p.away_team + '</div>';
+                        html += '<div class="match-league">' + p.league + '</div></div>';
+                        html += '<div class="match-prediction">' + p.type_name + '</div>';
+                        html += '<div class="match-odds">Cote: ' + p.estimated_odds + '</div>';
+                        html += '<div class="match-confidence">' + p.confidence + '%</div>';
+                        html += '</div>';
+                    });
                     html += '</div>';
                 });
-                html += '</div>';
+                document.getElementById('results').innerHTML = html;
+            })
+            .catch(function(error) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('results').innerHTML = '<p class="error">Erreur de connexion</p>';
             });
-            document.getElementById('results').innerHTML = html;
-        })
-        .catch(function(error) {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('results').innerHTML = '<p class="error">Erreur de connexion</p>';
-        });
-}
+    }
     function showHistory() {
         fetch('/api/history')
             .then(function(response) { return response.json(); })
             .then(function(data) {
-                var html = '<h2>Historique des générations</h2>';
+                var html = '<h2>Historique des generations</h2>';
                 if (data.length === 0) {
                     html += '<p>Aucun historique</p>';
                 } else {
@@ -237,6 +237,7 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+
 @app.route('/')
 def accueil():
     return PAGE_ACCUEIL
@@ -265,9 +266,6 @@ def api_generate():
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
         
-        print(f"DEBUG upcoming: {upcoming}")
-        print(f"DEBUG nombre: {len(upcoming)}")
-        
         print(f"Matchs a venir: {len(upcoming)}")
         
         if len(upcoming) < 3:
@@ -281,23 +279,15 @@ def api_generate():
         print(f"Pronostics valides: {len(all_preds)}")
         
         from itertools import combinations, product
-        preds_by_match = {}
-        for pred in all_preds:
-            key = f"{pred['home_team']} vs {pred['away_team']}"
-            if key not in preds_by_match:
-                preds_by_match[key] = []
-            preds_by_match[key].append(pred)
         
-                all_combos = []
-        
-        # Regrouper les matchs par championnat
         matchs_par_championnat = {}
         for pred in all_preds:
             if pred["league"] not in matchs_par_championnat:
                 matchs_par_championnat[pred["league"]] = []
             matchs_par_championnat[pred["league"]].append(pred)
         
-        # Pour chaque championnat, générer les meilleurs combinés
+        all_combos = []
+        
         for league, preds_league in matchs_par_championnat.items():
             preds_by_match = {}
             for pred in preds_league:
@@ -312,7 +302,7 @@ def api_generate():
                     total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
                     if total_odds >= 2.50:
                         avg_conf = sum(p["confidence"] for p in combo) / 3
-                        if avg_conf >= 70:
+                        if avg_conf >= 50:
                             score = round(avg_conf * 0.6 + len(set(p["type"] for p in combo)) * 5 + 5, 1)
                             all_combos.append({
                                 "predictions": combo,
@@ -321,6 +311,17 @@ def api_generate():
                                 "score": score,
                                 "league": league
                             })
+        
+        print(f"Combinaisons cote >= 2.50: {len(all_combos)}")
+        
+        all_combos.sort(key=lambda x: x["score"], reverse=True)
+        top3 = all_combos[:3]
+        
+        generator.close()
+        return jsonify({"combos": top3})
+    except Exception as e:
+        print(f"ERREUR: {e}")
+        return jsonify({"error": str(e)})
 
 @app.route('/api/history')
 def api_history():
