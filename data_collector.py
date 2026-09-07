@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import time
 
 class DataCollector:
-    def __init__(self):
+        def __init__(self):
         self.api_key = "0531916234"
         self.base_url = f"https://www.thesportsdb.com/api/v1/json/{self.api_key}"
         self.leagues = {
@@ -12,7 +12,7 @@ class DataCollector:
             "La Liga": "4335",
             "Bundesliga": "4332"
         }
-                self.init_database()
+        self.init_database()
 
     def init_database(self):
         conn = sqlite3.connect('triple_elite.db')
