@@ -12,9 +12,9 @@ class DataCollector:
             "La Liga": "4335",
             "Bundesliga": "4332"
         }
-        self.init_database()
+                self.init_database()
 
-        def init_database(self):
+    def init_database(self):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
         cursor.execute('''DROP TABLE IF EXISTS team_stats''')
