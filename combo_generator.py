@@ -39,7 +39,7 @@ class ComboGenerator:
         analysis = self.analyzer.analyze_match(match["home_team"], match["away_team"])
         valid = []
         for ptype, data in analysis["predictions"].items():
-            if data["confidence"] >= self.min_confidence:
+            if data["confidence"] >= self.min_confidence = 70  # Plus élevé pour viser 80%
                 valid.append({
                     "match_id": match["id"],
                     "home_team": match["home_team"],

@@ -77,9 +77,11 @@ class DataCollector:
                 response = requests.get(url)
                 events = response.json().get("events", [])
                 count = 0
-                for event in events:
-                    if count >= 5:
-                        break
+for event in events:
+    if count >= 3:
+        break
+    # ... ajouter le match
+    count += 1
                     upcoming.append({
                         "id": event.get("idEvent"),
                         "date": event.get("dateEvent", "") + " " + event.get("strTime", "15:00"),

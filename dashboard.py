@@ -288,31 +288,39 @@ def api_generate():
                 preds_by_match[key] = []
             preds_by_match[key].append(pred)
         
-        all_combos = []
-        for m1, m2, m3 in combinations(preds_by_match.keys(), 3):
-            for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
-                combo = [p1, p2, p3]
-                total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
-                if total_odds >= 2.50:
-                    avg_conf = sum(p["confidence"] for p in combo) / 3
-                    score = round(avg_conf * 0.6 + len(set(p["type"] for p in combo)) * 5 + len(set(p["league"] for p in combo)) * 5, 1)
-                    all_combos.append({
-                        "predictions": combo,
-                        "total_odds": total_odds,
-                        "avg_confidence": round(avg_conf, 1),
-                        "score": score
-                    })
+                all_combos = []
         
-        print(f"Combinaisons cote >= 2.50: {len(all_combos)}")
+        # Regrouper les matchs par championnat
+        matchs_par_championnat = {}
+        for pred in all_preds:
+            if pred["league"] not in matchs_par_championnat:
+                matchs_par_championnat[pred["league"]] = []
+            matchs_par_championnat[pred["league"]].append(pred)
         
-        all_combos.sort(key=lambda x: x["score"], reverse=True)
-        top3 = all_combos[:3]
-        
-        generator.close()
-        return jsonify({"combos": top3})
-    except Exception as e:
-        print(f"ERREUR: {e}")
-        return jsonify({"error": str(e)})
+        # Pour chaque championnat, générer les meilleurs combinés
+        for league, preds_league in matchs_par_championnat.items():
+            preds_by_match = {}
+            for pred in preds_league:
+                key = f"{pred['home_team']} vs {pred['away_team']}"
+                if key not in preds_by_match:
+                    preds_by_match[key] = []
+                preds_by_match[key].append(pred)
+            
+            for m1, m2, m3 in combinations(preds_by_match.keys(), 3):
+                for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
+                    combo = [p1, p2, p3]
+                    total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
+                    if total_odds >= 2.50:
+                        avg_conf = sum(p["confidence"] for p in combo) / 3
+                        if avg_conf >= 70:
+                            score = round(avg_conf * 0.6 + len(set(p["type"] for p in combo)) * 5 + 5, 1)
+                            all_combos.append({
+                                "predictions": combo,
+                                "total_odds": total_odds,
+                                "avg_confidence": round(avg_conf, 1),
+                                "score": score,
+                                "league": league
+                            })
 
 @app.route('/api/history')
 def api_history():
