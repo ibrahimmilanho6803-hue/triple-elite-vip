@@ -32,7 +32,7 @@ class MatchAnalyzer:
             "away_losses": int(result[15] or 0)
         }
 
-        def analyze_match(self, home_team, away_team):
+    def analyze_match(self, home_team, away_team):
         analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
         
         # Appel IA
@@ -42,11 +42,13 @@ class MatchAnalyzer:
                 max_tokens=200,
                 messages=[{
                     "role": "user",
-                    "content": f"Pronostic football : {home_team} vs {away_team}. Reponds juste : 1, N ou 2"
+                    "content": f"Match de football : {home_team} vs {away_team}. Reponds UNIQUEMENT avec : 1 (victoire domicile), N (nul), ou 2 (victoire exterieur). Pas de phrase."
                 }]
             )
             ia_result = response.content[0].text.strip()
-        except:
+            print(f"IA reponse: {ia_result}")
+        except Exception as e:
+            print(f"IA erreur: {e}")
             ia_result = None
         
         # Si IA dit victoire domicile
