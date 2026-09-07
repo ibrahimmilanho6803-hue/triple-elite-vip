@@ -53,7 +53,7 @@ class ComboGenerator:
             print(f"Erreur odds: {e}")
             return None
 
-        def get_match_predictions(self, match):
+    def get_match_predictions(self, match):
         analysis = self.analyzer.analyze_match(match["home_team"], match["away_team"])
         real_odds = self.get_real_odds(match["home_team"], match["away_team"])
         
