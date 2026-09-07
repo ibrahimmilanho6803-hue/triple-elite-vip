@@ -44,7 +44,7 @@ class DataCollector:
             self.update_team_stats(team_name)
         print("Collecte terminee")
 
-        def save_match(self, event, league_name):
+   def save_match(self, event, league_name):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
         try:
