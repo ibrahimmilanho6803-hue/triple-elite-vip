@@ -7,25 +7,21 @@ class DataCollector:
     def __init__(self):
         self.api_key = "0531916234"
         self.base_url = f"https://www.thesportsdb.com/api/v1/json/{self.api_key}"
-        self.leagues = {
-            "Premier League": "4328",
-            "La Liga": "4335",
-            "Bundesliga": "4332"
-        }
+        self.leagues = {"Premier League": "4328", "La Liga": "4335", "Bundesliga": "4332"}
         self.init_database()
 
-        def init_database(self):
+    def init_database(self):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
-        cursor.execute('''DROP TABLE IF EXISTS team_stats''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY, name TEXT UNIQUE, league TEXT, elo_rating REAL DEFAULT 1500)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS matches (id INTEGER PRIMARY KEY, date TEXT, home_team TEXT, away_team TEXT, home_score INTEGER, away_score INTEGER, league TEXT, season TEXT, status TEXT)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS team_stats (id INTEGER PRIMARY KEY, team_name TEXT UNIQUE, matches_played INTEGER, wins INTEGER, draws INTEGER, losses INTEGER, goals_for REAL, goals_against REAL, btts_yes INTEGER, btts_no INTEGER, home_wins INTEGER, home_draws INTEGER, home_losses INTEGER, away_wins INTEGER, away_draws INTEGER, away_losses INTEGER, last_updated TEXT)''')
+        cursor.execute('DROP TABLE IF EXISTS team_stats')
+        cursor.execute('CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY, name TEXT UNIQUE, league TEXT, elo_rating REAL DEFAULT 1500)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS matches (id INTEGER PRIMARY KEY, date TEXT, home_team TEXT, away_team TEXT, home_score INTEGER, away_score INTEGER, league TEXT, season TEXT, status TEXT)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS team_stats (id INTEGER PRIMARY KEY, team_name TEXT UNIQUE, matches_played INTEGER, wins INTEGER, draws INTEGER, losses INTEGER, goals_for REAL, goals_against REAL, btts_yes INTEGER, btts_no INTEGER, home_wins INTEGER, home_draws INTEGER, home_losses INTEGER, away_wins INTEGER, away_draws INTEGER, away_losses INTEGER, last_updated TEXT)')
         conn.commit()
         conn.close()
 
     def collect_all_data(self):
-        print("Collecte...")
+        print("Collecte des donnees...")
         for league_name, league_id in self.leagues.items():
             url = f"{self.base_url}/eventspastleague.php?id={league_id}"
             try:
@@ -59,12 +55,7 @@ class DataCollector:
                 aws = int(aws_raw) if aws_raw else None
             except:
                 aws = None
-            cursor.execute('''INSERT OR IGNORE INTO matches 
-                (id, date, home_team, away_team, home_score, away_score, league, season, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', (
-                event.get("idEvent"), event.get("dateEvent", ""),
-                event.get("strHomeTeam", ""), event.get("strAwayTeam", ""),
-                hs, aws, league_name, event.get("strSeason", ""), event.get("strStatus", "")))
+            cursor.execute('INSERT OR IGNORE INTO matches (id, date, home_team, away_team, home_score, away_score, league, season, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', (event.get("idEvent"), event.get("dateEvent", ""), event.get("strHomeTeam", ""), event.get("strAwayTeam", ""), hs, aws, league_name, event.get("strSeason", ""), event.get("strStatus", "")))
         except Exception:
             pass
         conn.commit()
@@ -73,7 +64,7 @@ class DataCollector:
     def update_team_stats(self, team_name):
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
-        cursor.execute('''SELECT home_team, away_team, home_score, away_score FROM matches WHERE (home_team = ? OR away_team = ?) AND home_score IS NOT NULL''', (team_name, team_name))
+        cursor.execute('SELECT home_team, away_team, home_score, away_score FROM matches WHERE (home_team = ? OR away_team = ?) AND home_score IS NOT NULL', (team_name, team_name))
         matches = cursor.fetchall()
         if not matches:
             conn.close()
@@ -118,7 +109,7 @@ class DataCollector:
         if stats["matches_played"] > 0:
             stats["goals_for"] = round(stats["goals_for"] / stats["matches_played"], 2)
             stats["goals_against"] = round(stats["goals_against"] / stats["matches_played"], 2)
-        cursor.execute('''INSERT OR REPLACE INTO team_stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (None, team_name, stats["matches_played"], stats["wins"], stats["draws"], stats["losses"], stats["goals_for"], stats["goals_against"], stats["btts_yes"], stats["btts_no"], stats["home_wins"], stats["home_draws"], stats["home_losses"], stats["away_wins"], stats["away_draws"], stats["away_losses"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        cursor.execute('INSERT OR REPLACE INTO team_stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (None, team_name, stats["matches_played"], stats["wins"], stats["draws"], stats["losses"], stats["goals_for"], stats["goals_against"], stats["btts_yes"], stats["btts_no"], stats["home_wins"], stats["home_draws"], stats["home_losses"], stats["away_wins"], stats["away_draws"], stats["away_losses"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         conn.close()
 
