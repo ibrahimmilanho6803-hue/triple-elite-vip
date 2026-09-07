@@ -7,7 +7,11 @@ class DataCollector:
     def __init__(self):
         self.api_key = "0531916234"
         self.base_url = f"https://www.thesportsdb.com/api/v1/json/{self.api_key}"
-        self.leagues = {"Premier League": "4328", "La Liga": "4335", "Bundesliga": "4332"}
+        self.leagues = {
+    "Premier League": "4328",
+    "La Liga": "4335",
+    "Bundesliga": "4331"
+}
         self.init_database()
 
     def init_database(self):
