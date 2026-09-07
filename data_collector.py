@@ -31,7 +31,7 @@ class DataCollector:
         conn.commit()
         conn.close()
 
-        def collect_all_data(self):
+    def collect_all_data(self):
         print("  Collecte des donnees...")
         for league_name, league_id in self.leagues.items():
             url = f"{self.base_url}/eventspastleague.php?id={league_id}"
@@ -45,7 +45,6 @@ class DataCollector:
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
         
-        # Mise à jour des stats des équipes
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT home_team FROM matches")
@@ -79,7 +78,70 @@ class DataCollector:
         conn.commit()
         conn.close()
 
-        def get_upcoming_matches(self):
+    def update_team_stats(self, team_name):
+        conn = sqlite3.connect('triple_elite.db')
+        cursor = conn.cursor()
+        cursor.execute('''SELECT home_team, away_team, home_score, away_score 
+            FROM matches WHERE (home_team = ? OR away_team = ?) AND home_score IS NOT NULL''',
+            (team_name, team_name))
+        matches = cursor.fetchall()
+        if not matches:
+            conn.close()
+            return
+        stats = {"matches_played": 0, "wins": 0, "draws": 0, "losses": 0,
+            "goals_for": 0, "goals_against": 0, "btts_yes": 0, "btts_no": 0,
+            "home_wins": 0, "home_draws": 0, "home_losses": 0,
+            "away_wins": 0, "away_draws": 0, "away_losses": 0}
+        for home, away, hs, aws in matches:
+            stats["matches_played"] += 1
+            if team_name == home:
+                stats["goals_for"] += hs or 0
+                stats["goals_against"] += aws or 0
+                if hs is not None and aws is not None:
+                    if hs > aws:
+                        stats["wins"] += 1
+                        stats["home_wins"] += 1
+                    elif hs == aws:
+                        stats["draws"] += 1
+                        stats["home_draws"] += 1
+                    else:
+                        stats["losses"] += 1
+                        stats["home_losses"] += 1
+                if hs and aws and hs > 0 and aws > 0:
+                    stats["btts_yes"] += 1
+                else:
+                    stats["btts_no"] += 1
+            else:
+                stats["goals_for"] += aws or 0
+                stats["goals_against"] += hs or 0
+                if hs is not None and aws is not None:
+                    if aws > hs:
+                        stats["wins"] += 1
+                        stats["away_wins"] += 1
+                    elif aws == hs:
+                        stats["draws"] += 1
+                        stats["away_draws"] += 1
+                    else:
+                        stats["losses"] += 1
+                        stats["away_losses"] += 1
+                if hs and aws and hs > 0 and aws > 0:
+                    stats["btts_yes"] += 1
+                else:
+                    stats["btts_no"] += 1
+        if stats["matches_played"] > 0:
+            stats["goals_for"] = round(stats["goals_for"] / stats["matches_played"], 2)
+            stats["goals_against"] = round(stats["goals_against"] / stats["matches_played"], 2)
+        cursor.execute('''INSERT OR REPLACE INTO team_stats VALUES 
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (
+            None, team_name, stats["matches_played"], stats["wins"], stats["draws"],
+            stats["losses"], stats["goals_for"], stats["goals_against"],
+            stats["btts_yes"], stats["btts_no"], stats["home_wins"], stats["home_draws"],
+            stats["home_losses"], stats["away_wins"], stats["away_draws"],
+            stats["away_losses"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        conn.close()
+
+    def get_upcoming_matches(self):
         upcoming = []
         for league_name, league_id in self.leagues.items():
             url = f"{self.base_url}/eventsnextleague.php?id={league_id}"
@@ -87,11 +149,9 @@ class DataCollector:
                 response = requests.get(url)
                 events = response.json().get("events", [])
                 count = 0
-for event in events:
-    if count >= 3:
-        break
-    # ... ajouter le match
-    count += 1
+                for event in events:
+                    if count >= 3:
+                        break
                     upcoming.append({
                         "id": event.get("idEvent"),
                         "date": event.get("dateEvent", "") + " " + event.get("strTime", "15:00"),
