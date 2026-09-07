@@ -34,24 +34,17 @@ class MatchAnalyzer:
 
     def analyze_match(self, home_team, away_team):
         analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        
-        # Appel IA
         try:
             response = self.client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=200,
-                messages=[{
-                    "role": "user",
-                    "content": f"Match de football : {home_team} vs {away_team}. Reponds UNIQUEMENT avec : 1 (victoire domicile), N (nul), ou 2 (victoire exterieur). Pas de phrase."
-                }]
+                max_tokens=50,
+                messages=[{"role": "user", "content": f"Match de football : {home_team} vs {away_team}. Reponds UNIQUEMENT avec : 1 (victoire domicile), N (nul), ou 2 (victoire exterieur). Pas de phrase."}]
             )
             ia_result = response.content[0].text.strip()
             print(f"IA reponse: {ia_result}")
         except Exception as e:
             print(f"IA erreur: {e}")
             ia_result = None
-        
-        # Si IA dit victoire domicile
         if ia_result == "1":
             analysis["predictions"]["1"] = {"confidence": 75, "details": {"ia": True}}
             analysis["predictions"]["1X"] = {"confidence": 85, "details": {"ia": True}}
@@ -71,13 +64,11 @@ class MatchAnalyzer:
             analysis["predictions"]["BTTS_YES"] = {"confidence": 50, "details": {}}
             analysis["predictions"]["BTTS_NO"] = {"confidence": 50, "details": {}}
         else:
-            # Fallback statistique
             analysis["predictions"]["1"] = {"confidence": 60, "details": {}}
             analysis["predictions"]["1X"] = {"confidence": 70, "details": {}}
             analysis["predictions"]["+2.5"] = {"confidence": 55, "details": {}}
             analysis["predictions"]["BTTS_YES"] = {"confidence": 50, "details": {}}
             analysis["predictions"]["BTTS_NO"] = {"confidence": 50, "details": {}}
-        
         return analysis
 
     def close(self):
