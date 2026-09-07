@@ -69,16 +69,17 @@ class DataCollector:
         conn.commit()
         conn.close()
 
-    def get_upcoming_matches(self):
+        def get_upcoming_matches(self):
         upcoming = []
         for league_name, league_id in self.leagues.items():
             url = f"{self.base_url}/eventsnextleague.php?id={league_id}"
             try:
                 response = requests.get(url)
-                print(f"  {league_name} status: {response.status_code}")
                 events = response.json().get("events", [])
-                print(f"  {league_name}: {len(events)} matchs a venir")
+                count = 0
                 for event in events:
+                    if count >= 5:
+                        break
                     upcoming.append({
                         "id": event.get("idEvent"),
                         "date": event.get("dateEvent", "") + " " + event.get("strTime", "15:00"),
@@ -86,8 +87,9 @@ class DataCollector:
                         "away_team": event.get("strAwayTeam", ""),
                         "league": league_name
                     })
+                    count += 1
                 time.sleep(1)
             except Exception as e:
                 print(f"  Erreur {league_name}: {e}")
         print(f"  Total matchs a venir: {len(upcoming)}")
-        return upcoming[:20]
+        return upcoming
