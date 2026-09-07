@@ -122,7 +122,7 @@ class DataCollector:
                 events = response.json().get("events", [])
                 count = 0
                 for event in events:
-                    if count >= 3:
+                    if count >= 3:  # 3 matchs par championnat
                         break
                     upcoming.append({"id": event.get("idEvent"), "date": event.get("dateEvent", "") + " " + event.get("strTime", "15:00"), "home_team": event.get("strHomeTeam", ""), "away_team": event.get("strAwayTeam", ""), "league": league_name})
                     count += 1
