@@ -5,7 +5,7 @@ class ComboGenerator:
     def __init__(self):
         self.collector = DataCollector()
         self.analyzer = MatchAnalyzer()
-        self.min_confidence = 30
+        self.min_confidence = 50
         self.base_odds = {
             "1": {"min": 1.15, "max": 1.80},
             "1X": {"min": 1.05, "max": 1.25},
@@ -39,7 +39,7 @@ class ComboGenerator:
         analysis = self.analyzer.analyze_match(match["home_team"], match["away_team"])
         valid = []
         for ptype, data in analysis["predictions"].items():
-            if data["confidence"] >= self.min_confidence = 70  # Plus élevé pour viser 80%
+            if data["confidence"] >= 50:
                 valid.append({
                     "match_id": match["id"],
                     "home_team": match["home_team"],
