@@ -2,7 +2,7 @@ import requests
 from data_collector import DataCollector
 from analyzer import MatchAnalyzer
 
-ODDS_API_KEY = "51c58fbe9b52fe9ff85e18bde997327f"
+ODDS_API_KEY = "d3ac58acb0852fe1dcda7fc30aecadc7"
 
 class ComboGenerator:
     def __init__(self):
