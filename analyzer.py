@@ -13,17 +13,26 @@ class MatchAnalyzer:
         result = self.cursor.fetchone()
         return result[0] if result else 1500
 
-    def get_team_stats(self, team_name):
+        def get_team_stats(self, team_name):
         self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
         result = self.cursor.fetchone()
         if not result:
             return None
         return {
-            "matches_played": result[1], "wins": result[2], "draws": result[3],
-            "losses": result[4], "goals_for_avg": result[5], "goals_against_avg": result[6],
-            "btts_yes": result[7], "btts_no": result[8], "home_wins": result[9],
-            "home_draws": result[10], "home_losses": result[11],
-            "away_wins": result[12], "away_draws": result[13], "away_losses": result[14]
+            "matches_played": int(result[1] or 0),
+            "wins": int(result[2] or 0),
+            "draws": int(result[3] or 0),
+            "losses": int(result[4] or 0),
+            "goals_for_avg": float(result[5] or 0),
+            "goals_against_avg": float(result[6] or 0),
+            "btts_yes": int(result[7] or 0),
+            "btts_no": int(result[8] or 0),
+            "home_wins": int(result[9] or 0),
+            "home_draws": int(result[10] or 0),
+            "home_losses": int(result[11] or 0),
+            "away_wins": int(result[12] or 0),
+            "away_draws": int(result[13] or 0),
+            "away_losses": int(result[14] or 0)
         }
 
     def analyze_match(self, home_team, away_team):
