@@ -43,7 +43,7 @@ PAGE_ACCUEIL = """
     .btn-green:hover { background: #66bb6a; }
         @media (max-width: 768px) {
         .hero h1 { font-size: 2em; }
-        .hero h1 { font-size: 2.5em !important; }
+        .hero h1 { font-size: 2em !important; }
         .hero p { font-size: 0.85em; }
         .features { gap: 10px; padding: 20px 10px; }
         .feature { width: 100%; max-width: 300px; }
