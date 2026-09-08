@@ -83,14 +83,14 @@ PAGE_ACCUEIL = """
         <div class="price-cards">
             <div class="price-card">
                 <h3>Mensuel</h3>
-                <div class="price">30€ <span>/mois</span></div>
+                <div class="price">30€<span>/ 1mois</span></div>
                 <p>Accès complet</p>
                 <p>3 combinés/semaine</p>
-                <p>Support Telegram</p>
+                <p>Support Télégram</p>
             </div>
             <div class="price-card premium">
                 <h3>Annuel</h3>
-                <div class="price">60€ <span>/an</span></div>
+                <div class="price">60€<span>/ 1ans</span></div>
                 <p>Accès complet</p>
                 <p>3 combinés/semaine</p>
                 <p>Support prioritaire</p>
