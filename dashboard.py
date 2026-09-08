@@ -41,6 +41,19 @@ PAGE_ACCUEIL = """
     .btn:hover { background: #ffed4a; }
     .btn-green { background: #4caf50; color: #fff; }
     .btn-green:hover { background: #66bb6a; }
+        @media (max-width: 768px) {
+        .hero h1 { font-size: 1.5em; }
+        .hero p { font-size: 0.85em; }
+        .features { gap: 10px; padding: 20px 10px; }
+        .feature { width: 100%; max-width: 300px; }
+        .price-cards { gap: 10px; }
+        .price-card { width: 100%; max-width: 280px; }
+        .btn { padding: 10px 15px; font-size: 0.85em; display: block; width: 90%; margin: 8px auto; }
+    }
+    @media (max-width: 480px) {
+        .hero h1 { font-size: 1.3em; }
+        .price { font-size: 1.5em; }
+    }
     </style>
 </head>
 <body>
@@ -121,6 +134,13 @@ HTML_TEMPLATE = """
     .login-box input { width: 100%; padding: 10px; margin: 8px 0; background: #0d1137; border: 1px solid #333; color: #fff; border-radius: 5px; }
     .error { color: #f44336; margin: 10px 0; }
     .loading { text-align: center; padding: 30px; color: #ffd700; font-size: 1em; }
+        @media (max-width: 768px) {
+        .header h1 { font-size: 1.3em; }
+        .combo-stats { flex-direction: column; gap: 5px; }
+        .match-row { flex-direction: column; text-align: center; gap: 5px; }
+        .btn { display: block; width: 100%; margin: 5px 0; }
+        .login-box { margin: 20px auto; padding: 20px; }
+    }
     </style>
 </head>
 <body>
