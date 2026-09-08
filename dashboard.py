@@ -24,7 +24,7 @@ PAGE_ACCUEIL = """
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', sans-serif; background: #0a0e27; color: #fff; text-align: center; }
     .hero { padding: 50px 20px; background: linear-gradient(135deg, #1a1a3e, #0d1137); }
-    .hero h1 { color: #ffd700; font-size: 1.8em; margin-bottom: 10px; }
+    .hero h1 { color: #ffd700; font-size: 2.2em; margin-bottom: 10px; }
     .hero p { color: #aaa; font-size: 0.95em; max-width: 600px; margin: 0 auto; }
     .features { display: flex; justify-content: center; gap: 15px; padding: 30px 20px; flex-wrap: wrap; }
     .feature { background: #1a1f3a; padding: 20px; border-radius: 10px; width: 220px; }
@@ -112,7 +112,7 @@ HTML_TEMPLATE = """
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0e27; color: #fff; }
     .header { background: linear-gradient(135deg, #1a1a3e, #0d1137); padding: 15px; text-align: center; border-bottom: 2px solid #ffd700; }
-    .header h1 { color: #ffd700; font-size: 1.5em; }
+    .header h1 { color: #ffd700; font-size: 1.8em; }
     .header p { color: #aaa; margin-top: 5px; font-size: 0.85em; }
     .container { max-width: 1200px; margin: 0 auto; padding: 15px; }
     .combo-card { background: #1a1f3a; border-radius: 10px; padding: 15px; margin: 15px 0; border-left: 4px solid #ffd700; }
