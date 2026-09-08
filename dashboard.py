@@ -20,24 +20,24 @@ PAGE_ACCUEIL = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Triple Elite VIP - Accueil</title>
-        <style>
+            <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', sans-serif; background: #0a0e27; color: #fff; text-align: center; }
-    .hero { padding: 80px 20px; background: linear-gradient(135deg, #1a1a3e, #0d1137); }
-    .hero h1 { color: #ffd700; font-size: 3em; margin-bottom: 10px; }
-    .hero p { color: #aaa; font-size: 1.2em; max-width: 600px; margin: 0 auto; }
-    .features { display: flex; justify-content: center; gap: 30px; padding: 50px 20px; flex-wrap: wrap; }
-    .feature { background: #1a1f3a; padding: 30px; border-radius: 10px; width: 280px; }
-    .feature h3 { color: #ffd700; margin-bottom: 10px; }
-    .feature p { color: #aaa; }
-    .pricing { padding: 50px 20px; }
-    .pricing h2 { color: #ffd700; margin-bottom: 30px; }
-    .price-cards { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; }
-    .price-card { background: #1a1f3a; padding: 40px 30px; border-radius: 10px; width: 250px; border: 2px solid #333; }
+    .hero { padding: 50px 20px; background: linear-gradient(135deg, #1a1a3e, #0d1137); }
+    .hero h1 { color: #ffd700; font-size: 1.8em; margin-bottom: 10px; }
+    .hero p { color: #aaa; font-size: 0.95em; max-width: 600px; margin: 0 auto; }
+    .features { display: flex; justify-content: center; gap: 15px; padding: 30px 20px; flex-wrap: wrap; }
+    .feature { background: #1a1f3a; padding: 20px; border-radius: 10px; width: 220px; }
+    .feature h3 { color: #ffd700; font-size: 1em; margin-bottom: 8px; }
+    .feature p { color: #aaa; font-size: 0.85em; }
+    .pricing { padding: 30px 20px; }
+    .pricing h2 { color: #ffd700; font-size: 1.5em; margin-bottom: 20px; }
+    .price-cards { display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; }
+    .price-card { background: #1a1f3a; padding: 25px 20px; border-radius: 10px; width: 200px; border: 2px solid #333; }
     .price-card.premium { border-color: #ffd700; }
-    .price { font-size: 2.5em; color: #ffd700; font-weight: bold; }
+    .price { font-size: 1.8em; color: #ffd700; font-weight: bold; }
     .price span { font-size: 0.4em; color: #aaa; }
-    .btn { background: #ffd700; color: #0a0e27; padding: 15px 40px; font-weight: bold; border-radius: 5px; text-decoration: none; display: inline-block; margin: 20px 10px; }
+    .btn { background: #ffd700; color: #0a0e27; padding: 10px 20px; font-weight: bold; border-radius: 5px; text-decoration: none; display: inline-block; margin: 8px 5px; font-size: 0.9em; }
     .btn:hover { background: #ffed4a; }
     .btn-green { background: #4caf50; color: #fff; }
     .btn-green:hover { background: #66bb6a; }
@@ -95,32 +95,32 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Triple Elite VIP - Dashboard</title>
-        <style>
+            <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0e27; color: #fff; }
-    .header { background: linear-gradient(135deg, #1a1a3e, #0d1137); padding: 20px; text-align: center; border-bottom: 2px solid #ffd700; }
-    .header h1 { color: #ffd700; font-size: 2em; }
-    .header p { color: #aaa; margin-top: 5px; }
-    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-    .combo-card { background: #1a1f3a; border-radius: 10px; padding: 20px; margin: 20px 0; border-left: 4px solid #ffd700; }
-    .combo-card h2 { color: #ffd700; margin-bottom: 10px; }
-    .combo-stats { display: flex; gap: 20px; margin-bottom: 15px; }
-    .stat { background: #0d1137; padding: 10px 15px; border-radius: 5px; }
-    .stat-label { color: #aaa; font-size: 0.8em; }
-    .stat-value { color: #ffd700; font-size: 1.2em; font-weight: bold; }
-    .match-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; margin: 8px 0; background: #0d1137; border-radius: 5px; }
-    .match-teams { font-size: 1.1em; }
-    .match-league { color: #aaa; font-size: 0.8em; }
-    .match-prediction { color: #4caf50; font-weight: bold; }
-    .match-odds { color: #ffd700; font-weight: bold; }
-    .match-confidence { color: #2196f3; }
-    .btn { background: #ffd700; color: #0a0e27; border: none; padding: 12px 30px; font-size: 1em; font-weight: bold; border-radius: 5px; cursor: pointer; margin: 10px; }
+    .header { background: linear-gradient(135deg, #1a1a3e, #0d1137); padding: 15px; text-align: center; border-bottom: 2px solid #ffd700; }
+    .header h1 { color: #ffd700; font-size: 1.5em; }
+    .header p { color: #aaa; margin-top: 5px; font-size: 0.85em; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 15px; }
+    .combo-card { background: #1a1f3a; border-radius: 10px; padding: 15px; margin: 15px 0; border-left: 4px solid #ffd700; }
+    .combo-card h2 { color: #ffd700; font-size: 1.1em; margin-bottom: 8px; }
+    .combo-stats { display: flex; gap: 10px; margin-bottom: 10px; }
+    .stat { background: #0d1137; padding: 8px 12px; border-radius: 5px; }
+    .stat-label { color: #aaa; font-size: 0.7em; }
+    .stat-value { color: #ffd700; font-size: 1em; font-weight: bold; }
+    .match-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; margin: 6px 0; background: #0d1137; border-radius: 5px; }
+    .match-teams { font-size: 0.9em; }
+    .match-league { color: #aaa; font-size: 0.7em; }
+    .match-prediction { color: #4caf50; font-weight: bold; font-size: 0.85em; }
+    .match-odds { color: #ffd700; font-weight: bold; font-size: 0.9em; }
+    .match-confidence { color: #2196f3; font-size: 0.85em; }
+    .btn { background: #ffd700; color: #0a0e27; border: none; padding: 10px 20px; font-size: 0.9em; font-weight: bold; border-radius: 5px; cursor: pointer; margin: 5px; }
     .btn:hover { background: #ffed4a; }
     .btn-green { background: #4caf50; color: #fff; }
-    .login-box { max-width: 400px; margin: 100px auto; background: #1a1f3a; padding: 30px; border-radius: 10px; text-align: center; }
-    .login-box input { width: 100%; padding: 10px; margin: 10px 0; background: #0d1137; border: 1px solid #333; color: #fff; border-radius: 5px; }
+    .login-box { max-width: 400px; margin: 50px auto; background: #1a1f3a; padding: 25px; border-radius: 10px; text-align: center; }
+    .login-box input { width: 100%; padding: 10px; margin: 8px 0; background: #0d1137; border: 1px solid #333; color: #fff; border-radius: 5px; }
     .error { color: #f44336; margin: 10px 0; }
-    .loading { text-align: center; padding: 50px; color: #ffd700; font-size: 1.2em; }
+    .loading { text-align: center; padding: 30px; color: #ffd700; font-size: 1em; }
     </style>
 </head>
 <body>
