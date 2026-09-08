@@ -137,9 +137,9 @@ HTML_TEMPLATE = """
     .loading { text-align: center; padding: 30px; color: #ffd700; font-size: 1em; }
         @media (max-width: 768px) {
         .header h1 { font-size: 1.6em; }
-        .combo-stats { flex-direction: column; gap: 5px; }
-        .match-row { flex-direction: column; text-align: center; gap: 5px; }
-        .btn { display: block; width: 100%; margin: 5px 0; }
+        .match-row { flex-direction: row; text-align: left; }
+        .combo-stats { flex-direction: row; }
+        .btn { display: inline-block; width: auto; margin: 5px; padding: 10px 20px; }
         .login-box { margin: 20px auto; padding: 20px; }
     }
     </style>
