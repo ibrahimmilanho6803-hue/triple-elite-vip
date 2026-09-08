@@ -8,7 +8,7 @@ class MatchAnalyzer:
         self.db = 'triple_elite.db'
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
-        self.client = anthropic.Anthropic(api_key="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")
+        self.client = anthropic.Anthropic(api_key="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")
 
     def get_team_stats(self, team_name):
         self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
