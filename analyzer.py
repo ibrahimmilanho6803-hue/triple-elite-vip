@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import math
 import anthropic
@@ -8,7 +9,7 @@ class MatchAnalyzer:
         self.db = 'triple_elite.db'
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
-        self.client = anthropic.Anthropic(api_key="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")
+        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY")
 
     def get_team_stats(self, team_name):
         self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
