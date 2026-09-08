@@ -42,7 +42,7 @@ PAGE_PAIEMENT = """
 <body>
     <div class="container">
         <h1>Choisissez votre abonnement</h1>
-        <input type="email" id="email" placeholder="Votre adresse email" required>
+        <input type="email" id="email" placeholder="Votre adresse E-mail" required>
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
             <div class="price">30€<span>/ 1mois</span></div>
