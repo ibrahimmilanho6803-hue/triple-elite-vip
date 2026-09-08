@@ -168,10 +168,10 @@ HTML_TEMPLATE = """
         </div>
         {% else %}
         <div style="text-align: center; padding: 20px;">
-            <button onclick="generateCombos()" class="btn">Generer les combines</button>
+            <button onclick="generateCombos()" class="btn">Générer les combinés</button>
             <button onclick="window.location.href='https://triple-elite-vip.com'" class="btn btn-green">Renouveler</button>
             <button onclick="showHistory()" class="btn">Historique</button>
-            <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Deconnexion</button></a>
+            <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Déconnexion</button></a>
         </div>
         <div id="combos-container">
             <div class="loading" id="loading" style="display:none;">Analyse en cours...</div>
