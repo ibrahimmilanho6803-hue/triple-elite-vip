@@ -42,7 +42,7 @@ PAGE_ACCUEIL = """
     .btn-green { background: #4caf50; color: #fff; }
     .btn-green:hover { background: #66bb6a; }
         @media (max-width: 768px) {
-        .hero h1 { font-size: 1.5em; }
+        .hero h1 { font-size: 2em; }
         .hero p { font-size: 0.85em; }
         .features { gap: 10px; padding: 20px 10px; }
         .feature { width: 100%; max-width: 300px; }
@@ -135,7 +135,7 @@ HTML_TEMPLATE = """
     .error { color: #f44336; margin: 10px 0; }
     .loading { text-align: center; padding: 30px; color: #ffd700; font-size: 1em; }
         @media (max-width: 768px) {
-        .header h1 { font-size: 1.3em; }
+        .header h1 { font-size: 1.6em; }
         .combo-stats { flex-direction: column; gap: 5px; }
         .match-row { flex-direction: column; text-align: center; gap: 5px; }
         .btn { display: block; width: 100%; margin: 5px 0; }
