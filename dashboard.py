@@ -141,6 +141,9 @@ HTML_TEMPLATE = """
         .combo-stats { flex-direction: row; }
         .btn { display: inline-block; width: auto; margin: 5px; padding: 10px 20px; }
         .login-box { margin: 20px auto; padding: 20px; }
+        .match-row { flex-direction: row; text-align: left; flex-wrap: wrap; gap: 10px; padding: 15px; }
+        .match-teams { font-size: 1em; }
+        .match-prediction, .match-odds, .match-confidence { font-size: 0.9em; }
     }
     </style>
 </head>
