@@ -154,14 +154,14 @@ HTML_TEMPLATE = """
         <div class="login-box">
             <h2>Connexion VIP</h2>
             <form method="POST" action="/login">
-                <input type="email" name="email" placeholder="Email" required>
-                <input type="text" name="license_key" placeholder="Cle de licence" required>
+                <input type="email" name="email" placeholder="E-mail" required>
+                <input type="text" name="license_key" placeholder="Clé de licence" required>
                 <button type="submit" class="btn">Se connecter</button>
             </form>
             {% if error %}
             <p class="error">{{ error }}</p>
             {% endif %}
-            <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour a l'accueil</a></p>
+            <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour à l'accueil</a></p>
         </div>
         {% else %}
         <div style="text-align: center; padding: 20px;">
