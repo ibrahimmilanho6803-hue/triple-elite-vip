@@ -43,7 +43,7 @@ PAGE_ACCUEIL = """
     .btn-green:hover { background: #66bb6a; }
         @media (max-width: 768px) {
         .hero h1 { font-size: 2em; }
-        .hero h1 { font-size: 2em !important; }
+        .hero h1 { font-size: 1.8em !important; }
         .hero p { font-size: 0.85em; }
         .features { gap: 10px; padding: 20px 10px; }
         .feature { width: 100%; max-width: 300px; }
@@ -60,22 +60,22 @@ PAGE_ACCUEIL = """
 <body>
     <div class="hero">
         <h1>Triple Elite VIP</h1>
-        <p>Le logiciel qui analyse 3 championnats et genere 3 combines optimises a 2.50+ chaque semaine</p>
+        <p>Le logiciel qui analyse 3 championnats et génère 3 combinés optimiser à 2.50+ chaque semaine</p>
         <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
-        <a href="/login" class="btn">Acces Client VIP</a>
+        <a href="/login" class="btn">Accès Client VIP</a>
     </div>
     <div class="features">
         <div class="feature">
             <h3>Premier League</h3>
-            <p>Analyse complete du championnat Anglais</p>
+            <p>Analyse complète du championnat Anglais</p>
         </div>
         <div class="feature">
             <h3>La Liga</h3>
-            <p>Analyse complete du championnat Espagnol</p>
+            <p>Analyse complète du championnat Espagnol</p>
         </div>
         <div class="feature">
             <h3>Bundesliga</h3>
-            <p>Analyse complete du championnat Allemand</p>
+            <p>Analyse complète du championnat Allemand</p>
         </div>
     </div>
     <div class="pricing">
@@ -83,16 +83,16 @@ PAGE_ACCUEIL = """
         <div class="price-cards">
             <div class="price-card">
                 <h3>Mensuel</h3>
-                <div class="price">30<span>/mois</span></div>
-                <p>Acces complet</p>
-                <p>3 combines/semaine</p>
+                <div class="price">30€ <span>/mois</span></div>
+                <p>Accès complet</p>
+                <p>3 combinés/semaine</p>
                 <p>Support Telegram</p>
             </div>
             <div class="price-card premium">
                 <h3>Annuel</h3>
-                <div class="price">60<span>/an</span></div>
-                <p>Acces complet</p>
-                <p>3 combines/semaine</p>
+                <div class="price">60€ <span>/an</span></div>
+                <p>Accès complet</p>
+                <p>3 combinés/semaine</p>
                 <p>Support prioritaire</p>
             </div>
         </div>
@@ -147,7 +147,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="header">
         <h1>Triple Elite VIP</h1>
-        <p>Predictions Football - 3 Championnats - Combines 2.50+</p>
+        <p>Prédictions Football - 3 Championnats - Combinés 2.50+</p>
     </div>
     <div class="container">
         {% if not authenticated %}
