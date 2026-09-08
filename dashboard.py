@@ -20,7 +20,7 @@ PAGE_ACCUEIL = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Triple Elite VIP - Accueil</title>
-    <style>
+        <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', sans-serif; background: #0a0e27; color: #fff; text-align: center; }
     .hero { padding: 80px 20px; background: linear-gradient(135deg, #1a1a3e, #0d1137); }
@@ -95,7 +95,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Triple Elite VIP - Dashboard</title>
-    <style>
+        <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0e27; color: #fff; }
     .header { background: linear-gradient(135deg, #1a1a3e, #0d1137); padding: 20px; text-align: center; border-bottom: 2px solid #ffd700; }
@@ -104,11 +104,11 @@ HTML_TEMPLATE = """
     .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
     .combo-card { background: #1a1f3a; border-radius: 10px; padding: 20px; margin: 20px 0; border-left: 4px solid #ffd700; }
     .combo-card h2 { color: #ffd700; margin-bottom: 10px; }
-    .combo-stats { display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap; }
+    .combo-stats { display: flex; gap: 20px; margin-bottom: 15px; }
     .stat { background: #0d1137; padding: 10px 15px; border-radius: 5px; }
     .stat-label { color: #aaa; font-size: 0.8em; }
     .stat-value { color: #ffd700; font-size: 1.2em; font-weight: bold; }
-    .match-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; margin: 8px 0; background: #0d1137; border-radius: 5px; flex-wrap: wrap; gap: 8px; }
+    .match-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; margin: 8px 0; background: #0d1137; border-radius: 5px; }
     .match-teams { font-size: 1.1em; }
     .match-league { color: #aaa; font-size: 0.8em; }
     .match-prediction { color: #4caf50; font-weight: bold; }
