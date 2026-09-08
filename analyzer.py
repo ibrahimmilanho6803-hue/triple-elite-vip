@@ -35,7 +35,6 @@ class MatchAnalyzer:
 
     def analyze_match(self, home_team, away_team):
         analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        print(f"Utilisation cle: {self.client.api_key[:20]}...")
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-5",
