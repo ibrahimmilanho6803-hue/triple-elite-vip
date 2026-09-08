@@ -8,7 +8,7 @@ class MatchAnalyzer:
         self.db = 'triple_elite.db'
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
-        self.client = anthropic.Anthropic(api_key="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")
+        self.client = anthropic.Anthropic(api_key="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")
 
     def get_team_stats(self, team_name):
         self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
@@ -37,7 +37,7 @@ class MatchAnalyzer:
         print(f"Utilisation cle: {self.client.api_key[:20]}...")
         try:
             response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-5",
                 max_tokens=50,
                 messages=[{"role": "user", "content": f"Match de football : {home_team} vs {away_team}. Reponds UNIQUEMENT avec : 1 (victoire domicile), N (nul), ou 2 (victoire exterieur). Pas de phrase."}]
             )
