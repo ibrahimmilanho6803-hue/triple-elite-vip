@@ -151,7 +151,7 @@ Reponds UNIQUEMENT en JSON valide (aucun texte avant/apres) avec cette structure
 
         return analysis
 
-        def analyze_multiple_matches(self, matches):
+     def analyze_multiple_matches(self, matches):
         """Analyse plusieurs matchs en UN SEUL appel IA"""
         match_list = []
         for m in matches:
