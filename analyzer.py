@@ -51,7 +51,12 @@ class MatchAnalyzer:
         if real_odds:
             odds_txt = f"V1: {real_odds.get('home', 'N/A')} | Nul: {real_odds.get('draw', 'N/A')} | V2: {real_odds.get('away', 'N/A')}"
 
-        prompt = f"""Tu es un analyste football expert. Analyse ce match et donne un pronostic complet.
+                prompt = f"""Analyse ces matchs. Pour CHACUN donne : prediction (1/N/2), confidence (0-100), btts_oui (0-100), total_2_5_plus (0-100).
+
+MATCHS :
+{chr(10).join(match_list)}
+
+JSON uniquement : {{"analyses": [{{"prediction":"1","confidence":70,"btts_oui":60,"total_2_5_plus":55}}, ...]}}"""
 
 MATCH : {home_team} vs {away_team}
 
@@ -84,7 +89,7 @@ Reponds UNIQUEMENT en JSON valide (aucun texte avant/apres) avec cette structure
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-5",
-                max_tokens=400,
+                max_tokens=800,
                 messages=[{"role": "user", "content": prompt}]
             )
             ia_text = response.content[0].text.strip()
