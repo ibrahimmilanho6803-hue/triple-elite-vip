@@ -9,7 +9,7 @@ class ComboGenerator:
         self.collector = DataCollector()
         self.analyzer = MatchAnalyzer()
         self.min_confidence = 50
-        
+
         self.prediction_types = {
             "V1": "Victoire equipe 1",
             "V2": "Victoire equipe 2",
@@ -53,8 +53,12 @@ class ComboGenerator:
             "2X_ET_1.5-": "2X et moins de 1.5 buts",
             "2X_ET_2.5-": "2X et moins de 2.5 buts",
             "2X_ET_3.5-": "2X et moins de 3.5 buts",
-            "BTTS_OUI": "Les deux equipes marquent",
-            "BTTS_NON": "Une equipe ne marque pas"
+            "BTTS_OUI": "Les deux equipes marquent OUI",
+            "BTTS_NON": "Les deux equipes marquent NON",
+            "AU_MOINS_0.5": "Au moins une equipe marque plus de 0.5 but",
+            "AU_MOINS_1.5": "Au moins une equipe marque plus de 1.5 buts",
+            "AU_MOINS_2.5": "Au moins une equipe marque plus de 2.5 buts",
+            "AU_MOINS_3.5": "Au moins une equipe marque plus de 3.5 buts"
         }
 
     def get_real_odds(self, home_team, away_team):
@@ -66,24 +70,29 @@ class ComboGenerator:
             if isinstance(data, dict):
                 return None
             for match in data:
-                if home_team.lower() in match.get("home_team", "").lower():
+                home_api = match.get("home_team", "").lower()
+                away_api = match.get("away_team", "").lower()
+                home_search = home_team.lower()
+                away_search = away_team.lower()
+                if (home_search in home_api or home_api in home_search) and (away_search in away_api or away_api in away_search):
                     odds = {}
                     for bookmaker in match.get("bookmakers", []):
                         for market in bookmaker.get("markets", []):
                             if market["key"] == "h2h":
                                 for outcome in market["outcomes"]:
-                                    if outcome["name"] == home_team:
+                                    if outcome["name"] == match["home_team"]:
                                         odds["home"] = outcome["price"]
-                                    elif outcome["name"] == away_team:
+                                    elif outcome["name"] == match["away_team"]:
                                         odds["away"] = outcome["price"]
                                     elif outcome["name"] == "Draw":
                                         odds["draw"] = outcome["price"]
                             elif market["key"] == "totals":
                                 for outcome in market["outcomes"]:
-                                    if outcome["name"] == "Over" and outcome.get("point") == 2.5:
-                                        odds["over_2_5"] = outcome["price"]
-                                    elif outcome["name"] == "Under" and outcome.get("point") == 2.5:
-                                        odds["under_2_5"] = outcome["price"]
+                                    pt = outcome.get("point")
+                                    if outcome["name"] == "Over":
+                                        odds[f"over_{pt}"] = outcome["price"]
+                                    elif outcome["name"] == "Under":
+                                        odds[f"under_{pt}"] = outcome["price"]
                             elif market["key"] == "btts":
                                 for outcome in market["outcomes"]:
                                     if outcome["name"] == "Yes":
@@ -98,36 +107,14 @@ class ComboGenerator:
             return None
 
     def get_match_predictions(self, match):
-        analysis = self.analyzer.analyze_match(match["home_team"], match["away_team"])
         real_odds = self.get_real_odds(match["home_team"], match["away_team"])
+        analysis = self.analyzer.analyze_match(match["home_team"], match["away_team"], real_odds)
         valid = []
-        
         for ptype, label in self.prediction_types.items():
-            confidence = 50  # Base
-            estimated = self.get_fallback_odds(ptype)
-            
-            # Utiliser l'analyse IA et les cotes reelles
-            if ptype == "V1":
-                confidence = analysis["predictions"].get("1", {}).get("confidence", 50)
-                if real_odds and "home" in real_odds:
-                    estimated = real_odds["home"]
-            elif ptype == "V2":
-                confidence = analysis["predictions"].get("2", {}).get("confidence", 50)
-                if real_odds and "away" in real_odds:
-                    estimated = real_odds["away"]
-            elif ptype == "1X":
-                confidence = analysis["predictions"].get("1X", {}).get("confidence", 50)
-            elif ptype == "2X":
-                confidence = 50
-            elif ptype == "BTTS_OUI":
-                confidence = analysis["predictions"].get("BTTS_YES", {}).get("confidence", 50)
-                if real_odds and "btts_yes" in real_odds:
-                    estimated = real_odds["btts_yes"]
-            elif ptype == "BTTS_NON":
-                confidence = analysis["predictions"].get("BTTS_NO", {}).get("confidence", 50)
-                if real_odds and "btts_no" in real_odds:
-                    estimated = real_odds["btts_no"]
-            
+            confidence = self.get_confidence(ptype, analysis)
+            estimated = self.get_odds_for_type(ptype, real_odds)
+            if estimated is None:
+                estimated = self.get_fallback_odds(ptype)
             if confidence >= self.min_confidence:
                 valid.append({
                     "match_id": match["id"],
@@ -141,22 +128,74 @@ class ComboGenerator:
                 })
         return valid
 
+    def get_confidence(self, ptype, analysis):
+        preds = analysis.get("predictions", {})
+        if ptype == "V1":
+            return preds.get("1", {}).get("confidence", 50)
+        elif ptype == "V2":
+            return preds.get("2", {}).get("confidence", 50)
+        elif ptype == "1X":
+            return preds.get("1X", {}).get("confidence", 50)
+        elif ptype == "2X":
+            return preds.get("2X", {}).get("confidence", 50)
+        elif ptype.startswith("BTTS"):
+            key = "BTTS_YES" if ptype == "BTTS_OUI" else "BTTS_NO"
+            return preds.get(key, {}).get("confidence", 50)
+        elif "0.5+" in ptype or "1.5+" in ptype or "2.5+" in ptype or "3.5+" in ptype:
+            return preds.get("+2.5", {}).get("confidence", 50)
+        elif "0.5-" in ptype or "1.5-" in ptype or "2.5-" in ptype or "3.5-" in ptype:
+            return preds.get("-2.5", {}).get("confidence", 50)
+        return 50
+
+    def get_odds_for_type(self, ptype, real_odds):
+        if not real_odds:
+            return None
+        if ptype == "V1" and "home" in real_odds:
+            return real_odds["home"]
+        if ptype == "V2" and "away" in real_odds:
+            return real_odds["away"]
+        if ptype == "1X" and "home" in real_odds and "draw" in real_odds:
+            return round(1 / (1/real_odds["home"] + 1/real_odds["draw"]), 2)
+        if ptype == "2X" and "away" in real_odds and "draw" in real_odds:
+            return round(1 / (1/real_odds["away"] + 1/real_odds["draw"]), 2)
+        if ptype == "BTTS_OUI" and "btts_yes" in real_odds:
+            return real_odds["btts_yes"]
+        if ptype == "BTTS_NON" and "btts_no" in real_odds:
+            return real_odds["btts_no"]
+        if "0.5+" in ptype and "over_0.5" in real_odds:
+            return real_odds["over_0.5"]
+        if "1.5+" in ptype and "over_1.5" in real_odds:
+            return real_odds["over_1.5"]
+        if "2.5+" in ptype and "over_2.5" in real_odds:
+            return real_odds["over_2.5"]
+        if "3.5+" in ptype and "over_3.5" in real_odds:
+            return real_odds["over_3.5"]
+        if "0.5-" in ptype and "under_0.5" in real_odds:
+            return real_odds["under_0.5"]
+        if "1.5-" in ptype and "under_1.5" in real_odds:
+            return real_odds["under_1.5"]
+        if "2.5-" in ptype and "under_2.5" in real_odds:
+            return real_odds["under_2.5"]
+        if "3.5-" in ptype and "under_3.5" in real_odds:
+            return real_odds["under_3.5"]
+        return None
+
     def get_fallback_odds(self, ptype):
-        if "V1" in ptype:
+        if ptype == "V1":
             return 1.80
-        elif "V2" in ptype:
+        elif ptype == "V2":
             return 3.50
-        elif "1X" in ptype:
+        elif ptype == "1X":
             return 1.25
-        elif "2X" in ptype:
+        elif ptype == "2X":
             return 1.35
         elif "0.5+" in ptype:
             return 1.10
-        elif "1.5+" in ptype:
+        elif "1+" in ptype or "1.5+" in ptype:
             return 1.30
-        elif "2.5+" in ptype:
+        elif "2+" in ptype or "2.5+" in ptype:
             return 1.70
-        elif "3.5+" in ptype:
+        elif "3+" in ptype or "3.5+" in ptype:
             return 2.50
         elif "0.5-" in ptype:
             return 4.00
@@ -164,10 +203,14 @@ class ComboGenerator:
             return 2.20
         elif "2.5-" in ptype:
             return 1.55
-        elif "BTTS_OUI" in ptype:
+        elif "3.5-" in ptype:
+            return 1.35
+        elif ptype == "BTTS_OUI":
             return 1.65
-        elif "BTTS_NON" in ptype:
+        elif ptype == "BTTS_NON":
             return 1.60
+        elif "AU_MOINS" in ptype:
+            return 1.40
         return 1.50
 
     def close(self):
