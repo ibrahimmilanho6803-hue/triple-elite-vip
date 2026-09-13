@@ -272,12 +272,11 @@ def api_generate():
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs"})
         
-        # Limiter à 9 matchs maximum
         upcoming = upcoming[:9]
         
-        # UN SEUL appel IA pour tous les matchs
+        print(f"Lancement analyse IA pour {len(upcoming)} matchs")
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
-        print(f"Analyses IA: {len(analyses_ia)}")
+        print(f"Analyses IA recues: {len(analyses_ia)}")
         
         all_preds = []
         for i, match in enumerate(upcoming):
@@ -292,7 +291,6 @@ def api_generate():
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
         
-        # Grouper par championnat
         from itertools import combinations, product
         matchs_par_championnat = {}
         for pred in all_preds:
@@ -338,7 +336,6 @@ def api_generate():
     except Exception as e:
         print(f"ERREUR: {e}")
         return jsonify({"error": str(e)})
-
 @app.route('/api/history')
 def api_history():
     if not os.path.exists("results"):
