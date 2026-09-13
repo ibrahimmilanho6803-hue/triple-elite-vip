@@ -151,7 +151,7 @@ Reponds UNIQUEMENT en JSON valide (aucun texte avant/apres) avec cette structure
 
         return analysis
 
-      def analyze_multiple_matches(self, matches):
+    def analyze_multiple_matches(self, matches):
         """Analyse plusieurs matchs en UN SEUL appel IA"""
         match_list = []
         for m in matches:
@@ -188,6 +188,19 @@ Aucun texte avant ou apres le JSON."""
         except Exception as e:
             print(f"IA erreur: {e}")
             return []
+
+    def build_analysis_from_ia(self, home_team, away_team, ia_data):
+        analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
+        pred = ia_data.get("prediction", "1")
+        conf = int(ia_data.get("confidence", 60))
+        analysis["predictions"]["1"] = {"confidence": conf if pred == "1" else 30, "details": {"ia": True}}
+        analysis["predictions"]["2"] = {"confidence": conf if pred == "2" else 30, "details": {"ia": True}}
+        analysis["predictions"]["1X"] = {"confidence": conf if pred in ["1", "N"] else 45, "details": {"ia": True}}
+        analysis["predictions"]["2X"] = {"confidence": conf if pred in ["2", "N"] else 45, "details": {"ia": True}}
+        analysis["predictions"]["+2.5"] = {"confidence": int(ia_data.get("total_2_5_plus", 55)), "details": {"ia": True}}
+        analysis["predictions"]["BTTS_YES"] = {"confidence": int(ia_data.get("btts_oui", 50)), "details": {"ia": True}}
+        analysis["predictions"]["BTTS_NO"] = {"confidence": int(ia_data.get("btts_non", 50)), "details": {"ia": True}}
+        return analysis
 
     def close(self):
         self.conn.close()
