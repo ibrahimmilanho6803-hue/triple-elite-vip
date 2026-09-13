@@ -213,5 +213,43 @@ class ComboGenerator:
             return 1.40
         return 1.50
 
+        def get_predictions_from_analysis(self, match, analysis, real_odds=None):
+        valid = []
+        for ptype, label in self.prediction_types.items():
+            confidence = 50
+            estimated = self.get_fallback_odds(ptype)
+            
+            if ptype == "V1":
+                confidence = analysis["predictions"].get("1", {}).get("confidence", 50)
+                if real_odds and "home" in real_odds:
+                    estimated = real_odds["home"]
+            elif ptype == "V2":
+                confidence = analysis["predictions"].get("2", {}).get("confidence", 50)
+                if real_odds and "away" in real_odds:
+                    estimated = real_odds["away"]
+            elif ptype == "1X":
+                confidence = analysis["predictions"].get("1X", {}).get("confidence", 50)
+            elif ptype == "2X":
+                confidence = analysis["predictions"].get("2X", {}).get("confidence", 50)
+            elif ptype == "BTTS_OUI":
+                confidence = analysis["predictions"].get("BTTS_YES", {}).get("confidence", 50)
+            elif ptype == "BTTS_NON":
+                confidence = analysis["predictions"].get("BTTS_NO", {}).get("confidence", 50)
+            elif "2.5+" in ptype:
+                confidence = analysis["predictions"].get("+2.5", {}).get("confidence", 50)
+            
+            if confidence >= self.min_confidence:
+                valid.append({
+                    "match_id": match["id"],
+                    "home_team": match["home_team"],
+                    "away_team": match["away_team"],
+                    "league": match["league"],
+                    "type": ptype,
+                    "type_name": label,
+                    "confidence": confidence,
+                    "estimated_odds": estimated
+                })
+        return valid
+
     def close(self):
         self.analyzer.close()
