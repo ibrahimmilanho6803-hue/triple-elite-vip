@@ -151,5 +151,43 @@ Reponds UNIQUEMENT en JSON valide (aucun texte avant/apres) avec cette structure
 
         return analysis
 
+        def analyze_multiple_matches(self, matches):
+        """Analyse plusieurs matchs en UN SEUL appel IA"""
+        match_list = []
+        for m in matches:
+            home_stats = self.get_team_stats(m["home_team"])
+            away_stats = self.get_team_stats(m["away_team"])
+            home_txt = f"{home_stats['wins']}V{home_stats['draws']}N{home_stats['losses']}D" if home_stats else "N/A"
+            away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
+            match_list.append(f"{m['home_team']} (dom, {home_txt}) vs {m['away_team']} (ext, {away_txt}) [{m['league']}]")
+        
+        prompt = f"""Analyse ces matchs de football et donne pour CHACUN un pronostic.
+
+MATCHS :
+{chr(10).join(match_list)}
+
+Reponds UNIQUEMENT en JSON valide avec un tableau :
+{{"analyses": [
+  {{"match": "Equipe1 vs Equipe2", "prediction": "1"/"N"/"2", "confidence": 0-100, "total_2_5_plus": 0-100, "btts_oui": 0-100}},
+  ...
+]}}
+
+Aucun texte avant ou apres le JSON."""
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-5",
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            ia_text = response.content[0].text.strip()
+            print(f"IA reponse: {ia_text[:300]}")
+            ia_text = ia_text.replace("```json", "").replace("```", "").strip()
+            ia_data = json.loads(ia_text)
+            return ia_data.get("analyses", [])
+        except Exception as e:
+            print(f"IA erreur: {e}")
+            return []
+
     def close(self):
         self.conn.close()
