@@ -272,7 +272,7 @@ def api_generate():
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs"})
         
-                upcoming = upcoming[:3]
+            upcoming = upcoming[:3]
         
         print(f"Lancement analyse IA pour {len(upcoming)} matchs")
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
