@@ -35,7 +35,7 @@ class MatchAnalyzer:
             away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
             match_list.append(f"{m['home_team']} (dom, {home_txt}) vs {m['away_team']} (ext, {away_txt}) [{m['league']}]")
         
-                prompt = f"""Analyse ces matchs. Pour CHACUN donne ces valeurs (0-100) :
+        prompt = f"""Analyse ces matchs. Pour CHACUN donne ces valeurs (0-100) :
 home_team, away_team, v1, v2, 1x, 2x, over_1_5, over_2_5, btts_oui, btts_non
 
 MATCHS :
