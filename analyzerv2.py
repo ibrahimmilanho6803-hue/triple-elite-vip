@@ -55,7 +55,9 @@ Reponds UNIQUEMENT avec un JSON valide. Aucun texte avant ou apres."""
             ia_text = ia_text.strip()
             print(f"IA reponse: {ia_text[:300]}")
             ia_text = ia_text.replace("```json", "").replace("```", "").strip()
-            ia_data = json.loads(ia_text)
+                        ia_data = json.loads(ia_text)
+            if isinstance(ia_data, list):
+                return ia_data
             return ia_data.get("analyses", [])
         except Exception as e:
             print(f"IA erreur: {e}")
