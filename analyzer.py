@@ -34,29 +34,22 @@ class MatchAnalyzer:
             "away_losses": int(result[15] or 0)
         }
 
-    def analyze_match(self, home_team, away_team, real_odds=None):
-        analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        home_stats = self.get_team_stats(home_team)
-        away_stats = self.get_team_stats(away_team)
-
-        stats_home_txt = "Non disponible"
-        if home_stats:
-            stats_home_txt = f"{home_stats['wins']}V {home_stats['draws']}N {home_stats['losses']}D, {home_stats['goals_for_avg']} buts marques, {home_stats['goals_against_avg']} encaisses par match"
-
-        stats_away_txt = "Non disponible"
-        if away_stats:
-            stats_away_txt = f"{away_stats['wins']}V {away_stats['draws']}N {away_stats['losses']}D, {away_stats['goals_for_avg']} buts marques, {away_stats['goals_against_avg']} encaisses par match"
-
-        odds_txt = "Non disponibles"
-        if real_odds:
-            odds_txt = f"V1: {real_odds.get('home', 'N/A')} | Nul: {real_odds.get('draw', 'N/A')} | V2: {real_odds.get('away', 'N/A')}"
-
-                prompt = f"""Analyse ces matchs. Pour CHACUN donne : prediction (1/N/2), confidence (0-100), btts_oui (0-100), total_2_5_plus (0-100).
+    def analyze_multiple_matches(self, matches):
+        """Analyse plusieurs matchs en UN SEUL appel IA"""
+        match_list = []
+        for m in matches:
+            home_stats = self.get_team_stats(m["home_team"])
+            away_stats = self.get_team_stats(m["away_team"])
+            home_txt = f"{home_stats['wins']}V{home_stats['draws']}N{home_stats['losses']}D" if home_stats else "N/A"
+            away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
+            match_list.append(f"{m['home_team']} (dom, {home_txt}) vs {m['away_team']} (ext, {away_txt}) [{m['league']}]")
+        
+        prompt = f"""Analyse ces matchs. Pour CHACUN donne : prediction (1/N/2), confidence (0-100), btts_oui (0-100), total_2_5_plus (0-100).
 
 MATCHS :
 {chr(10).join(match_list)}
 
-JSON uniquement : {{"analyses": [{{"prediction":"1","confidence":70,"btts_oui":60,"total_2_5_plus":55}}, ...]}}"""
+JSON uniquement : {{"analyses": [{{"prediction":"1","confidence":70,"btts_oui":60,"total_2_5_plus":55}}, ...]}}"""...]}}"""
 
 MATCH : {home_team} vs {away_team}
 
