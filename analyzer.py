@@ -4,7 +4,7 @@ import json
 import anthropic
 
 class MatchAnalyzer:
-    def __init__(self):
+   def __init__(self):
         self.db = 'triple_elite.db'
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
@@ -24,15 +24,9 @@ class MatchAnalyzer:
             "goals_against_avg": float(result[7] or 0),
             "btts_yes": int(result[8] or 0),
             "btts_no": int(result[9] or 0),
-            "home_wins": int(result[10] or 0),
-            "home_draws": int(result[11] or 0),
-            "home_losses": int(result[12] or 0),
-            "away_wins": int(result[13] or 0),
-            "away_draws": int(result[14] or 0),
-            "away_losses": int(result[15] or 0)
         }
 
-        def analyze_multiple_matches(self, matches):
+    def analyze_multiple_matches(self, matches):
         match_list = []
         for m in matches:
             home_stats = self.get_team_stats(m["home_team"])
@@ -41,46 +35,24 @@ class MatchAnalyzer:
             away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
             match_list.append(f"{m['home_team']} (dom, {home_txt}) vs {m['away_team']} (ext, {away_txt}) [{m['league']}]")
         
-        prompt = f"""Tu es un analyste football expert. Pour CHAQUE match, donne une probabilite 0-100 pour TOUS ces marches.
+        prompt = f"""Analyse ces matchs. Pour CHACUN donne : home_team, away_team, v1, v2, 1x, 2x, over_0_5, over_1_5, over_2_5, over_3_5, under_0_5, under_1_5, under_2_5, under_3_5, btts_oui, btts_non, eq1_over_0_5, eq2_over_0_5, au_moins_une_0_5, au_moins_une_1_5, au_moins_une_2_5, au_moins_une_3_5 (toutes les valeurs 0-100).
 
 MATCHS :
 {chr(10).join(match_list)}
 
-Reponds UNIQUEMENT en JSON valide (aucun texte avant/apres) :
-{{"analyses": [
-  {{
-    "home_team": "Equipe1",
-    "away_team": "Equipe2",
-    "v1": 0-100,
-    "v2": 0-100,
-    "1x": 0-100,
-    "2x": 0-100,
-    "over_0_5": 0-100,
-    "over_1_5": 0-100,
-    "over_2_5": 0-100,
-    "over_3_5": 0-100,
-    "under_0_5": 0-100,
-    "under_1_5": 0-100,
-    "under_2_5": 0-100,
-    "under_3_5": 0-100,
-    "btts_oui": 0-100,
-    "btts_non": 0-100,
-    "eq1_over_0_5": 0-100,
-    "eq2_over_0_5": 0-100,
-    "au_moins_une_0_5": 0-100,
-    "au_moins_une_1_5": 0-100,
-    "au_moins_une_2_5": 0-100,
-    "au_moins_une_3_5": 0-100
-  }}
-]}}"""
+Reponds UNIQUEMENT avec un JSON valide. Aucun texte avant ou apres."""
 
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-5",
-                max_tokens=2500,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
-            ia_text = response.content[0].text.strip()
+            ia_text = ""
+            for block in response.content:
+                if hasattr(block, "text"):
+                    ia_text += block.text
+            ia_text = ia_text.strip()
             print(f"IA reponse: {ia_text[:300]}")
             ia_text = ia_text.replace("```json", "").replace("```", "").strip()
             ia_data = json.loads(ia_text)
