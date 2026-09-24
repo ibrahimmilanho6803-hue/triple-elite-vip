@@ -213,7 +213,7 @@ class ComboGenerator:
             return 1.40
         return 1.50
 
-        def get_predictions_from_analysis(self, match, analysis, real_odds=None):
+    def get_predictions_from_analysis(self, match, analysis, real_odds=None):
         valid = []
         for ptype, label in self.prediction_types.items():
             confidence = 50
