@@ -49,7 +49,7 @@ class MatchAnalyzer:
 MATCHS :
 {chr(10).join(match_list)}
 
-JSON uniquement : {{"analyses": [{{"prediction":"1","confidence":70,"btts_oui":60,"total_2_5_plus":55}}, ...]}}"""...]}}"""
+JSON uniquement : {{"analyses": [{{"prediction":"1","confidence":70,"btts_oui":60,"total_2_5_plus":55}}, ...]}}"""
 
 MATCH : {home_team} vs {away_team}
 
