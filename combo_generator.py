@@ -1,6 +1,6 @@
 import requests
 from data_collector import DataCollector
-from analyzer import MatchAnalyzer
+from analyzerv2 import MatchAnalyzer
 
 ODDS_API_KEY = "d3ac58acb0852fe1dcda7fc30aecadc7"
 
