@@ -278,9 +278,21 @@ def api_generate():
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
         print(f"Analyses IA recues: {len(analyses_ia)}")
         
+        # Indexer les analyses par match
+        analyses_par_match = {}
+        for ia in analyses_ia:
+            if ia.get("home_team") and ia.get("away_team"):
+                key = f"{ia['home_team']} vs {ia['away_team']}"
+                analyses_par_match[key] = ia
+        
         all_preds = []
         for i, match in enumerate(upcoming):
-            if i < len(analyses_ia):
+            key = f"{match['home_team']} vs {match['away_team']}"
+            if key in analyses_par_match:
+                analysis = generator.analyzer.build_analysis_from_ia(
+                    match["home_team"], match["away_team"], analyses_par_match[key]
+                )
+            elif i < len(analyses_ia):
                 analysis = generator.analyzer.build_analysis_from_ia(
                     match["home_team"], match["away_team"], analyses_ia[i]
                 )
