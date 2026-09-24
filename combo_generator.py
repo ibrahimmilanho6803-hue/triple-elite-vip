@@ -148,7 +148,7 @@ class ComboGenerator:
             print(f"Erreur odds: {e}")
             return None
 
-    def get_confidence(self, ptype, analysis):
+        def get_confidence(self, ptype, analysis):
         preds = analysis.get("predictions", {})
         mapping = {
             "V1": "1", "V2": "2", "1X": "1X", "2X": "2X",
