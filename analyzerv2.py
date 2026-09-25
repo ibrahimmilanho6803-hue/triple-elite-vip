@@ -107,7 +107,7 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-5",
-                max_tokens=4000,
+                max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}]
             )
             ia_text = ""
