@@ -342,7 +342,7 @@ def api_generate():
         
         all_combos.sort(key=lambda x: x["score"], reverse=True)
         
-                top2 = []
+        top2 = []
         matchs_utilises = set()
         for combo in all_combos:
             combo_matchs = set(f"{p['home_team']} vs {p['away_team']}" for p in combo["predictions"])
