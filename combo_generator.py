@@ -84,45 +84,50 @@ class ComboGenerator:
         # Fallback : The-Odds-API
         return self.get_the_odds_api(home_team, away_team)
     
-    def get_the_odds_api(self, home_team, away_team):
-        # Votre code existant The-Odds-API
+    def get_real_odds(self, home_team, away_team):
         try:
-            url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
-            params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals,btts"}
-            response = requests.get(url, params=params)
-            data = response.json()
-            if isinstance(data, dict):
-                return None
-            for match in data:
-                home_api = match.get("home_team", "").lower()
-                away_api = match.get("away_team", "").lower()
-                if (home_team.lower() in home_api or home_api in home_team.lower()) and (away_team.lower() in away_api or away_api in away_team.lower()):
-                    odds = {}
-                    for bookmaker in match.get("bookmakers", []):
-                        for market in bookmaker.get("markets", []):
-                            if market["key"] == "h2h":
-                                for outcome in market["outcomes"]:
-                                    if outcome["name"] == match["home_team"]:
-                                        odds["home"] = outcome["price"]
-                                    elif outcome["name"] == match["away_team"]:
-                                        odds["away"] = outcome["price"]
-                                    elif outcome["name"] == "Draw":
-                                        odds["draw"] = outcome["price"]
-                            elif market["key"] == "totals":
-                                for outcome in market["outcomes"]:
-                                    pt = outcome.get("point")
-                                    if outcome["name"] == "Over":
-                                        odds[f"over_{pt}"] = outcome["price"]
-                                    elif outcome["name"] == "Under":
-                                        odds[f"under_{pt}"] = outcome["price"]
-                            elif market["key"] == "btts":
-                                for outcome in market["outcomes"]:
-                                    if outcome["name"] == "Yes":
-                                        odds["btts_yes"] = outcome["price"]
-                                    elif outcome["name"] == "No":
-                                        odds["btts_no"] = outcome["price"]
-                        break
-                    return odds
+            # IDs des ligues sur The-Odds-API
+            sports = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga"]
+            
+            for sport in sports:
+                url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
+                params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals,btts"}
+                response = requests.get(url, params=params, timeout=10)
+                if response.status_code != 200:
+                    continue
+                data = response.json()
+                if not isinstance(data, list):
+                    continue
+                for match in data:
+                    home_api = match.get("home_team", "").lower()
+                    away_api = match.get("away_team", "").lower()
+                    if (home_team.lower() in home_api or home_api in home_team.lower()) and (away_team.lower() in away_api or away_api in away_team.lower()):
+                        odds = {}
+                        for bookmaker in match.get("bookmakers", []):
+                            for market in bookmaker.get("markets", []):
+                                if market["key"] == "h2h":
+                                    for outcome in market["outcomes"]:
+                                        if outcome["name"] == match["home_team"]:
+                                            odds["home"] = outcome["price"]
+                                        elif outcome["name"] == match["away_team"]:
+                                            odds["away"] = outcome["price"]
+                                        elif outcome["name"] == "Draw":
+                                            odds["draw"] = outcome["price"]
+                                elif market["key"] == "totals":
+                                    for outcome in market["outcomes"]:
+                                        pt = outcome.get("point")
+                                        if outcome["name"] == "Over":
+                                            odds[f"over_{pt}"] = outcome["price"]
+                                        elif outcome["name"] == "Under":
+                                            odds[f"under_{pt}"] = outcome["price"]
+                                elif market["key"] == "btts":
+                                    for outcome in market["outcomes"]:
+                                        if outcome["name"] == "Yes":
+                                            odds["btts_yes"] = outcome["price"]
+                                        elif outcome["name"] == "No":
+                                            odds["btts_no"] = outcome["price"]
+                            break
+                        return odds
             return None
         except Exception as e:
             print(f"Erreur odds: {e}")
