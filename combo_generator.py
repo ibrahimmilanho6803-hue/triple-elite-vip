@@ -1,4 +1,4 @@
-from odds_scraper import find_1xbet_match_url, get_1xbet_odds
+from sharpapi_client import get_real_odds as get_sharpapi_odds
 import requests
 from data_collector import DataCollector
 from analyzerv2 import MatchAnalyzer
