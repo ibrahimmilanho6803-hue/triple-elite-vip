@@ -1,7 +1,7 @@
+from odds_scraper import find_1xbet_match_url, get_1xbet_odds
 import requests
 from data_collector import DataCollector
 from analyzerv2 import MatchAnalyzer
-from odds_scraper import get_1xbet_odds
 
 ODDS_API_KEY = "d3ac58acb0852fe1dcda7fc30aecadc7"
 
