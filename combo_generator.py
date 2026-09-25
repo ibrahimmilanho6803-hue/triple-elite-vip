@@ -1,6 +1,7 @@
 import requests
 from data_collector import DataCollector
 from analyzerv2 import MatchAnalyzer
+from odds_scraper import get_1xbet_odds
 
 ODDS_API_KEY = "d3ac58acb0852fe1dcda7fc30aecadc7"
 
@@ -70,6 +71,22 @@ class ComboGenerator:
         }
 
     def get_real_odds(self, home_team, away_team):
+        # Chercher le match sur 1xBet via Apify
+        # Note : il faut d'abord trouver l'URL du match sur 1xBet
+        # Pour l'instant, on utilise The-Odds-API en fallback
+        
+        # Essayer Apify (nécessite l'URL du match)
+        # match_url = self.find_1xbet_url(home_team, away_team)
+        # if match_url:
+        #     odds = get_1xbet_odds(match_url)
+        #     if odds:
+        #         return odds
+        
+        # Fallback : The-Odds-API
+        return self.get_the_odds_api(home_team, away_team)
+    
+    def get_the_odds_api(self, home_team, away_team):
+        # Votre code existant The-Odds-API
         try:
             url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
             params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals,btts"}
