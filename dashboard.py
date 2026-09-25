@@ -297,7 +297,8 @@ def api_generate():
             real_odds = generator.get_real_odds(match["home_team"], match["away_team"])
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
-                from itertools import combinations, product
+        
+        from itertools import combinations, product
         # Mélanger TOUS les pronostics (tous championnats confondus)
         preds_by_match = {}
         for pred in all_preds:
@@ -356,6 +357,7 @@ def api_generate():
         
         generator.close()
         return jsonify({"combos": top2})
+
 @app.route('/api/history')
 def api_history():
     if not os.path.exists("results"):
