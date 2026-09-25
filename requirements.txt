@@ -3,5 +3,4 @@ requests
 stripe
 gunicorn
 psycopg2-binary
-anthropic>=0.40.0
-apify-client
+anthropic
