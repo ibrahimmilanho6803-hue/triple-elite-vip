@@ -1,4 +1,3 @@
-from sharpapi_client import get_real_odds as get_sharpapi_odds
 import requests
 from data_collector import DataCollector
 from analyzerv2 import MatchAnalyzer
