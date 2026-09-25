@@ -26,15 +26,77 @@ class MatchAnalyzer:
             "btts_no": int(result[9] or 0)
         }
 
+        def get_recent_form(self, team_name, limit=5):
+            """Récupère les 5 derniers matchs d'une équipe"""
+        self.cursor.execute('''
+            SELECT home_team, away_team, home_score, away_score, date
+            FROM matches
+            WHERE (home_team = ? OR away_team = ?)
+            AND home_score IS NOT NULL
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (team_name, team_name, limit))
+        results = self.cursor.fetchall()
+        form = []
+        for home, away, hs, aws, date in results:
+            if team_name == home:
+                if hs > aws:
+                    form.append(f"V {home} {hs}-{aws} {away}")
+                elif hs == aws:
+                    form.append(f"N {home} {hs}-{aws} {away}")
+                else:
+                    form.append(f"D {home} {hs}-{aws} {away}")
+            else:
+                if aws > hs:
+                    form.append(f"V {away} {aws}-{hs} {home}")
+                elif aws == hs:
+                    form.append(f"N {away} {aws}-{hs} {home}")
+                else:
+                    form.append(f"D {away} {aws}-{hs} {home}")
+        return form
+
+    def get_h2h(self, home_team, away_team, limit=5):
+        """Récupère les confrontations directes"""
+        self.cursor.execute('''
+            SELECT home_team, away_team, home_score, away_score, date
+            FROM matches
+            WHERE ((home_team = ? AND away_team = ?) OR (home_team = ? AND away_team = ?))
+            AND home_score IS NOT NULL
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (home_team, away_team, away_team, home_team, limit))
+        results = self.cursor.fetchall()
+        h2h = []
+        for home, away, hs, aws, date in results:
+            h2h.append(f"{home} {hs}-{aws} {away}")
+        return h2h
+
     def analyze_multiple_matches(self, matches):
-        match_list = []
+                match_list = []
         for m in matches:
             home_stats = self.get_team_stats(m["home_team"])
             away_stats = self.get_team_stats(m["away_team"])
+            home_form = self.get_recent_form(m["home_team"])
+            away_form = self.get_recent_form(m["away_team"])
+            h2h = self.get_h2h(m["home_team"], m["away_team"])
+            
             home_txt = f"{home_stats['wins']}V{home_stats['draws']}N{home_stats['losses']}D" if home_stats else "N/A"
             away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
-            match_list.append(f"{m['home_team']} (dom, {home_txt}) vs {m['away_team']} (ext, {away_txt}) [{m['league']}]")
-        prompt = f"""Analyse ces matchs. Pour CHACUN donne ces probabilites (0-100) :
+            
+            match_txt = f"""
+=== {m['home_team']} vs {m['away_team']} ({m['league']}) ===
+{home_txt} (dom) vs {away_txt} (ext)
+FORME {m['home_team']} : {', '.join(home_form) if home_form else 'N/A'}
+FORME {m['away_team']} : {', '.join(away_form) if away_form else 'N/A'}
+H2H : {', '.join(h2h) if h2h else 'N/A'}
+"""
+            match_list.append(match_txt)
+                prompt = f"""Tu es un analyste football expert. Analyse chaque match avec attention en te basant sur :
+- La forme recente (5 derniers matchs)
+- Les confrontations directes (H2H)
+- Les stats de la saison
+
+Pour CHACUN donne ces probabilites (0-100) :
 home_team, away_team, v1, v2, 1x, 2x,
 over_0_5, over_1_5, over_2_5, over_3_5,
 under_0_5, under_1_5, under_2_5, under_3_5,
