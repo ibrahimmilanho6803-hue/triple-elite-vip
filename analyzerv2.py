@@ -34,7 +34,6 @@ class MatchAnalyzer:
             home_txt = f"{home_stats['wins']}V{home_stats['draws']}N{home_stats['losses']}D" if home_stats else "N/A"
             away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
             match_list.append(f"{m['home_team']} (dom, {home_txt}) vs {m['away_team']} (ext, {away_txt}) [{m['league']}]")
-        
         prompt = f"""Analyse ces matchs. Pour CHACUN donne ces valeurs (0-100) :
 home_team, away_team, v1, v2, 1x, 2x, over_1_5, over_2_5, btts_oui, btts_non
 
@@ -42,8 +41,7 @@ MATCHS :
 {chr(10).join(match_list)}
 
 Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
-
-       try:
+        try:
             response = self.client.messages.create(
                 model="claude-sonnet-5",
                 max_tokens=4000,
@@ -54,17 +52,11 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
                 if hasattr(block, "text"):
                     ia_text += block.text
             ia_text = ia_text.strip()
-            print(f"IA brut: {ia_text[:500]}")
-            
-            # Nettoyer
             ia_text = ia_text.replace("```json", "").replace("```", "").strip()
-            
-            # Extraire entre [ et ]
             start = ia_text.find("[")
             end = ia_text.rfind("]")
             if start >= 0 and end > start:
                 ia_text = ia_text[start:end+1]
-            
             print(f"IA nettoye: {ia_text[:500]}")
             ia_data = json.loads(ia_text)
             print(f"IA parse OK: {len(ia_data)} analyses")
@@ -75,49 +67,36 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
 
     def build_analysis_from_ia(self, home_team, away_team, ia_data):
         analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        
         v1 = int(ia_data.get("v1", 50))
         v2 = int(ia_data.get("v2", 30))
         x1 = int(ia_data.get("1x", 60))
         x2 = int(ia_data.get("2x", 50))
-        over05 = int(ia_data.get("over_0_5", 90))
         over15 = int(ia_data.get("over_1_5", 75))
         over25 = int(ia_data.get("over_2_5", 55))
-        over35 = int(ia_data.get("over_3_5", 35))
-        under05 = int(ia_data.get("under_0_5", 10))
-        under15 = int(ia_data.get("under_1_5", 25))
-        under25 = int(ia_data.get("under_2_5", 45))
-        under35 = int(ia_data.get("under_3_5", 65))
         btts_oui = int(ia_data.get("btts_oui", 50))
         btts_non = int(ia_data.get("btts_non", 50))
-        au05 = int(ia_data.get("au_moins_une_0_5", 90))
-        au15 = int(ia_data.get("au_moins_une_1_5", 75))
-        au25 = int(ia_data.get("au_moins_une_2_5", 55))
-        au35 = int(ia_data.get("au_moins_une_3_5", 35))
-
         analysis["predictions"]["1"] = {"confidence": v1, "details": {}}
         analysis["predictions"]["2"] = {"confidence": v2, "details": {}}
         analysis["predictions"]["1X"] = {"confidence": x1, "details": {}}
         analysis["predictions"]["2X"] = {"confidence": x2, "details": {}}
-        analysis["predictions"]["+0.5"] = {"confidence": over05, "details": {}}
+        analysis["predictions"]["+0.5"] = {"confidence": 90, "details": {}}
         analysis["predictions"]["+1"] = {"confidence": over15, "details": {}}
         analysis["predictions"]["+1.5"] = {"confidence": over15, "details": {}}
         analysis["predictions"]["+2"] = {"confidence": over25, "details": {}}
         analysis["predictions"]["+2.5"] = {"confidence": over25, "details": {}}
-        analysis["predictions"]["+3"] = {"confidence": over35, "details": {}}
-        analysis["predictions"]["-0.5"] = {"confidence": under05, "details": {}}
-        analysis["predictions"]["-1"] = {"confidence": under15, "details": {}}
-        analysis["predictions"]["-1.5"] = {"confidence": under15, "details": {}}
-        analysis["predictions"]["-2"] = {"confidence": under25, "details": {}}
-        analysis["predictions"]["-2.5"] = {"confidence": under25, "details": {}}
-        analysis["predictions"]["-3"] = {"confidence": under35, "details": {}}
+        analysis["predictions"]["+3"] = {"confidence": max(10, over25 - 20), "details": {}}
+        analysis["predictions"]["-0.5"] = {"confidence": 10, "details": {}}
+        analysis["predictions"]["-1"] = {"confidence": max(5, 100 - over15), "details": {}}
+        analysis["predictions"]["-1.5"] = {"confidence": max(5, 100 - over15), "details": {}}
+        analysis["predictions"]["-2"] = {"confidence": 100 - over25, "details": {}}
+        analysis["predictions"]["-2.5"] = {"confidence": 100 - over25, "details": {}}
+        analysis["predictions"]["-3"] = {"confidence": min(90, 100 - over25 + 20), "details": {}}
         analysis["predictions"]["BTTS_YES"] = {"confidence": btts_oui, "details": {}}
         analysis["predictions"]["BTTS_NO"] = {"confidence": btts_non, "details": {}}
-        analysis["predictions"]["AU_MOINS_0.5"] = {"confidence": au05, "details": {}}
-        analysis["predictions"]["AU_MOINS_1.5"] = {"confidence": au15, "details": {}}
-        analysis["predictions"]["AU_MOINS_2.5"] = {"confidence": au25, "details": {}}
-        analysis["predictions"]["AU_MOINS_3.5"] = {"confidence": au35, "details": {}}
-        
+        analysis["predictions"]["AU_MOINS_0.5"] = {"confidence": 92, "details": {}}
+        analysis["predictions"]["AU_MOINS_1.5"] = {"confidence": over15, "details": {}}
+        analysis["predictions"]["AU_MOINS_2.5"] = {"confidence": over25, "details": {}}
+        analysis["predictions"]["AU_MOINS_3.5"] = {"confidence": max(10, over25 - 20), "details": {}}
         return analysis
 
     def analyze_match(self, home_team, away_team, real_odds=None):
