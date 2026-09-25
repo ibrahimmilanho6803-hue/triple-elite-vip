@@ -182,6 +182,38 @@ class ComboGenerator:
         for ptype, label in self.prediction_types.items():
             confidence = self.get_confidence(ptype, analysis)
             estimated = self.get_fallback_odds(ptype)
+            
+            # Utiliser les vraies cotes si disponibles
+            if real_odds:
+                if ptype == "V1" and "home" in real_odds:
+                    estimated = real_odds["home"]
+                elif ptype == "V2" and "away" in real_odds:
+                    estimated = real_odds["away"]
+                elif ptype == "1X" and "home" in real_odds and "draw" in real_odds:
+                    estimated = round(1 / (1/real_odds["home"] + 1/real_odds["draw"]), 2)
+                elif ptype == "2X" and "away" in real_odds and "draw" in real_odds:
+                    estimated = round(1 / (1/real_odds["away"] + 1/real_odds["draw"]), 2)
+                elif ptype in ["TOTAL_2.5+", "TOTAL_3+"] and "over_2.5" in real_odds:
+                    estimated = real_odds["over_2.5"]
+                elif ptype in ["TOTAL_0.5-", "TOTAL_1-", "TOTAL_1.5-", "TOTAL_2-", "TOTAL_2.5-"] and "under_2.5" in real_odds:
+                    estimated = real_odds["under_2.5"]
+                elif ptype == "TOTAL_1.5+" and "over_2.5" in real_odds:
+                    estimated = round(real_odds["over_2.5"] * 0.7, 2)
+                elif ptype == "TOTAL_0.5+" and "over_2.5" in real_odds:
+                    estimated = round(real_odds["over_2.5"] * 0.5, 2)
+                elif ptype.startswith("V1_ET_") and "home" in real_odds:
+                    estimated = round(real_odds["home"] * 1.2, 2)
+                elif ptype.startswith("V2_ET_") and "away" in real_odds:
+                    estimated = round(real_odds["away"] * 1.2, 2)
+                elif ptype.startswith("1X_ET_") and "home" in real_odds and "draw" in real_odds:
+                    estimated = round((1 / (1/real_odds["home"] + 1/real_odds["draw"])) * 1.3, 2)
+                elif ptype.startswith("2X_ET_") and "away" in real_odds and "draw" in real_odds:
+                    estimated = round((1 / (1/real_odds["away"] + 1/real_odds["draw"])) * 1.3, 2)
+                elif ptype.startswith("EQ1_") and "home" in real_odds:
+                    estimated = round(real_odds["home"] * 0.9, 2)
+                elif ptype.startswith("EQ2_") and "away" in real_odds:
+                    estimated = round(real_odds["away"] * 0.9, 2)
+            
             if confidence >= self.min_confidence:
                 valid.append({
                     "match_id": match["id"],
