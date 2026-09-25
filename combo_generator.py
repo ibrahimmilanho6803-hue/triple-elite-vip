@@ -9,7 +9,6 @@ class ComboGenerator:
         self.collector = DataCollector()
         self.analyzer = MatchAnalyzer()
         self.min_confidence = 50
-
         self.prediction_types = {
             "V1": "Victoire equipe 1",
             "V2": "Victoire equipe 2",
@@ -28,47 +27,25 @@ class ComboGenerator:
             "TOTAL_2.5-": "Moins de 2.5 buts",
             "TOTAL_3-": "Moins de 3 buts",
             "EQ1_0.5+": "Equipe 1 plus de 0.5 but",
-            "EQ1_1+": "Equipe 1 plus de 1 but",
             "EQ1_1.5+": "Equipe 1 plus de 1.5 buts",
-            "EQ1_2+": "Equipe 1 plus de 2 buts",
             "EQ1_2.5+": "Equipe 1 plus de 2.5 buts",
-            "EQ1_0.5-": "Equipe 1 moins de 0.5 but",
-            "EQ1_1.5-": "Equipe 1 moins de 1.5 buts",
-            "EQ1_2.5-": "Equipe 1 moins de 2.5 buts",
             "EQ2_0.5+": "Equipe 2 plus de 0.5 but",
-            "EQ2_1+": "Equipe 2 plus de 1 but",
             "EQ2_1.5+": "Equipe 2 plus de 1.5 buts",
-            "EQ2_2+": "Equipe 2 plus de 2 buts",
             "EQ2_2.5+": "Equipe 2 plus de 2.5 buts",
-            "EQ2_0.5-": "Equipe 2 moins de 0.5 but",
-            "EQ2_1.5-": "Equipe 2 moins de 1.5 buts",
-            "EQ2_2.5-": "Equipe 2 moins de 2.5 buts",
             "V1_ET_0.5+": "V1 et plus de 0.5 but",
             "V1_ET_1.5+": "V1 et plus de 1.5 buts",
             "V1_ET_2.5+": "V1 et plus de 2.5 buts",
             "V1_ET_3.5+": "V1 et plus de 3.5 buts",
-            "V1_ET_1.5-": "V1 et moins de 1.5 buts",
-            "V1_ET_2.5-": "V1 et moins de 2.5 buts",
-            "V1_ET_3.5-": "V1 et moins de 3.5 buts",
             "1X_ET_1.5+": "1X et plus de 1.5 buts",
             "1X_ET_2.5+": "1X et plus de 2.5 buts",
             "1X_ET_3.5+": "1X et plus de 3.5 buts",
-            "1X_ET_1.5-": "1X et moins de 1.5 buts",
-            "1X_ET_2.5-": "1X et moins de 2.5 buts",
-            "1X_ET_3.5-": "1X et moins de 3.5 buts",
             "V2_ET_0.5+": "V2 et plus de 0.5 but",
             "V2_ET_1.5+": "V2 et plus de 1.5 buts",
             "V2_ET_2.5+": "V2 et plus de 2.5 buts",
             "V2_ET_3.5+": "V2 et plus de 3.5 buts",
-            "V2_ET_1.5-": "V2 et moins de 1.5 buts",
-            "V2_ET_2.5-": "V2 et moins de 2.5 buts",
-            "V2_ET_3.5-": "V2 et moins de 3.5 buts",
             "2X_ET_1.5+": "2X et plus de 1.5 buts",
             "2X_ET_2.5+": "2X et plus de 2.5 buts",
             "2X_ET_3.5+": "2X et plus de 3.5 buts",
-            "2X_ET_1.5-": "2X et moins de 1.5 buts",
-            "2X_ET_2.5-": "2X et moins de 2.5 buts",
-            "2X_ET_3.5-": "2X et moins de 3.5 buts",
             "AU_MOINS_0.5": "Au moins une equipe marque plus de 0.5 but",
             "AU_MOINS_1.5": "Au moins une equipe marque plus de 1.5 buts",
             "AU_MOINS_2.5": "Au moins une equipe marque plus de 2.5 buts",
@@ -77,30 +54,18 @@ class ComboGenerator:
             "V1_T1_1.5+": "V1 et Total 1 plus de 1.5 buts",
             "V1_T1_2.5+": "V1 et Total 1 plus de 2.5 buts",
             "V1_T1_3.5+": "V1 et Total 1 plus de 3.5 buts",
-            "V1_T1_1.5-": "V1 et Total 1 moins de 1.5 buts",
-            "V1_T1_2.5-": "V1 et Total 1 moins de 2.5 buts",
-            "V1_T1_3.5-": "V1 et Total 1 moins de 3.5 buts",
             "1X_T1_0.5+": "1X et Total 1 plus de 0.5 but",
             "1X_T1_1.5+": "1X et Total 1 plus de 1.5 buts",
             "1X_T1_2.5+": "1X et Total 1 plus de 2.5 buts",
             "1X_T1_3.5+": "1X et Total 1 plus de 3.5 buts",
-            "1X_T1_1.5-": "1X et Total 1 moins de 1.5 buts",
-            "1X_T1_2.5-": "1X et Total 1 moins de 2.5 buts",
-            "1X_T1_3.5-": "1X et Total 1 moins de 3.5 buts",
             "V2_T2_0.5+": "V2 et Total 2 plus de 0.5 but",
             "V2_T2_1.5+": "V2 et Total 2 plus de 1.5 buts",
             "V2_T2_2.5+": "V2 et Total 2 plus de 2.5 buts",
             "V2_T2_3.5+": "V2 et Total 2 plus de 3.5 buts",
-            "V2_T2_1.5-": "V2 et Total 2 moins de 1.5 buts",
-            "V2_T2_2.5-": "V2 et Total 2 moins de 2.5 buts",
-            "V2_T2_3.5-": "V2 et Total 2 moins de 3.5 buts",
             "2X_T2_0.5+": "2X et Total 2 plus de 0.5 but",
             "2X_T2_1.5+": "2X et Total 2 plus de 1.5 buts",
             "2X_T2_2.5+": "2X et Total 2 plus de 2.5 buts",
             "2X_T2_3.5+": "2X et Total 2 plus de 3.5 buts",
-            "2X_T2_1.5-": "2X et Total 2 moins de 1.5 buts",
-            "2X_T2_2.5-": "2X et Total 2 moins de 2.5 buts",
-            "2X_T2_3.5-": "2X et Total 2 moins de 3.5 buts",
             "BTTS_OUI": "Les deux equipes marquent OUI",
             "BTTS_NON": "Les deux equipes marquent NON"
         }
@@ -148,7 +113,7 @@ class ComboGenerator:
             print(f"Erreur odds: {e}")
             return None
 
-        def get_confidence(self, ptype, analysis):
+    def get_confidence(self, ptype, analysis):
         preds = analysis.get("predictions", {})
         mapping = {
             "V1": "1", "V2": "2", "1X": "1X", "2X": "2X",
@@ -156,26 +121,18 @@ class ComboGenerator:
             "TOTAL_2+": "+2", "TOTAL_2.5+": "+2.5", "TOTAL_3+": "+3",
             "TOTAL_0.5-": "-0.5", "TOTAL_1-": "-1", "TOTAL_1.5-": "-1.5",
             "TOTAL_2-": "-2", "TOTAL_2.5-": "-2.5", "TOTAL_3-": "-3",
-            "EQ1_0.5+": "+0.5", "EQ1_1+": "+1", "EQ1_1.5+": "+1.5",
-            "EQ1_2+": "+2", "EQ1_2.5+": "+2.5",
-            "EQ2_0.5+": "+0.5", "EQ2_1+": "+1", "EQ2_1.5+": "+1.5",
-            "EQ2_2+": "+2", "EQ2_2.5+": "+2.5",
-            "V1_ET_0.5+": "+0.5", "V1_ET_1.5+": "+1.5",
-            "V1_ET_2.5+": "+2.5", "V1_ET_3.5+": "+3",
+            "EQ1_0.5+": "+0.5", "EQ1_1.5+": "+1.5", "EQ1_2.5+": "+2.5",
+            "EQ2_0.5+": "+0.5", "EQ2_1.5+": "+1.5", "EQ2_2.5+": "+2.5",
+            "V1_ET_0.5+": "+0.5", "V1_ET_1.5+": "+1.5", "V1_ET_2.5+": "+2.5", "V1_ET_3.5+": "+3",
             "1X_ET_1.5+": "+1.5", "1X_ET_2.5+": "+2.5", "1X_ET_3.5+": "+3",
-            "V2_ET_0.5+": "+0.5", "V2_ET_1.5+": "+1.5",
-            "V2_ET_2.5+": "+2.5", "V2_ET_3.5+": "+3",
+            "V2_ET_0.5+": "+0.5", "V2_ET_1.5+": "+1.5", "V2_ET_2.5+": "+2.5", "V2_ET_3.5+": "+3",
             "2X_ET_1.5+": "+1.5", "2X_ET_2.5+": "+2.5", "2X_ET_3.5+": "+3",
-            "V1_T1_0.5+": "+0.5", "V1_T1_1.5+": "+1.5",
-            "V1_T1_2.5+": "+2.5", "V1_T1_3.5+": "+3",
-            "1X_T1_0.5+": "+0.5", "1X_T1_1.5+": "+1.5",
-            "1X_T1_2.5+": "+2.5", "1X_T1_3.5+": "+3",
-            "V2_T2_0.5+": "+0.5", "V2_T2_1.5+": "+1.5",
-            "V2_T2_2.5+": "+2.5", "V2_T2_3.5+": "+3",
-            "2X_T2_0.5+": "+0.5", "2X_T2_1.5+": "+1.5",
-            "2X_T2_2.5+": "+2.5", "2X_T2_3.5+": "+3",
             "AU_MOINS_0.5": "AU_MOINS_0.5", "AU_MOINS_1.5": "AU_MOINS_1.5",
             "AU_MOINS_2.5": "AU_MOINS_2.5", "AU_MOINS_3.5": "AU_MOINS_3.5",
+            "V1_T1_0.5+": "+0.5", "V1_T1_1.5+": "+1.5", "V1_T1_2.5+": "+2.5", "V1_T1_3.5+": "+3",
+            "1X_T1_0.5+": "+0.5", "1X_T1_1.5+": "+1.5", "1X_T1_2.5+": "+2.5", "1X_T1_3.5+": "+3",
+            "V2_T2_0.5+": "+0.5", "V2_T2_1.5+": "+1.5", "V2_T2_2.5+": "+2.5", "V2_T2_3.5+": "+3",
+            "2X_T2_0.5+": "+0.5", "2X_T2_1.5+": "+1.5", "2X_T2_2.5+": "+2.5", "2X_T2_3.5+": "+3",
             "BTTS_OUI": "BTTS_YES", "BTTS_NON": "BTTS_NO"
         }
         key = mapping.get(ptype, "1")
@@ -199,7 +156,7 @@ class ComboGenerator:
         elif "AU_MOINS" in ptype: return 1.40
         return 1.50
 
-        def get_predictions_from_analysis(self, match, analysis, real_odds=None):
+    def get_predictions_from_analysis(self, match, analysis, real_odds=None):
         valid = []
         for ptype, label in self.prediction_types.items():
             confidence = self.get_confidence(ptype, analysis)
