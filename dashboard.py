@@ -199,8 +199,7 @@ HTML_TEMPLATE = """
                 var html = '';
                 data.combos.forEach(function(combo, index) {
                     html += '<div class="combo-card">';
-                    var leagues = combo.leagues ? combo.leagues.join(' + ') : combo.league;
-                    html += '<h2>COMBINE #' + (index + 1) + ' - ' + leagues + '</h2>';
+                    html += '<h2>COMBINE #' + (index + 1) + '</h2>';
                     html += '<div class="combo-stats">';
                     html += '<div class="stat"><div class="stat-label">Cote totale</div><div class="stat-value">' + combo.total_odds + '</div></div>';
                     html += '<div class="stat"><div class="stat-label">Confiance</div><div class="stat-value">' + combo.avg_confidence + '%</div></div>';
@@ -343,15 +342,27 @@ def api_generate():
         
         all_combos.sort(key=lambda x: x["score"], reverse=True)
         
-        top2 = []
+                top2 = []
         matchs_utilises = set()
         for combo in all_combos:
             combo_matchs = set(f"{p['home_team']} vs {p['away_team']}" for p in combo["predictions"])
-            if len(combo_matchs & matchs_utilises) == 0:
+            leagues_combo = set(p["league"] for p in combo["predictions"])
+            # Vérifier que les matchs ne sont pas déjà utilisés ET que les championnats sont variés
+            if len(combo_matchs & matchs_utilises) == 0 and len(leagues_combo) >= 2:
                 top2.append(combo)
                 matchs_utilises.update(combo_matchs)
             if len(top2) >= 2:
                 break
+        
+        # Si on n'a pas 2 combinés variés, prendre les meilleurs sans contrainte de championnat
+        if len(top2) < 2:
+            for combo in all_combos:
+                combo_matchs = set(f"{p['home_team']} vs {p['away_team']}" for p in combo["predictions"])
+                if len(combo_matchs & matchs_utilises) == 0:
+                    top2.append(combo)
+                    matchs_utilises.update(combo_matchs)
+                if len(top2) >= 2:
+                    break
         
         generator.close()
         return jsonify({"combos": top2})
