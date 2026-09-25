@@ -356,6 +356,7 @@ def api_generate():
     except Exception as e:
         print(f"ERREUR: {e}")
         return jsonify({"error": str(e)})
+
 @app.route('/api/history')
 def api_history():
     if not os.path.exists("results"):
