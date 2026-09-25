@@ -308,12 +308,12 @@ def api_generate():
         
         all_combos = []
         match_keys = list(preds_by_match.keys())
-        for m1, m2 in combinations(match_keys, 2):
-            for p1, p2 in product(preds_by_match[m1], preds_by_match[m2]):
-                combo = [p1, p2]
-                total_odds = round(p1["estimated_odds"] * p2["estimated_odds"], 2)
+        for m1, m2, m3 in combinations(match_keys, 3):
+            for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
+                combo = [p1, p2, p3]
+                total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
                 if total_odds >= 2.50:
-                    avg_conf = sum(p["confidence"] for p in combo) / 2
+                    avg_conf = sum(p["confidence"] for p in combo) / 3
                     categories = set()
                     for p in combo:
                         t = p["type"]
