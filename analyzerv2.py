@@ -26,8 +26,7 @@ class MatchAnalyzer:
             "btts_no": int(result[9] or 0)
         }
 
-        def get_recent_form(self, team_name, limit=5):
-            """Récupère les 5 derniers matchs d'une équipe"""
+    def get_recent_form(self, team_name, limit=5):
         self.cursor.execute('''
             SELECT home_team, away_team, home_score, away_score, date
             FROM matches
@@ -56,7 +55,6 @@ class MatchAnalyzer:
         return form
 
     def get_h2h(self, home_team, away_team, limit=5):
-        """Récupère les confrontations directes"""
         self.cursor.execute('''
             SELECT home_team, away_team, home_score, away_score, date
             FROM matches
@@ -72,17 +70,15 @@ class MatchAnalyzer:
         return h2h
 
     def analyze_multiple_matches(self, matches):
-                match_list = []
+        match_list = []
         for m in matches:
             home_stats = self.get_team_stats(m["home_team"])
             away_stats = self.get_team_stats(m["away_team"])
             home_form = self.get_recent_form(m["home_team"])
             away_form = self.get_recent_form(m["away_team"])
             h2h = self.get_h2h(m["home_team"], m["away_team"])
-            
             home_txt = f"{home_stats['wins']}V{home_stats['draws']}N{home_stats['losses']}D" if home_stats else "N/A"
             away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
-            
             match_txt = f"""
 === {m['home_team']} vs {m['away_team']} ({m['league']}) ===
 {home_txt} (dom) vs {away_txt} (ext)
@@ -91,7 +87,7 @@ FORME {m['away_team']} : {', '.join(away_form) if away_form else 'N/A'}
 H2H : {', '.join(h2h) if h2h else 'N/A'}
 """
             match_list.append(match_txt)
-                prompt = f"""Tu es un analyste football expert. Analyse chaque match avec attention en te basant sur :
+        prompt = f"""Tu es un analyste football expert. Analyse chaque match avec attention en te basant sur :
 - La forme recente (5 derniers matchs)
 - Les confrontations directes (H2H)
 - Les stats de la saison
