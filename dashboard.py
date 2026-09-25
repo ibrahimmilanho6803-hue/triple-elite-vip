@@ -96,7 +96,8 @@ PAGE_ACCUEIL = """
                 <p>Support prioritaire</p>
             </div>
         </div>
-        <p style="color:#aaa; margin-top:20px;">Contact : tripleelitevip@gmail.com</p>
+        <p style="color:#aaa; margin-top:20px; font-size:0.8em;">Les cotes affichees sont issues de Bet365, William Hill et Unibet. Elles peuvent varier legerement selon le bookmaker.</p>
+<p style="color:#aaa; margin-top:10px;">Contact : tripleelitevip@gmail.com</p>
     </div>
 </body>
 </html>
@@ -209,7 +210,7 @@ HTML_TEMPLATE = """
                         html += '<div><div class="match-teams">' + p.home_team + ' vs ' + p.away_team + '</div>';
                         html += '<div class="match-league">' + p.league + '</div></div>';
                         html += '<div class="match-prediction">' + p.type_name + '</div>';
-                        html += '<div class="match-odds">Cote: ' + p.estimated_odds + '</div>';
+                        html += '<div class="match-odds">Cote: ' + p.estimated_odds + ' <span style="font-size:0.7em;color:#888;">(Bet365/WH)</span></div>';
                         html += '<div class="match-confidence">' + p.confidence + '%</div>';
                         html += '</div>';
                     });
