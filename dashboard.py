@@ -299,7 +299,6 @@ def api_generate():
             all_preds.extend(preds)
         
         from itertools import combinations, product
-        # Mélanger TOUS les pronostics (tous championnats confondus)
         preds_by_match = {}
         for pred in all_preds:
             key = f"{pred['home_team']} vs {pred['away_team']}"
@@ -344,7 +343,6 @@ def api_generate():
         
         all_combos.sort(key=lambda x: x["score"], reverse=True)
         
-        # Prendre les 2 meilleurs combinés avec des matchs différents
         top2 = []
         matchs_utilises = set()
         for combo in all_combos:
@@ -357,6 +355,9 @@ def api_generate():
         
         generator.close()
         return jsonify({"combos": top2})
+    except Exception as e:
+        print(f"ERREUR: {e}")
+        return jsonify({"error": str(e)})
 
 @app.route('/api/history')
 def api_history():
