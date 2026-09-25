@@ -101,7 +101,12 @@ class ComboGenerator:
                 for match in data:
                     home_api = match.get("home_team", "").lower()
                     away_api = match.get("away_team", "").lower()
-                    if (home_team.lower() in home_api or home_api in home_team.lower()) and (away_team.lower() in away_api or away_api in away_team.lower()):
+                    home_clean = home_team.lower().replace("fc ", "").replace(" fsv", "").replace(" vfb", "").replace(" vfl", "").replace(" fc", "").strip()
+                    away_clean = away_team.lower().replace("fc ", "").replace(" fsv", "").replace(" vfb", "").replace(" vfl", "").replace(" fc", "").strip()
+                    home_api_clean = home_api.replace("fc ", "").replace(" fsv", "").replace(" vfb", "").replace(" vfl", "").replace(" fc", "").strip()
+                    away_api_clean = away_api.replace("fc ", "").replace(" fsv", "").replace(" vfb", "").replace(" vfl", "").replace(" fc", "").strip()
+                    
+                    if (home_clean in home_api_clean or home_api_clean in home_clean) and (away_clean in away_api_clean or away_api_clean in away_clean):
                         odds = {}
                         for bookmaker in match.get("bookmakers", []):
                             for market in bookmaker.get("markets", []):
