@@ -210,7 +210,7 @@ HTML_TEMPLATE = """
                         html += '<div><div class="match-teams">' + p.home_team + ' vs ' + p.away_team + '</div>';
                         html += '<div class="match-league">' + p.league + '</div></div>';
                         html += '<div class="match-prediction">' + p.type_name + '</div>';
-                        html += '<div class="match-odds">Cote: ' + p.estimated_odds + ' <span style="font-size:0.7em;color:#888;">(Bet365/WH)</span></div>';
+                        html += '<div class="match-odds">Cote: ' + p.estimated_odds + '</div>';
                         html += '<div class="match-confidence">' + p.confidence + '%</div>';
                         html += '</div>';
                     });
