@@ -54,8 +54,8 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
                 if hasattr(block, "text"):
                     ia_text += block.text
             ia_text = ia_text.strip()
-            print(f"IA reponse: {ia_text[:300]}")
-                       ia_text = ia_text.replace("```json", "").replace("```", "").strip()
+                        print(f"IA reponse: {ia_text[:300]}")
+            ia_text = ia_text.replace("```json", "").replace("```", "").strip()
             # Trouver le premier [ ou {
             start = min([i for i in [ia_text.find("["), ia_text.find("{")] if i >= 0])
             # Trouver le dernier ] ou }
@@ -65,10 +65,7 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
             ia_text = ia_text[start:end+1]
             print(f"IA texte nettoye: {ia_text[:500]}")
             ia_data = json.loads(ia_text)
-            if isinstance(ia_data, list):
-                return ia_data
-            return ia_data.get("analyses", [])
-            if isinstance(ia_data, list):
+                        if isinstance(ia_data, list):
                 return ia_data
             return ia_data.get("analyses", [])
         except Exception as e:
