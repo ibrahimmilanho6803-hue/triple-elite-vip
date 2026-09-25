@@ -268,23 +268,17 @@ def api_generate():
         generator = ComboGenerator()
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
-        
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs"})
-        
-            upcoming = upcoming[:3]
-        
+        upcoming = upcoming[:9]
         print(f"Lancement analyse IA pour {len(upcoming)} matchs")
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
         print(f"Analyses IA recues: {len(analyses_ia)}")
-        
-        # Indexer les analyses par match
         analyses_par_match = {}
         for ia in analyses_ia:
             if ia.get("home_team") and ia.get("away_team"):
                 key = f"{ia['home_team']} vs {ia['away_team']}"
                 analyses_par_match[key] = ia
-        
         all_preds = []
         for i, match in enumerate(upcoming):
             key = f"{match['home_team']} vs {match['away_team']}"
@@ -298,18 +292,15 @@ def api_generate():
                 )
             else:
                 analysis = generator.analyzer.analyze_match(match["home_team"], match["away_team"])
-            
             real_odds = generator.get_real_odds(match["home_team"], match["away_team"])
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
-        
         from itertools import combinations, product
         matchs_par_championnat = {}
         for pred in all_preds:
             if pred["league"] not in matchs_par_championnat:
                 matchs_par_championnat[pred["league"]] = []
             matchs_par_championnat[pred["league"]].append(pred)
-        
         all_combos = []
         for league, preds_league in matchs_par_championnat.items():
             preds_by_match = {}
@@ -324,15 +315,32 @@ def api_generate():
                     total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
                     if total_odds >= 2.50:
                         avg_conf = sum(p["confidence"] for p in combo) / 3
-                        score = round(avg_conf * 0.6 + 5, 1)
+                        categories = set()
+                        for p in combo:
+                            t = p["type"]
+                            if t in ["V1", "V2", "1X", "2X"]:
+                                categories.add("RESULTAT")
+                            elif t.startswith("BTTS"):
+                                categories.add("BTTS")
+                            elif t.startswith("AU_MOINS"):
+                                categories.add("AU_MOINS")
+                            elif t.startswith("EQ1") or t.startswith("EQ2"):
+                                categories.add("EQUIPE")
+                            elif "_ET_" in t or "_T1_" in t or "_T2_" in t:
+                                categories.add("COMBINE")
+                            elif "TOTAL" in t or "+" in t or "-" in t:
+                                categories.add("TOTAL")
+                        if len(categories) < 2:
+                            continue
+                        score = round(avg_conf * 0.6 + len(categories) * 10, 1)
                         all_combos.append({
                             "predictions": combo,
                             "total_odds": total_odds,
                             "avg_confidence": round(avg_conf, 1),
                             "score": score,
-                            "league": league
+                            "league": league,
+                            "categories": list(categories)
                         })
-        
         all_combos.sort(key=lambda x: x["score"], reverse=True)
         top3 = []
         leagues_seen = set()
@@ -342,7 +350,6 @@ def api_generate():
                 leagues_seen.add(combo["league"])
             if len(top3) >= 3:
                 break
-        
         generator.close()
         return jsonify({"combos": top3})
     except Exception as e:
