@@ -46,7 +46,6 @@ class ComboGenerator:
             "2X_ET_1.5+": "2X et plus de 1.5 buts",
             "2X_ET_2.5+": "2X et plus de 2.5 buts",
             "2X_ET_3.5+": "2X et plus de 3.5 buts",
-            "AU_MOINS_0.5": "Au moins une equipe marque plus de 0.5 but",
             "AU_MOINS_1.5": "Au moins une equipe marque plus de 1.5 buts",
             "AU_MOINS_2.5": "Au moins une equipe marque plus de 2.5 buts",
             "AU_MOINS_3.5": "Au moins une equipe marque plus de 3.5 buts",
