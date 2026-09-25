@@ -43,7 +43,7 @@ MATCHS :
 
 Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
 
-        try:
+                try:
             response = self.client.messages.create(
                 model="claude-sonnet-5",
                 max_tokens=4000,
@@ -54,20 +54,21 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
                 if hasattr(block, "text"):
                     ia_text += block.text
             ia_text = ia_text.strip()
-                        print(f"IA reponse: {ia_text[:300]}")
+            print(f"IA brut: {ia_text[:500]}")
+            
+            # Nettoyer
             ia_text = ia_text.replace("```json", "").replace("```", "").strip()
-            # Trouver le premier [ ou {
-            start = min([i for i in [ia_text.find("["), ia_text.find("{")] if i >= 0])
-            # Trouver le dernier ] ou }
-            end_arr = ia_text.rfind("]")
-            end_obj = ia_text.rfind("}")
-            end = max(end_arr, end_obj)
-            ia_text = ia_text[start:end+1]
-            print(f"IA texte nettoye: {ia_text[:500]}")
+            
+            # Extraire entre [ et ]
+            start = ia_text.find("[")
+            end = ia_text.rfind("]")
+            if start >= 0 and end > start:
+                ia_text = ia_text[start:end+1]
+            
+            print(f"IA nettoye: {ia_text[:500]}")
             ia_data = json.loads(ia_text)
-                        if isinstance(ia_data, list):
-                return ia_data
-            return ia_data.get("analyses", [])
+            print(f"IA parse OK: {len(ia_data)} analyses")
+            return ia_data
         except Exception as e:
             print(f"IA erreur: {e}")
             return []
