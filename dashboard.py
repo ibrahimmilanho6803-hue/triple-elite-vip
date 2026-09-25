@@ -199,7 +199,8 @@ HTML_TEMPLATE = """
                 var html = '';
                 data.combos.forEach(function(combo, index) {
                     html += '<div class="combo-card">';
-                    html += '<h2>COMBINE #' + (index + 1) + ' - ' + combo.league + '</h2>';
+                    var leagues = combo.leagues ? combo.leagues.join(' + ') : combo.league;
+                    html += '<h2>COMBINE #' + (index + 1) + ' - ' + leagues + '</h2>';
                     html += '<div class="combo-stats">';
                     html += '<div class="stat"><div class="stat-label">Cote totale</div><div class="stat-value">' + combo.total_odds + '</div></div>';
                     html += '<div class="stat"><div class="stat-label">Confiance</div><div class="stat-value">' + combo.avg_confidence + '%</div></div>';
@@ -296,67 +297,65 @@ def api_generate():
             real_odds = generator.get_real_odds(match["home_team"], match["away_team"])
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
-        from itertools import combinations, product
-        matchs_par_championnat = {}
+                from itertools import combinations, product
+        # Mélanger TOUS les pronostics (tous championnats confondus)
+        preds_by_match = {}
         for pred in all_preds:
-            if pred["league"] not in matchs_par_championnat:
-                matchs_par_championnat[pred["league"]] = []
-            matchs_par_championnat[pred["league"]].append(pred)
+            key = f"{pred['home_team']} vs {pred['away_team']}"
+            if key not in preds_by_match:
+                preds_by_match[key] = []
+            preds_by_match[key].append(pred)
+        
         all_combos = []
-        for league, preds_league in matchs_par_championnat.items():
-            preds_by_match = {}
-            for pred in preds_league:
-                key = f"{pred['home_team']} vs {pred['away_team']}"
-                if key not in preds_by_match:
-                    preds_by_match[key] = []
-                preds_by_match[key].append(pred)
-            for m1, m2, m3 in combinations(preds_by_match.keys(), 3):
-                for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
-                    combo = [p1, p2, p3]
-                    total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
-                    if total_odds >= 2.50:
-                        avg_conf = sum(p["confidence"] for p in combo) / 3
-                        categories = set()
-                        for p in combo:
-                            t = p["type"]
-                            if t in ["V1", "V2", "1X", "2X"]:
-                                categories.add("RESULTAT")
-                            elif t.startswith("BTTS"):
-                                categories.add("BTTS")
-                            elif t.startswith("AU_MOINS"):
-                                categories.add("AU_MOINS")
-                            elif t.startswith("EQ1") or t.startswith("EQ2"):
-                                categories.add("EQUIPE")
-                            elif "_ET_" in t or "_T1_" in t or "_T2_" in t:
-                                categories.add("COMBINE")
-                            elif "TOTAL" in t or "+" in t or "-" in t:
-                                categories.add("TOTAL")
-                        if len(categories) < 2:
-                            continue
-                        score = round(avg_conf * 0.6 + len(categories) * 10, 1)
-                        all_combos.append({
-                            "predictions": combo,
-                            "total_odds": total_odds,
-                            "avg_confidence": round(avg_conf, 1),
-                            "score": score,
-                            "league": league,
-                            "categories": list(categories)
-                        })
+        match_keys = list(preds_by_match.keys())
+        for m1, m2 in combinations(match_keys, 2):
+            for p1, p2 in product(preds_by_match[m1], preds_by_match[m2]):
+                combo = [p1, p2]
+                total_odds = round(p1["estimated_odds"] * p2["estimated_odds"], 2)
+                if total_odds >= 2.50:
+                    avg_conf = sum(p["confidence"] for p in combo) / 2
+                    categories = set()
+                    for p in combo:
+                        t = p["type"]
+                        if t in ["V1", "V2", "1X", "2X"]:
+                            categories.add("RESULTAT")
+                        elif t.startswith("BTTS"):
+                            categories.add("BTTS")
+                        elif t.startswith("AU_MOINS"):
+                            categories.add("AU_MOINS")
+                        elif t.startswith("EQ1") or t.startswith("EQ2"):
+                            categories.add("EQUIPE")
+                        elif "_ET_" in t or "_T1_" in t or "_T2_" in t:
+                            categories.add("COMBINE")
+                        elif "TOTAL" in t or "+" in t or "-" in t:
+                            categories.add("TOTAL")
+                    if len(categories) < 2:
+                        continue
+                    score = round(avg_conf * 0.6 + len(categories) * 10, 1)
+                    all_combos.append({
+                        "predictions": combo,
+                        "total_odds": total_odds,
+                        "avg_confidence": round(avg_conf, 1),
+                        "score": score,
+                        "leagues": list(set(p["league"] for p in combo)),
+                        "categories": list(categories)
+                    })
+        
         all_combos.sort(key=lambda x: x["score"], reverse=True)
-        top3 = []
-        leagues_seen = set()
+        
+        # Prendre les 2 meilleurs combinés avec des matchs différents
+        top2 = []
+        matchs_utilises = set()
         for combo in all_combos:
-            if combo["league"] not in leagues_seen:
-                top3.append(combo)
-                leagues_seen.add(combo["league"])
-            if len(top3) >= 3:
+            combo_matchs = set(f"{p['home_team']} vs {p['away_team']}" for p in combo["predictions"])
+            if len(combo_matchs & matchs_utilises) == 0:
+                top2.append(combo)
+                matchs_utilises.update(combo_matchs)
+            if len(top2) >= 2:
                 break
+        
         generator.close()
-        return jsonify({"combos": top3})
-    except Exception as e:
-        print(f"ERREUR: {e}")
-        return jsonify({"error": str(e)})
-
+        return jsonify({"combos": top2})
 @app.route('/api/history')
 def api_history():
     if not os.path.exists("results"):
