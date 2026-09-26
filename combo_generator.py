@@ -1,14 +1,22 @@
+import os
 import requests
 from data_collector import DataCollector
 from analyzerv2 import MatchAnalyzer
+import config
 
-ODDS_API_KEY = "d3ac58acb0852fe1dcda7fc30aecadc7"
+# SECURITE : cette cle the-odds-api.com etait codee en dur ici et poussee sur
+# un depot public. Definis ODDS_API_KEY sur Render avec une cle regeneree.
+# Sans variable definie, les cotes reelles ne sont simplement pas recuperees
+# et l'appli retombe sur les cotes estimees (get_fallback_odds) : pas de
+# plantage, juste une precision moindre.
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+
 
 class ComboGenerator:
     def __init__(self):
         self.collector = DataCollector()
         self.analyzer = MatchAnalyzer()
-        self.min_confidence = 50
+        self.min_confidence = config.MIN_CONFIDENCE
         self.prediction_types = {
             "V1": "Victoire equipe 1",
             "V2": "Victoire equipe 2",
@@ -69,22 +77,22 @@ class ComboGenerator:
             "BTTS_NON": "Les deux equipes marquent NON"
         }
 
+    @staticmethod
+    def _same_team(name_a, name_b):
+        """Comparaison tolerante mais moins permissive que la version
+        d'origine (une trop courte sous-chaine commune faisait matcher des
+        equipes differentes)."""
+        a, b = name_a.lower().strip(), name_b.lower().strip()
+        if not a or not b:
+            return False
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        if len(shorter) < 4:
+            return a == b
+        return shorter in longer
+
     def get_real_odds(self, home_team, away_team):
-        # Chercher le match sur 1xBet via Apify
-        # Note : il faut d'abord trouver l'URL du match sur 1xBet
-        # Pour l'instant, on utilise The-Odds-API en fallback
-        
-        # Essayer Apify (nécessite l'URL du match)
-        # match_url = self.find_1xbet_url(home_team, away_team)
-        # if match_url:
-        #     odds = get_1xbet_odds(match_url)
-        #     if odds:
-        #         return odds
-        
-        # Fallback : The-Odds-API
-        return self.get_the_odds_api(home_team, away_team)
-    
-    def get_real_odds(self, home_team, away_team):
+        if not ODDS_API_KEY:
+            return None
         try:
             sports = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga"]
             for sport in sports:
@@ -97,9 +105,9 @@ class ComboGenerator:
                 if not isinstance(data, list):
                     continue
                 for match in data:
-                    home_api = match.get("home_team", "").lower()
-                    away_api = match.get("away_team", "").lower()
-                    if (home_team.lower() in home_api or home_api in home_team.lower()) and (away_team.lower() in away_api or away_api in away_team.lower()):
+                    home_api = match.get("home_team", "")
+                    away_api = match.get("away_team", "")
+                    if self._same_team(home_team, home_api) and self._same_team(away_team, away_api):
                         odds = {}
                         for bookmaker in match.get("bookmakers", []):
                             for market in bookmaker.get("markets", []):
@@ -126,9 +134,7 @@ class ComboGenerator:
                                             odds["btts_no"] = outcome["price"]
                             break
                         if odds:
-                            print(f"ODDS TROUVEES pour {home_team} vs {away_team}: {odds}")
                             return odds
-            print(f"Pas de cotes trouvees pour {home_team} vs {away_team}")
             return None
         except Exception as e:
             print(f"Erreur odds: {e}")
@@ -178,12 +184,15 @@ class ComboGenerator:
         return 1.50
 
     def get_predictions_from_analysis(self, match, analysis, real_odds=None):
+        # Un match dont l'IA n'a pas pu s'occuper (fallback neutre) est
+        # exclu plutot que presente avec de faux chiffres personnalises.
+        if analysis.get("fallback"):
+            return []
         valid = []
         for ptype, label in self.prediction_types.items():
             confidence = self.get_confidence(ptype, analysis)
             estimated = self.get_fallback_odds(ptype)
-            
-            # Utiliser les vraies cotes si disponibles
+
             if real_odds:
                 if ptype == "V1" and "home" in real_odds:
                     estimated = real_odds["home"]
@@ -213,7 +222,7 @@ class ComboGenerator:
                     estimated = round(real_odds["home"] * 0.9, 2)
                 elif ptype.startswith("EQ2_") and "away" in real_odds:
                     estimated = round(real_odds["away"] * 0.9, 2)
-            
+
             if confidence >= self.min_confidence:
                 valid.append({
                     "match_id": match["id"],

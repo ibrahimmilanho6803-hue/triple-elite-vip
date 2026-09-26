@@ -3,7 +3,19 @@ import sqlite3
 import json
 import anthropic
 
+
 class MatchAnalyzer:
+    # En dessous de ces tailles d'echantillon (matchs joues), on plafonne la
+    # confiance affichee : on ne peut pas etre "sur a 90%" d'un pronostic sur
+    # une equipe dont on n'a presque pas d'historique. Ce plafond s'applique
+    # au minimum des deux equipes (le maillon le plus faible).
+    CONFIDENCE_CAP_BY_SAMPLE = [
+        (15, 90),  # 15 matchs ou plus -> jusqu'a 90%
+        (8, 82),
+        (4, 72),
+        (0, 60),   # moins de 4 matchs connus -> jamais plus de 60%
+    ]
+
     def __init__(self):
         self.db = 'triple_elite.db'
         self.conn = sqlite3.connect(self.db)
@@ -69,6 +81,28 @@ class MatchAnalyzer:
             h2h.append(f"{home} {hs}-{aws} {away}")
         return h2h
 
+    def _confidence_cap(self, home_team, away_team):
+        """Plafond de confiance base sur la quantite de donnees reellement
+        disponibles pour les deux equipes (le maillon le plus faible)."""
+        home_stats = self.get_team_stats(home_team)
+        away_stats = self.get_team_stats(away_team)
+        sample = min(
+            home_stats["matches_played"] if home_stats else 0,
+            away_stats["matches_played"] if away_stats else 0,
+        )
+        for threshold, cap in self.CONFIDENCE_CAP_BY_SAMPLE:
+            if sample >= threshold:
+                return cap
+        return self.CONFIDENCE_CAP_BY_SAMPLE[-1][1]
+
+    @staticmethod
+    def _clamp(value, low=1, high=99):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            value = 50
+        return max(low, min(high, value))
+
     def analyze_multiple_matches(self, matches):
         match_list = []
         for m in matches:
@@ -100,6 +134,10 @@ eq1_over_0_5, eq2_over_0_5,
 au_moins_1_marque_0_5, au_moins_1_marque_1_5, au_moins_1_marque_2_5, au_moins_1_marque_3_5,
 btts_oui, btts_non
 
+Sois honnete sur l'incertitude : si les donnees manquent ou sont partagees,
+n'hesite pas a donner des probabilites proches de 50 plutot que des valeurs
+extremes injustifiees.
+
 MATCHS :
 {chr(10).join(match_list)}
 
@@ -108,6 +146,7 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
             response = self.client.messages.create(
                 model="claude-sonnet-5",
                 max_tokens=8000,
+                timeout=60.0,
                 messages=[{"role": "user", "content": prompt}]
             )
             ia_text = ""
@@ -120,7 +159,6 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
             end = ia_text.rfind("]")
             if start >= 0 and end > start:
                 ia_text = ia_text[start:end+1]
-            print(f"IA nettoye: {ia_text[:500]}")
             ia_data = json.loads(ia_text)
             print(f"IA parse OK: {len(ia_data)} analyses")
             return ia_data
@@ -129,27 +167,30 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
             return []
 
     def build_analysis_from_ia(self, home_team, away_team, ia_data):
+        cap = self._confidence_cap(home_team, away_team)
+
+        def c(key, default):
+            return min(self._clamp(ia_data.get(key, default)), cap)
+
         analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        v1 = int(ia_data.get("v1", 50))
-        v2 = int(ia_data.get("v2", 30))
-        x1 = int(ia_data.get("1x", 60))
-        x2 = int(ia_data.get("2x", 50))
-        over05 = int(ia_data.get("over_0_5", 90))
-        over15 = int(ia_data.get("over_1_5", 75))
-        over25 = int(ia_data.get("over_2_5", 55))
-        over35 = int(ia_data.get("over_3_5", 35))
-        under05 = int(ia_data.get("under_0_5", 10))
-        under15 = int(ia_data.get("under_1_5", 25))
-        under25 = int(ia_data.get("under_2_5", 45))
-        under35 = int(ia_data.get("under_3_5", 65))
-        eq1_05 = int(ia_data.get("eq1_over_0_5", 80))
-        eq2_05 = int(ia_data.get("eq2_over_0_5", 70))
-        au05 = int(ia_data.get("au_moins_1_marque_0_5", 92))
-        au15 = int(ia_data.get("au_moins_1_marque_1_5", 75))
-        au25 = int(ia_data.get("au_moins_1_marque_2_5", 55))
-        au35 = int(ia_data.get("au_moins_1_marque_3_5", 35))
-        btts_oui = int(ia_data.get("btts_oui", 50))
-        btts_non = int(ia_data.get("btts_non", 50))
+        v1 = c("v1", 50)
+        v2 = c("v2", 30)
+        x1 = c("1x", 60)
+        x2 = c("2x", 50)
+        over05 = c("over_0_5", 90)
+        over15 = c("over_1_5", 75)
+        over25 = c("over_2_5", 55)
+        over35 = c("over_3_5", 35)
+        under05 = c("under_0_5", 10)
+        under15 = c("under_1_5", 25)
+        under25 = c("under_2_5", 45)
+        under35 = c("under_3_5", 65)
+        au05 = c("au_moins_1_marque_0_5", 92)
+        au15 = c("au_moins_1_marque_1_5", 75)
+        au25 = c("au_moins_1_marque_2_5", 55)
+        au35 = c("au_moins_1_marque_3_5", 35)
+        btts_oui = c("btts_oui", 50)
+        btts_non = c("btts_non", 50)
         analysis["predictions"]["1"] = {"confidence": v1, "details": {}}
         analysis["predictions"]["2"] = {"confidence": v2, "details": {}}
         analysis["predictions"]["1X"] = {"confidence": x1, "details": {}}
@@ -175,29 +216,17 @@ Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
         return analysis
 
     def analyze_match(self, home_team, away_team, real_odds=None):
-        analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        analysis["predictions"]["1"] = {"confidence": 60, "details": {}}
-        analysis["predictions"]["2"] = {"confidence": 40, "details": {}}
-        analysis["predictions"]["1X"] = {"confidence": 70, "details": {}}
-        analysis["predictions"]["2X"] = {"confidence": 50, "details": {}}
-        analysis["predictions"]["+0.5"] = {"confidence": 90, "details": {}}
-        analysis["predictions"]["+1"] = {"confidence": 70, "details": {}}
-        analysis["predictions"]["+1.5"] = {"confidence": 70, "details": {}}
-        analysis["predictions"]["+2"] = {"confidence": 55, "details": {}}
-        analysis["predictions"]["+2.5"] = {"confidence": 55, "details": {}}
-        analysis["predictions"]["+3"] = {"confidence": 35, "details": {}}
-        analysis["predictions"]["-0.5"] = {"confidence": 10, "details": {}}
-        analysis["predictions"]["-1"] = {"confidence": 30, "details": {}}
-        analysis["predictions"]["-1.5"] = {"confidence": 30, "details": {}}
-        analysis["predictions"]["-2"] = {"confidence": 45, "details": {}}
-        analysis["predictions"]["-2.5"] = {"confidence": 45, "details": {}}
-        analysis["predictions"]["-3"] = {"confidence": 65, "details": {}}
-        analysis["predictions"]["BTTS_YES"] = {"confidence": 50, "details": {}}
-        analysis["predictions"]["BTTS_NO"] = {"confidence": 50, "details": {}}
-        analysis["predictions"]["AU_MOINS_0.5"] = {"confidence": 92, "details": {}}
-        analysis["predictions"]["AU_MOINS_1.5"] = {"confidence": 78, "details": {}}
-        analysis["predictions"]["AU_MOINS_2.5"] = {"confidence": 58, "details": {}}
-        analysis["predictions"]["AU_MOINS_3.5"] = {"confidence": 38, "details": {}}
+        """Analyse de secours SANS IA. N'est utilisee que si Claude n'a pas
+        pu analyser ce match du tout. Renvoie des valeurs neutres et
+        deliberement peu confiantes plutot que de simuler une vraie analyse :
+        mieux vaut l'exclure des combines que d'afficher un faux pourcentage
+        de fiabilite a un client."""
+        analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}, "fallback": True}
+        neutral_low = 45
+        for key in ["1", "2", "1X", "2X", "+0.5", "+1", "+1.5", "+2", "+2.5", "+3",
+                    "-0.5", "-1", "-1.5", "-2", "-2.5", "-3", "BTTS_YES", "BTTS_NO",
+                    "AU_MOINS_0.5", "AU_MOINS_1.5", "AU_MOINS_2.5", "AU_MOINS_3.5"]:
+            analysis["predictions"][key] = {"confidence": neutral_low, "details": {}}
         return analysis
 
     def close(self):

@@ -4,8 +4,16 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import threading
 
+# SECURITE : un mot de passe d'application Gmail etait code en dur ici comme
+# valeur par defaut, et pousse sur un depot GitHub PUBLIC. Il doit etre
+# revoque sur https://myaccount.google.com/apppasswords, puis un nouveau
+# doit etre defini UNIQUEMENT via la variable d'environnement GMAIL_MDP
+# (Render Dashboard -> service -> Environment). Plus aucun mot de passe par
+# defaut n'est fourni ici : sans la variable d'environnement, l'envoi
+# d'email echoue proprement au lieu de se rabattre sur un secret expose.
 EMAIL_EXPEDITEUR = os.environ.get("GMAIL_EMAIL", "tripleelitevip@gmail.com")
-MOT_DE_PASSE_APP = os.environ.get("GMAIL_MDP", "tuvx qsar slfy epnj")
+MOT_DE_PASSE_APP = os.environ.get("GMAIL_MDP")
+
 
 def envoyer_licence_async(email_destinataire, cle_licence, plan):
     thread = threading.Thread(target=envoyer_licence, args=(email_destinataire, cle_licence, plan))
@@ -13,7 +21,12 @@ def envoyer_licence_async(email_destinataire, cle_licence, plan):
     thread.start()
     print(f"Envoi email en arriere-plan a {email_destinataire}...")
 
+
 def envoyer_licence(email_destinataire, cle_licence, plan):
+    if not MOT_DE_PASSE_APP:
+        print("ERREUR: variable d'environnement GMAIL_MDP manquante, email non envoye")
+        return False
+
     msg = MIMEMultipart('alternative')
     msg['From'] = f"Triple Elite VIP <{EMAIL_EXPEDITEUR}>"
     msg['To'] = email_destinataire
@@ -45,7 +58,7 @@ def envoyer_licence(email_destinataire, cle_licence, plan):
     msg.attach(MIMEText(corps_html, 'html'))
 
     try:
-        serveur = smtplib.SMTP('smtp.gmail.com', 587)
+        serveur = smtplib.SMTP('smtp.gmail.com', 587, timeout=15)
         serveur.starttls()
         serveur.login(EMAIL_EXPEDITEUR, MOT_DE_PASSE_APP)
         serveur.send_message(msg)

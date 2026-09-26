@@ -1,17 +1,74 @@
-import sys
 import os
-sys.path.insert(0, r"C:\Users\HP\Desktop\Triple_Elite_VIP")
+import json
+import glob
+import secrets
+from datetime import datetime, timedelta
+from functools import wraps
+from itertools import combinations, product
 
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, session
+from werkzeug.utils import secure_filename
+
+import config
 from data_collector import DataCollector
 from combo_generator import ComboGenerator
 from license_manager import LicenseManager
-from datetime import datetime
-import json
-import glob
 
 app = Flask(__name__)
+# Sans SECRET_KEY defini sur Render, une valeur aleatoire est generee au
+# demarrage (les sessions restent valables tant que le processus tourne).
+# Definis SECRET_KEY sur Render pour des sessions stables entre redemarrages.
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
+
 lm = LicenseManager()
+
+RESULTS_DIR = "results"
+CACHE_DIR = "cache"
+CACHE_FILE = os.path.join(CACHE_DIR, "last_generation.json")
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('authenticated'):
+            return jsonify({"error": "Session expiree, merci de te reconnecter."}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _read_cache():
+    try:
+        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        generated_at = datetime.fromisoformat(data["generated_at"])
+        if datetime.now() - generated_at < timedelta(minutes=config.CACHE_MINUTES):
+            return data["combos"], data["generated_at"]
+    except Exception:
+        pass
+    return None, None
+
+
+def _write_cache(combos):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({"generated_at": datetime.now().isoformat(), "combos": combos}, f, ensure_ascii=False, default=str)
+    except Exception as e:
+        print(f"Erreur ecriture cache: {e}")
+
+
+def _save_history(combos):
+    try:
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        filename = f"{RESULTS_DIR}/combo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(combos, f, indent=2, ensure_ascii=False, default=str)
+    except Exception as e:
+        print(f"Erreur sauvegarde historique: {e}")
+
+
+PRICE_MONTHLY_TXT = f"{config.PRICE_MONTHLY:,} {config.DEVISE}".replace(",", " ")
+PRICE_YEARLY_TXT = f"{config.PRICE_YEARLY:,} {config.DEVISE}".replace(",", " ")
 
 PAGE_ACCUEIL = """
 <!DOCTYPE html>
@@ -35,12 +92,13 @@ PAGE_ACCUEIL = """
     .price-cards { display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; }
     .price-card { background: #1a1f3a; padding: 25px 20px; border-radius: 10px; width: 200px; border: 2px solid #333; }
     .price-card.premium { border-color: #ffd700; }
-    .price { font-size: 1.8em; color: #ffd700; font-weight: bold; }
+    .price { font-size: 1.6em; color: #ffd700; font-weight: bold; }
     .price span { font-size: 0.4em; color: #aaa; }
     .btn { background: #ffd700; color: #0a0e27; padding: 10px 20px; font-weight: bold; border-radius: 5px; text-decoration: none; display: inline-block; margin: 8px 5px; font-size: 0.9em; }
     .btn:hover { background: #ffed4a; }
     .btn-green { background: #4caf50; color: #fff; }
     .btn-green:hover { background: #66bb6a; }
+    .disclaimer { color: #888; font-size: 0.78em; max-width: 640px; margin: 20px auto 0; line-height: 1.5; }
         @media (max-width: 768px) {
         .hero h1 { font-size: 2em; }
         .hero h1 { font-size: 1.8em !important; }
@@ -53,29 +111,29 @@ PAGE_ACCUEIL = """
     }
     @media (max-width: 480px) {
         .hero h1 { font-size: 1.3em; }
-        .price { font-size: 1.5em; }
+        .price { font-size: 1.3em; }
     }
     </style>
 </head>
 <body>
     <div class="hero">
         <h1>Triple Elite VIP</h1>
-        <p>Le logiciel qui analyse 3 championnats et génère 3 combinés optimiser à 2.50+ chaque semaine</p>
+        <p>Le logiciel qui analyse 3 championnats et genere des combines optimises a 2.50+ chaque semaine</p>
         <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
-        <a href="/login" class="btn">Accès Client VIP</a>
+        <a href="/login" class="btn">Acces Client VIP</a>
     </div>
     <div class="features">
         <div class="feature">
             <h3>Premier League</h3>
-            <p>Analyse complète du championnat Anglais</p>
+            <p>Analyse complete du championnat Anglais</p>
         </div>
         <div class="feature">
             <h3>La Liga</h3>
-            <p>Analyse complète du championnat Espagnol</p>
+            <p>Analyse complete du championnat Espagnol</p>
         </div>
         <div class="feature">
             <h3>Bundesliga</h3>
-            <p>Analyse complète du championnat Allemand</p>
+            <p>Analyse complete du championnat Allemand</p>
         </div>
     </div>
     <div class="pricing">
@@ -83,21 +141,23 @@ PAGE_ACCUEIL = """
         <div class="price-cards">
             <div class="price-card">
                 <h3>Mensuel</h3>
-                <div class="price">30€<span>/ 1mois</span></div>
-                <p>Accès complet</p>
-                <p>3 combinés/semaine</p>
-                <p>Support Télégram</p>
+                <div class="price">""" + PRICE_MONTHLY_TXT + """<span>/ 1mois</span></div>
+                <p>Acces complet</p>
+                <p>Combines chaque semaine</p>
+                <p>Support Telegram</p>
             </div>
             <div class="price-card premium">
                 <h3>Annuel</h3>
-                <div class="price">60€<span>/ 1ans</span></div>
-                <p>Accès complet</p>
-                <p>3 combinés/semaine</p>
+                <div class="price">""" + PRICE_YEARLY_TXT + """<span>/ 1an</span></div>
+                <p>Acces complet</p>
+                <p>Combines chaque semaine</p>
                 <p>Support prioritaire</p>
             </div>
         </div>
-        <p style="color:#aaa; margin-top:20px; font-size:0.8em;">Les cotes affichees sont issues de Bet365, William Hill et Unibet. Elles peuvent varier legerement selon le bookmaker.</p>
-<p style="color:#aaa; margin-top:10px;">Contact : tripleelitevip@gmail.com</p>
+        <p class="disclaimer">Les pronostics sont generes par une analyse statistique et une IA a partir des
+        donnees disponibles (forme recente, confrontations directes, stats de saison). Il s'agit d'estimations,
+        pas d'une garantie de resultat : parie de maniere responsable.</p>
+        <p style="color:#aaa; margin-top:10px;">Contact : """ + config.SELLER_EMAIL + """</p>
     </div>
 </body>
 </html>
@@ -119,11 +179,11 @@ HTML_TEMPLATE = """
     .container { max-width: 1200px; margin: 0 auto; padding: 15px; }
     .combo-card { background: #1a1f3a; border-radius: 10px; padding: 15px; margin: 15px 0; border-left: 4px solid #ffd700; }
     .combo-card h2 { color: #ffd700; font-size: 1.1em; margin-bottom: 8px; }
-    .combo-stats { display: flex; gap: 10px; margin-bottom: 10px; }
+    .combo-stats { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
     .stat { background: #0d1137; padding: 8px 12px; border-radius: 5px; }
     .stat-label { color: #aaa; font-size: 0.7em; }
     .stat-value { color: #ffd700; font-size: 1em; font-weight: bold; }
-    .match-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; margin: 6px 0; background: #0d1137; border-radius: 5px; }
+    .match-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; margin: 6px 0; background: #0d1137; border-radius: 5px; flex-wrap: wrap; gap: 8px; }
     .match-teams { font-size: 0.9em; }
     .match-league { color: #aaa; font-size: 0.7em; }
     .match-prediction { color: #4caf50; font-weight: bold; font-size: 0.85em; }
@@ -136,9 +196,10 @@ HTML_TEMPLATE = """
     .login-box input { width: 100%; padding: 10px; margin: 8px 0; background: #0d1137; border: 1px solid #333; color: #fff; border-radius: 5px; }
     .error { color: #f44336; margin: 10px 0; }
     .loading { text-align: center; padding: 30px; color: #ffd700; font-size: 1em; }
+    .updated-at { text-align: center; color: #888; font-size: 0.78em; margin-top: -5px; padding-bottom: 10px; }
+    .disclaimer { color: #888; font-size: 0.75em; text-align: center; max-width: 700px; margin: 15px auto; line-height: 1.5; }
         @media (max-width: 768px) {
         .header h1 { font-size: 1.6em; }
-        .match-row { flex-direction: row; text-align: left; }
         .combo-stats { flex-direction: row; }
         .btn { display: inline-block; width: auto; margin: 5px; padding: 10px 20px; }
         .login-box { margin: 20px auto; padding: 20px; }
@@ -151,7 +212,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="header">
         <h1>Triple Elite VIP</h1>
-        <p>Prédictions Football - 3 Championnats - Combinés 2.50+</p>
+        <p>Predictions Football - 3 Championnats - Combines 2.50+</p>
     </div>
     <div class="container">
         {% if not authenticated %}
@@ -159,23 +220,26 @@ HTML_TEMPLATE = """
             <h2>Connexion VIP</h2>
             <form method="POST" action="/login">
                 <input type="email" name="email" placeholder="E-mail" required>
-                <input type="text" name="license_key" placeholder="Clé de licence" required>
+                <input type="text" name="license_key" placeholder="Cle de licence" required>
                 <button type="submit" class="btn">Se connecter</button>
             </form>
             {% if error %}
             <p class="error">{{ error }}</p>
             {% endif %}
-            <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour à l'accueil</a></p>
+            <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour a l'accueil</a></p>
         </div>
         {% else %}
         <div style="text-align: center; padding: 20px;">
-            <button onclick="generateCombos()" class="btn">Générer les combinés</button>
-            <button onclick="window.location.href='https://triple-elite-vip.com'" class="btn btn-green">Renouveler</button>
+            <button onclick="generateCombos()" class="btn">Generer les combines</button>
+            <button onclick="window.location.href='https://triple-elite-vip-paiement.onrender.com'" class="btn btn-green">Renouveler</button>
             <button onclick="showHistory()" class="btn">Historique</button>
-            <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Déconnexion</button></a>
+            <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Deconnexion</button></a>
         </div>
+        <p class="disclaimer">La confiance affichee est une estimation statistique et IA basee sur l'historique
+        des equipes (forme recente, confrontations directes, stats de saison), pas une garantie de resultat.</p>
         <div id="combos-container">
             <div class="loading" id="loading" style="display:none;">Analyse en cours...</div>
+            <div id="updated-at" class="updated-at"></div>
             <div id="results"></div>
         </div>
         {% endif %}
@@ -184,17 +248,25 @@ HTML_TEMPLATE = """
     function generateCombos() {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('results').innerHTML = '';
+        document.getElementById('updated-at').textContent = '';
         fetch('/api/generate')
-            .then(function(response) { return response.json(); })
+            .then(function(response) {
+                if (response.status === 401) { window.location.href = '/login'; return null; }
+                return response.json();
+            })
             .then(function(data) {
+                if (!data) { return; }
                 document.getElementById('loading').style.display = 'none';
                 if (data.error) {
                     document.getElementById('results').innerHTML = '<p style="color:#ff9800;">' + data.error + '</p>';
                     return;
                 }
                 if (data.combos.length === 0) {
-                    document.getElementById('results').innerHTML = '<p style="color:#ff9800;">Aucun combine trouve</p>';
+                    document.getElementById('results').innerHTML = '<p style="color:#ff9800;">Aucun combine trouve pour le moment</p>';
                     return;
+                }
+                if (data.cached) {
+                    document.getElementById('updated-at').textContent = 'Combines de la derniere analyse (mis a jour regulierement)';
                 }
                 var html = '';
                 data.combos.forEach(function(combo, index) {
@@ -225,8 +297,12 @@ HTML_TEMPLATE = """
     }
     function showHistory() {
         fetch('/api/history')
-            .then(function(response) { return response.json(); })
+            .then(function(response) {
+                if (response.status === 401) { window.location.href = '/login'; return null; }
+                return response.json();
+            })
             .then(function(data) {
+                if (!data) { return; }
                 var html = '<h2>Historique des generations</h2>';
                 if (data.length === 0) { html += '<p>Aucun historique</p>'; }
                 else {
@@ -242,76 +318,88 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
 @app.route('/')
 def accueil():
     return PAGE_ACCUEIL
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
+        if session.get('authenticated'):
+            return render_template_string(HTML_TEMPLATE, authenticated=True, error=None)
         return render_template_string(HTML_TEMPLATE, authenticated=False, error=None)
-    email = request.form.get('email')
-    license_key = request.form.get('license_key')
+
+    email = (request.form.get('email') or '').strip()
+    license_key = (request.form.get('license_key') or '').strip()
     valid, message = lm.verify_license(email, license_key)
     if valid:
+        session['authenticated'] = True
+        session['email'] = email
         return render_template_string(HTML_TEMPLATE, authenticated=True, error=None)
     else:
         return render_template_string(HTML_TEMPLATE, authenticated=False, error=message)
 
+
 @app.route('/logout')
 def logout():
+    session.clear()
     return render_template_string(HTML_TEMPLATE, authenticated=False, error=None)
 
+
 @app.route('/api/generate')
+@login_required
 def api_generate():
+    cached, generated_at = _read_cache()
+    if cached is not None:
+        return jsonify({"combos": cached, "cached": True, "generated_at": generated_at})
+
+    generator = None
     try:
         collector = DataCollector()
         generator = ComboGenerator()
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
         if len(upcoming) < 3:
-            return jsonify({"error": "Pas assez de matchs"})
+            return jsonify({"error": "Pas assez de matchs a venir pour le moment, reessaie plus tard."})
         upcoming = upcoming[:6]
-        print(f"Lancement analyse IA pour {len(upcoming)} matchs")
+
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
-        print(f"Analyses IA recues: {len(analyses_ia)}")
         analyses_par_match = {}
         for ia in analyses_ia:
             if ia.get("home_team") and ia.get("away_team"):
                 key = f"{ia['home_team']} vs {ia['away_team']}"
                 analyses_par_match[key] = ia
+
         all_preds = []
-        for i, match in enumerate(upcoming):
+        for match in upcoming:
             key = f"{match['home_team']} vs {match['away_team']}"
             if key in analyses_par_match:
                 analysis = generator.analyzer.build_analysis_from_ia(
                     match["home_team"], match["away_team"], analyses_par_match[key]
                 )
-            elif i < len(analyses_ia):
-                analysis = generator.analyzer.build_analysis_from_ia(
-                    match["home_team"], match["away_team"], analyses_ia[i]
-                )
             else:
+                # Pas d'analyse IA fiable pour ce match precis : on l'exclut
+                # (via le fallback neutre) plutot que de lui attribuer par
+                # erreur l'analyse d'un autre match.
                 analysis = generator.analyzer.analyze_match(match["home_team"], match["away_team"])
             real_odds = generator.get_real_odds(match["home_team"], match["away_team"])
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
-        
-        from itertools import combinations, product
+
         preds_by_match = {}
         for pred in all_preds:
             key = f"{pred['home_team']} vs {pred['away_team']}"
-            if key not in preds_by_match:
-                preds_by_match[key] = []
-            preds_by_match[key].append(pred)
-        
+            preds_by_match.setdefault(key, []).append(pred)
+
         all_combos = []
         match_keys = list(preds_by_match.keys())
         for m1, m2, m3 in combinations(match_keys, 3):
             for p1, p2, p3 in product(preds_by_match[m1], preds_by_match[m2], preds_by_match[m3]):
                 combo = [p1, p2, p3]
                 total_odds = round(p1["estimated_odds"] * p2["estimated_odds"] * p3["estimated_odds"], 2)
-                if total_odds >= 2.50:
+                if total_odds >= config.TARGET_ODDS:
                     avg_conf = sum(p["confidence"] for p in combo) / 3
                     categories = set()
                     for p in combo:
@@ -339,63 +427,80 @@ def api_generate():
                         "leagues": list(set(p["league"] for p in combo)),
                         "categories": list(categories)
                     })
-        
+
         all_combos.sort(key=lambda x: x["score"], reverse=True)
-        
-        top2 = []
+
+        top = []
         matchs_utilises = set()
         for combo in all_combos:
             combo_matchs = set(f"{p['home_team']} vs {p['away_team']}" for p in combo["predictions"])
             leagues_combo = set(p["league"] for p in combo["predictions"])
-            # Vérifier que les matchs ne sont pas déjà utilisés ET que les championnats sont variés
             if len(combo_matchs & matchs_utilises) == 0 and len(leagues_combo) >= 2:
-                top2.append(combo)
+                top.append(combo)
                 matchs_utilises.update(combo_matchs)
-            if len(top2) >= 2:
+            if len(top) >= config.MAX_COMBOS_RETOURNES:
                 break
-        
-        # Si on n'a pas 2 combinés variés, prendre les meilleurs sans contrainte de championnat
-        if len(top2) < 2:
+
+        if len(top) < config.MAX_COMBOS_RETOURNES:
             for combo in all_combos:
                 combo_matchs = set(f"{p['home_team']} vs {p['away_team']}" for p in combo["predictions"])
                 if len(combo_matchs & matchs_utilises) == 0:
-                    top2.append(combo)
+                    top.append(combo)
                     matchs_utilises.update(combo_matchs)
-                if len(top2) >= 2:
+                if len(top) >= config.MAX_COMBOS_RETOURNES:
                     break
-        
-        generator.close()
-        return jsonify({"combos": top2})
+
+        if not top:
+            return jsonify({"error": "Aucun combine assez fiable pour le moment. Reessaie plus tard."})
+
+        _save_history(top)
+        _write_cache(top)
+        return jsonify({"combos": top, "cached": False})
     except Exception as e:
-        print(f"ERREUR: {e}")
-        return jsonify({"error": str(e)})
+        print(f"ERREUR /api/generate: {e}")
+        return jsonify({"error": "Une erreur est survenue pendant la generation. Merci de reessayer dans quelques minutes."}), 500
+    finally:
+        if generator is not None:
+            generator.close()
+
 
 @app.route('/api/history')
+@login_required
 def api_history():
-    if not os.path.exists("results"):
+    if not os.path.exists(RESULTS_DIR):
         return jsonify([])
-    files = [f for f in os.listdir("results") if f.endswith('.json')]
+    files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.json')]
     files.sort(reverse=True)
     return jsonify(files[:20])
 
-@app.route('/api/download/<filename>')
-def api_download(filename):
-    if not os.path.exists(f"results/{filename}"):
-        return "Fichier introuvable", 404
-    with open(f"results/{filename}", 'r', encoding='utf-8') as f:
-        content = f.read()
-    return app.response_class(content, mimetype='application/json', headers={'Content-Disposition': f'attachment;filename={filename}'})
 
-@app.route('/api/clear-history')
+@app.route('/api/download/<path:filename>')
+@login_required
+def api_download(filename):
+    safe_name = secure_filename(filename)
+    filepath = os.path.join(RESULTS_DIR, safe_name)
+    if not safe_name.endswith('.json') or not os.path.exists(filepath):
+        return jsonify({"error": "Fichier introuvable"}), 404
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    return app.response_class(content, mimetype='application/json', headers={'Content-Disposition': f'attachment;filename={safe_name}'})
+
+
+@app.route('/api/clear-history', methods=['POST'])
+@login_required
 def api_clear_history():
     try:
-        files = glob.glob("results/combo_*.json")
+        files = glob.glob(f"{RESULTS_DIR}/combo_*.json")
         for f in files:
             os.remove(f)
         return jsonify({"success": True, "deleted": len(files)})
     except Exception as e:
-        return jsonify({"error": str(e)})
+        print(f"ERREUR /api/clear-history: {e}")
+        return jsonify({"error": "Une erreur est survenue."}), 500
+
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
     print("\nDashboard Triple Elite VIP")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=debug)

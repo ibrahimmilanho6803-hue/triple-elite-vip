@@ -2,3 +2,6 @@ config_secret.py
 *.db
 __pycache__/
 results/
+cache/
+.env
+*.pyc

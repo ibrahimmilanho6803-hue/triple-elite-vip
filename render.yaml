@@ -3,16 +3,40 @@ services:
     name: triple-elite-vip-dashboard
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn dashboard:app --bind 0.0.0.0:10000
+    startCommand: gunicorn dashboard:app --bind 0.0.0.0:10000 --timeout 120
     envVars:
-      - key: STRIPE_SECRET_KEY
-        value: sk_live_VOTRE_CLE_SECRETE
+      # sync: false = valeur saisie une seule fois dans le Dashboard Render
+      # (Environment), jamais stockee dans ce fichier ni dans Git.
+      - key: SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SPORTSDB_API_KEY
+        sync: false
+      - key: ODDS_API_KEY
+        sync: false
 
   - type: web
     name: triple-elite-vip-paiement
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn paiement:app --bind 0.0.0.0:10001
+    startCommand: gunicorn paiement:app --bind 0.0.0.0:10001 --timeout 60
     envVars:
-      - key: STRIPE_SECRET_KEY
-        value: sk_live_VOTRE_CLE_SECRETE
+      - key: DATABASE_URL
+        sync: false
+      - key: LICENSE_SECRET_KEY
+        sync: false
+      - key: PAYDUNYA_MASTER_KEY
+        sync: false
+      - key: PAYDUNYA_PRIVATE_KEY
+        sync: false
+      - key: PAYDUNYA_TOKEN
+        sync: false
+      - key: GMAIL_EMAIL
+        sync: false
+      - key: GMAIL_MDP
+        sync: false
+      - key: PAIEMENT_BASE_URL
+        sync: false
