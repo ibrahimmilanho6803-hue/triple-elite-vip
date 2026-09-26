@@ -381,6 +381,8 @@ def api_generate():
             if ia.get("home_team") and ia.get("away_team"):
                 key = f"{ia['home_team']} vs {ia['away_team']}"
                 analyses_par_match[key] = ia
+        print(f"DEBUG generate: upcoming={len(upcoming)} analyses_ia={len(analyses_ia)} "
+              f"analyses_par_match={len(analyses_par_match)}")
 
         all_preds = []
         for match in upcoming:
@@ -402,6 +404,7 @@ def api_generate():
         for pred in all_preds:
             key = f"{pred['home_team']} vs {pred['away_team']}"
             preds_by_match.setdefault(key, []).append(pred)
+        print(f"DEBUG generate: all_preds={len(all_preds)} matchs_avec_preds={len(preds_by_match)}")
 
         all_combos = []
         match_keys = list(preds_by_match.keys())
@@ -438,6 +441,7 @@ def api_generate():
                         "categories": list(categories)
                     })
 
+        print(f"DEBUG generate: all_combos={len(all_combos)}")
         all_combos.sort(key=lambda x: x["score"], reverse=True)
 
         top = []
@@ -461,6 +465,15 @@ def api_generate():
                     break
 
         if not top:
+            # Avec seulement 3 matchs a venir (le minimum), il n'existe qu'une
+            # seule combinaison possible : si elle n'atteint pas la cote
+            # minimale ou la diversite requise, il n'y a litteralement aucune
+            # alternative a essayer. C'est frequent lors d'une treve
+            # internationale (les 3 championnats suivis s'arretent en meme
+            # temps) : le message l'explique au lieu de laisser croire a un
+            # probleme de fiabilite de l'analyse.
+            if len(upcoming) <= 3:
+                return jsonify({"error": "Trop peu de matchs a venir dans les prochains jours (treve internationale probable) pour composer un combine a 2.50+ fiable. Reessaie dans quelques jours."})
             return jsonify({"error": "Aucun combine assez fiable pour le moment. Reessaie plus tard."})
 
         _save_history(top)
