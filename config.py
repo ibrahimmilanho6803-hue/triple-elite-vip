@@ -33,12 +33,22 @@ MATCHS_PAR_CHAMPIONNAT = 3  # nombre de matchs a venir analyses par championnat
 CACHE_MINUTES = 30
 
 # --- Produit / tarifs ---
-# Les paiements sont traites en FCFA (Orange Money, MTN, Moov, Wave, PayDunya).
 PRODUCT_NAME = "Triple Elite VIP"
 VERSION = "2.0"
-DEVISE = "FCFA"
-PRICE_MONTHLY = 30000   # FCFA / mois
-PRICE_YEARLY = 60000    # FCFA / an
+
+# Prix affiches au client sur les pages de vente et de paiement.
+DEVISE = "€"
+PRICE_MONTHLY = 30   # € / mois (affichage)
+PRICE_YEARLY = 60    # € / an (affichage)
+
+# PayDunya (Orange Money, MTN, Moov, Wave, carte) ne facture qu'en FCFA (XOF) :
+# leur API ne propose aucune option pour creer une facture en euros. Le FCFA
+# etant arrime a l'euro a taux fixe (1 EUR = 655,957 FCFA), les montants
+# ci-dessous sont l'equivalent reel de PRICE_MONTHLY/PRICE_YEARLY et sont ce
+# qui est REELLEMENT transmis a PayDunya (voir paiement.py) -- meme si la
+# page affiche "30 €" / "60 €" au client.
+PRICE_MONTHLY_FACTURE_FCFA = 19700   # ~30 EUR
+PRICE_YEARLY_FACTURE_FCFA = 39400    # ~60 EUR
 
 # --- Contact vendeur ---
 SELLER_EMAIL = "tripleelitevip@gmail.com"

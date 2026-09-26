@@ -111,8 +111,8 @@ PAGE_PAIEMENT = """
     </script>
 </body>
 </html>
-""".replace("{{PRICE_MONTHLY}}", f"{config.PRICE_MONTHLY:,} {config.DEVISE}".replace(",", " ")) \
-   .replace("{{PRICE_YEARLY}}", f"{config.PRICE_YEARLY:,} {config.DEVISE}".replace(",", " "))
+""".replace("{{PRICE_MONTHLY}}", f"{config.PRICE_MONTHLY} {config.DEVISE}") \
+   .replace("{{PRICE_YEARLY}}", f"{config.PRICE_YEARLY} {config.DEVISE}")
 
 
 @app.route('/')
@@ -138,11 +138,15 @@ def payer():
             return jsonify({'error': 'Adresse email invalide'}), 400
 
         if plan == 'yearly':
-            amount = config.PRICE_YEARLY
+            # PayDunya facture en FCFA (aucune option Euro sur leur API) :
+            # ce montant est l'equivalent reel de config.PRICE_YEARLY (en
+            # euros), au taux fixe FCFA/EUR. C'est ce montant qui est
+            # REELLEMENT preleve, meme si le client a vu "60 €" affiche.
+            amount = config.PRICE_YEARLY_FACTURE_FCFA
             plan_nom = "Annuel"
             duree = 12
         else:
-            amount = config.PRICE_MONTHLY
+            amount = config.PRICE_MONTHLY_FACTURE_FCFA
             plan_nom = "Mensuel"
             duree = 1
 
