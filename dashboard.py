@@ -32,6 +32,14 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get('authenticated'):
             return jsonify({"error": "Session expiree, merci de te reconnecter."}), 401
+        # Revalidation a CHAQUE requete (pas seulement a la connexion) :
+        # sans ca, un client reste connecte via son cookie de session meme
+        # apres l'expiration de son abonnement. Ici l'acces est coupe des
+        # que la licence expire ou est desactivee en base, meme si sa
+        # session de navigateur est encore valide.
+        if not lm.is_license_active(session.get('email', '')):
+            session.clear()
+            return jsonify({"error": "Ton abonnement a expire ou a ete desactive. Merci de le renouveler."}), 401
         return f(*args, **kwargs)
     return decorated
 
@@ -225,6 +233,7 @@ HTML_TEMPLATE = """
             </form>
             {% if error %}
             <p class="error">{{ error }}</p>
+            <p style="margin-top:10px;"><a href="https://triple-elite-vip-paiement.onrender.com" style="color:#4caf50;">S'abonner / Renouveler</a></p>
             {% endif %}
             <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour a l'accueil</a></p>
         </div>
@@ -327,8 +336,9 @@ def accueil():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
-        if session.get('authenticated'):
+        if session.get('authenticated') and lm.is_license_active(session.get('email', '')):
             return render_template_string(HTML_TEMPLATE, authenticated=True, error=None)
+        session.clear()
         return render_template_string(HTML_TEMPLATE, authenticated=False, error=None)
 
     email = (request.form.get('email') or '').strip()

@@ -81,6 +81,18 @@ class LicenseManager:
 
         return license_key
 
+    @staticmethod
+    def _parse_expires(expires):
+        # str(datetime) omet les microsecondes quand elles sont nulles ;
+        # on accepte les deux formats pour ne jamais planter sur une date
+        # pourtant valide.
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.datetime.strptime(expires, fmt)
+            except ValueError:
+                continue
+        return datetime.datetime.min
+
     def verify_license(self, email, license_key):
         try:
             conn = self.get_conn()
@@ -97,7 +109,7 @@ class LicenseManager:
             if not active:
                 return False, "Licence desactivee"
 
-            if datetime.datetime.strptime(expires, "%Y-%m-%d %H:%M:%S.%f") < datetime.datetime.now():
+            if self._parse_expires(expires) < datetime.datetime.now():
                 return False, "Licence expiree"
 
             if key != license_key:
@@ -107,6 +119,33 @@ class LicenseManager:
         except Exception as e:
             print(f"Erreur verification: {e}")
             return False, "Erreur de verification"
+
+    def is_license_active(self, email):
+        """Revalidation legere (sans la cle), utilisee a CHAQUE requete
+        protegee du dashboard (pas seulement a la connexion). Sans ca, un
+        client reste connecte indefiniment via son cookie de session meme
+        apres l'expiration de son abonnement : c'est cette methode qui coupe
+        l'acces automatiquement des que la date d'expiration est depassee ou
+        que la licence est desactivee, au prochain clic dans le dashboard."""
+        if not email:
+            return False
+        try:
+            conn = self.get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT active, expires FROM licenses WHERE email = %s", (email,))
+            result = cursor.fetchone()
+            conn.close()
+            if not result:
+                return False
+            active, expires = result
+            if not active:
+                return False
+            if self._parse_expires(expires) < datetime.datetime.now():
+                return False
+            return True
+        except Exception as e:
+            print(f"Erreur verification acces: {e}")
+            return False
 
     def deactivate_license(self, email):
         try:
