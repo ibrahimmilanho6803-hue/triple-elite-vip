@@ -126,7 +126,7 @@ PAGE_ACCUEIL = """
 <body>
     <div class="hero">
         <h1>Triple Elite VIP</h1>
-        <p>Le logiciel qui analyse 3 championnats et genere des combines optimises a 2.50+ chaque semaine</p>
+        <p>Le logiciel qui analyse 5 championnats et genere des combines optimises a 2.50+ chaque semaine</p>
         <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
         <a href="/login" class="btn">Acces Client VIP</a>
     </div>
@@ -142,6 +142,14 @@ PAGE_ACCUEIL = """
         <div class="feature">
             <h3>Bundesliga</h3>
             <p>Analyse complete du championnat Allemand</p>
+        </div>
+        <div class="feature">
+            <h3>Ligue 1</h3>
+            <p>Analyse complete du championnat Francais</p>
+        </div>
+        <div class="feature">
+            <h3>Serie A</h3>
+            <p>Analyse complete du championnat Italien</p>
         </div>
     </div>
     <div class="pricing">
@@ -220,7 +228,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="header">
         <h1>Triple Elite VIP</h1>
-        <p>Predictions Football - 3 Championnats - Combines 2.50+</p>
+        <p>Predictions Football - 5 Championnats - Combines 2.50+</p>
     </div>
     <div class="container">
         {% if not authenticated %}
@@ -469,7 +477,7 @@ def api_generate():
             # seule combinaison possible : si elle n'atteint pas la cote
             # minimale ou la diversite requise, il n'y a litteralement aucune
             # alternative a essayer. C'est frequent lors d'une treve
-            # internationale (les 3 championnats suivis s'arretent en meme
+            # internationale (les championnats suivis s'arretent souvent en meme
             # temps) : le message l'explique au lieu de laisser croire a un
             # probleme de fiabilite de l'analyse.
             if len(upcoming) <= 3:

@@ -94,7 +94,8 @@ class ComboGenerator:
         if not ODDS_API_KEY:
             return None
         try:
-            sports = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga"]
+            sports = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
+                      "soccer_france_ligue_one", "soccer_italy_serie_a"]
             for sport in sports:
                 url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
                 params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals"}

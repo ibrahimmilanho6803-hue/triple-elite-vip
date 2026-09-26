@@ -8,10 +8,15 @@
 import os
 
 # --- Championnats suivis (nom -> id TheSportsDB) ---
+# 5 championnats plutot que 3 : quand une treve internationale (ou un simple
+# calendrier incomplet cote TheSportsDB) met un championnat en pause, les
+# autres compensent et il reste plus de matchs pour composer un combine.
 LEAGUES = {
     "Premier League": "4328",
     "La Liga": "4335",
     "Bundesliga": "4331",
+    "Ligue 1": "4334",
+    "Serie A": "4332",
 }
 
 # --- TheSportsDB ---

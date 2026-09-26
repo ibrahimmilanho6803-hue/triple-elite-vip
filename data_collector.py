@@ -42,7 +42,13 @@ class DataCollector:
                 events = response.json().get("events") or []
                 for event in events:
                     self.save_match(event, league_name)
-                time.sleep(2)
+                # Pause courte entre chaque championnat : simple politesse
+                # envers l'API (surtout utile avec la cle de test partagee).
+                # Avec plus de championnats suivis, une pause de 2s devenait
+                # couteuse en temps d'attente pour le client ; reduite car ce
+                # bloc ne tourne de toute facon qu'au plus une fois par
+                # CACHE_MINUTES grace au cache de generation.
+                time.sleep(0.5)
             except Exception as e:
                 print(f"Erreur {league_name}: {e}")
         conn = sqlite3.connect('triple_elite.db')
@@ -151,7 +157,7 @@ class DataCollector:
                         "league": league_name,
                     })
                     count += 1
-                time.sleep(1)
+                time.sleep(0.3)
             except Exception as e:
                 print(f"Erreur {league_name}: {e}")
         return upcoming
