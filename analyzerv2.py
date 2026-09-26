@@ -141,30 +141,45 @@ extremes injustifiees.
 MATCHS :
 {chr(10).join(match_list)}
 
-Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ]"""
-        try:
-            response = self.client.messages.create(
-                model="claude-sonnet-5",
-                max_tokens=8000,
-                timeout=60.0,
-                messages=[{"role": "user", "content": prompt}]
-            )
+Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ].
+N'ecris rien avant ni apres ce JSON (aucune explication, aucun commentaire),
+et n'utilise que des guillemets doubles standard a l'interieur du JSON."""
+
+        # L'IA renvoie de temps en temps un JSON tronque ou malforme (reponse
+        # coupee en cours de generation, sortie vide, etc.). Avant, la moindre
+        # erreur de parsing faisait abandonner l'analyse pour TOUS les matchs
+        # du batch d'un coup (voir analyze_match/fallback), ce qui videait
+        # totalement les combines proposes au client alors que le probleme
+        # n'etait que ponctuel. On retente donc plusieurs fois avant de
+        # vraiment abandonner et de retomber sur l'analyse de secours.
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
             ia_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    ia_text += block.text
-            ia_text = ia_text.strip()
-            ia_text = ia_text.replace("```json", "").replace("```", "").strip()
-            start = ia_text.find("[")
-            end = ia_text.rfind("]")
-            if start >= 0 and end > start:
-                ia_text = ia_text[start:end+1]
-            ia_data = json.loads(ia_text)
-            print(f"IA parse OK: {len(ia_data)} analyses")
-            return ia_data
-        except Exception as e:
-            print(f"IA erreur: {e}")
-            return []
+            try:
+                response = self.client.messages.create(
+                    model="claude-sonnet-5",
+                    max_tokens=8000,
+                    timeout=30.0,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        ia_text += block.text
+                ia_text = ia_text.strip()
+                ia_text = ia_text.replace("```json", "").replace("```", "").strip()
+                start = ia_text.find("[")
+                end = ia_text.rfind("]")
+                if start >= 0 and end > start:
+                    ia_text = ia_text[start:end+1]
+                if not ia_text:
+                    raise ValueError("reponse IA vide")
+                ia_data = json.loads(ia_text)
+                print(f"IA parse OK (tentative {attempt}/{max_attempts}): {len(ia_data)} analyses")
+                return ia_data
+            except Exception as e:
+                apercu = ia_text[:150].replace("\n", " ") if ia_text else "(vide)"
+                print(f"IA erreur (tentative {attempt}/{max_attempts}): {e} | debut reponse: {apercu}")
+        return []
 
     def build_analysis_from_ia(self, home_team, away_team, ia_data):
         cap = self._confidence_cap(home_team, away_team)
