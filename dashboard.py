@@ -266,7 +266,7 @@ HTML_TEMPLATE = """
     <script>
     function generateCombos() {
         document.getElementById('loading').style.display = 'block';
-        document.getElementById('loading').textContent = 'Analyse en cours... (jusqu\'a 1-2 min, merci de patienter)';
+        document.getElementById('loading').textContent = "Analyse en cours... (jusqu'a 1-2 min, merci de patienter)";
         document.getElementById('results').innerHTML = '';
         document.getElementById('updated-at').textContent = '';
         fetchCombos(true);
