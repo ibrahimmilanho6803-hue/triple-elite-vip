@@ -2,6 +2,7 @@ import os
 import json
 import glob
 import secrets
+import time
 from datetime import datetime, timedelta
 from functools import wraps
 from itertools import combinations, product
@@ -10,6 +11,7 @@ from flask import Flask, render_template_string, jsonify, request, session
 from werkzeug.utils import secure_filename
 
 import config
+import combo_generator
 from data_collector import DataCollector
 from combo_generator import ComboGenerator
 from license_manager import LicenseManager
@@ -374,11 +376,23 @@ def api_generate():
         return jsonify({"combos": cached, "cached": True, "generated_at": generated_at})
 
     generator = None
+    t_start = time.time()
     try:
+        # Diagnostic temporaire (aucun secret affiche) : permet de voir dans
+        # les logs Render laquelle des etapes ci-dessous est responsable d'un
+        # depassement de delai cote client ("Erreur de connexion").
+        print(f"DEBUG config: sportsdb_key_custom={config.SPORTSDB_API_KEY != '3'} "
+              f"odds_api_key_set={bool(combo_generator.ODDS_API_KEY)}")
+
         collector = DataCollector()
         generator = ComboGenerator()
         collector.collect_all_data()
+        t_collecte = time.time()
+        print(f"DEBUG timing: collect_all_data = {t_collecte - t_start:.1f}s")
+
         upcoming = collector.get_upcoming_matches()
+        t_upcoming = time.time()
+        print(f"DEBUG timing: get_upcoming_matches = {t_upcoming - t_collecte:.1f}s (upcoming={len(upcoming)})")
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs à venir pour le moment, réessaie plus tard."})
         # Avant : on ne gardait que les 6 premiers matchs, ce qui ne couvrait
@@ -389,6 +403,8 @@ def api_generate():
         # analyses et disponibles pour composer les combines.
 
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
+        t_ia = time.time()
+        print(f"DEBUG timing: analyze_multiple_matches = {t_ia - t_upcoming:.1f}s")
         analyses_par_match = {}
         for ia in analyses_ia:
             if ia.get("home_team") and ia.get("away_team"):
@@ -412,6 +428,8 @@ def api_generate():
             real_odds = generator.get_real_odds(match["home_team"], match["away_team"], match["league"])
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
+        t_odds = time.time()
+        print(f"DEBUG timing: boucle predictions+cotes reelles = {t_odds - t_ia:.1f}s")
 
         preds_by_match = {}
         for pred in all_preds:
@@ -493,15 +511,17 @@ def api_generate():
             # internationale (les championnats suivis s'arretent souvent en meme
             # temps) : le message l'explique au lieu de laisser croire a un
             # probleme de fiabilite de l'analyse.
+            print(f"DEBUG timing: TOTAL /api/generate (aucun combine) = {time.time() - t_start:.1f}s")
             if len(upcoming) <= 3:
                 return jsonify({"error": "Trop peu de matchs a venir dans les prochains jours (treve internationale probable) pour composer un combine a 2.50+ fiable. Reessaie dans quelques jours."})
             return jsonify({"error": "Aucun combine assez fiable pour le moment. Reessaie plus tard."})
 
         _save_history(top)
         _write_cache(top)
+        print(f"DEBUG timing: TOTAL /api/generate = {time.time() - t_start:.1f}s")
         return jsonify({"combos": top, "cached": False})
     except Exception as e:
-        print(f"ERREUR /api/generate: {e}")
+        print(f"ERREUR /api/generate apres {time.time() - t_start:.1f}s: {e}")
         return jsonify({"error": "Une erreur est survenue pendant la generation. Merci de reessayer dans quelques minutes."}), 500
     finally:
         if generator is not None:
