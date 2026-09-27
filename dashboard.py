@@ -75,8 +75,8 @@ def _save_history(combos):
         print(f"Erreur sauvegarde historique: {e}")
 
 
-PRICE_MONTHLY_TXT = f"{config.PRICE_MONTHLY} {config.DEVISE}"
-PRICE_YEARLY_TXT = f"{config.PRICE_YEARLY} {config.DEVISE}"
+PRICE_MONTHLY_TXT = f"{config.PRICE_MONTHLY}{config.DEVISE}"
+PRICE_YEARLY_TXT = f"{config.PRICE_YEARLY}{config.DEVISE}"
 
 PAGE_ACCUEIL = """
 <!DOCTYPE html>

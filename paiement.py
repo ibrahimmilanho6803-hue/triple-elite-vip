@@ -111,8 +111,8 @@ PAGE_PAIEMENT = """
     </script>
 </body>
 </html>
-""".replace("{{PRICE_MONTHLY}}", f"{config.PRICE_MONTHLY} {config.DEVISE}") \
-   .replace("{{PRICE_YEARLY}}", f"{config.PRICE_YEARLY} {config.DEVISE}")
+""".replace("{{PRICE_MONTHLY}}", f"{config.PRICE_MONTHLY}{config.DEVISE}") \
+   .replace("{{PRICE_YEARLY}}", f"{config.PRICE_YEARLY}{config.DEVISE}")
 
 
 @app.route('/')
