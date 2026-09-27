@@ -430,18 +430,25 @@ def api_generate():
         all_preds = []
         for match in upcoming:
             key = f"{match['home_team']} vs {match['away_team']}"
-            if key in analyses_par_match:
-                analysis = generator.analyzer.build_analysis_from_ia(
-                    match["home_team"], match["away_team"], analyses_par_match[key]
-                )
-            else:
-                # Pas d'analyse IA fiable pour ce match precis : on l'exclut
-                # (via le fallback neutre) plutot que de lui attribuer par
-                # erreur l'analyse d'un autre match.
-                analysis = generator.analyzer.analyze_match(match["home_team"], match["away_team"])
-            real_odds = generator.get_real_odds(match["home_team"], match["away_team"], match["league"])
-            preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
-            all_preds.extend(preds)
+            try:
+                if key in analyses_par_match:
+                    analysis = generator.analyzer.build_analysis_from_ia(
+                        match["home_team"], match["away_team"], analyses_par_match[key]
+                    )
+                else:
+                    # Pas d'analyse IA fiable pour ce match precis : on l'exclut
+                    # (via le fallback neutre) plutot que de lui attribuer par
+                    # erreur l'analyse d'un autre match.
+                    analysis = generator.analyzer.analyze_match(match["home_team"], match["away_team"])
+                real_odds = generator.get_real_odds(match["home_team"], match["away_team"], match["league"])
+                preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
+                all_preds.extend(preds)
+            except Exception as e:
+                # Une donnee inattendue sur CE match (cote malformee, reponse IA
+                # partielle, etc.) ne doit pas faire echouer toute la generation
+                # (500) pour les 14 autres matchs. On l'exclut et on continue.
+                print(f"DEBUG generate: match ignore ({key}): {type(e).__name__}: {e}")
+                continue
         t_odds = time.time()
         print(f"DEBUG timing: boucle predictions+cotes reelles = {t_odds - t_ia:.1f}s")
 

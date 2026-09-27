@@ -139,6 +139,15 @@ class ComboGenerator:
                                 elif outcome["name"] == "No":
                                     odds["btts_no"] = outcome["price"]
                     break
+                # Ne garde que des cotes numeriques strictement positives. Une
+                # cote nulle/invalide venant de l'API (marche suspendu, champ
+                # manquant...) faisait planter un calcul plus loin (division ou
+                # multiplication) et faisait echouer TOUTE la generation (500)
+                # a cause d'un seul match a la cote douteuse.
+                odds = {
+                    k: v for k, v in odds.items()
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+                }
                 if odds:
                     return odds
         return None
@@ -213,6 +222,21 @@ class ComboGenerator:
         elif "AU_MOINS" in ptype: return 1.40
         return 1.50
 
+    @staticmethod
+    def _combine_odds(odds_a, odds_b):
+        """Fusionne deux cotes decimales comme un seul pari (ex: cote "1X" =
+        cote de la victoire + cote du nul combinees). Renvoie None si une des
+        deux cotes est manquante ou vaut 0 (deja vu sur des flux the-odds-api
+        pour un marche suspendu/illiquide) au lieu de planter avec un
+        ZeroDivisionError non rattrape, qui faisait echouer TOUTE la
+        generation (500) a cause d'un seul match a la cote douteuse."""
+        if not odds_a or not odds_b:
+            return None
+        try:
+            return round(1 / (1 / odds_a + 1 / odds_b), 2)
+        except ZeroDivisionError:
+            return None
+
     def get_predictions_from_analysis(self, match, analysis, real_odds=None):
         # Un match dont l'IA n'a pas pu s'occuper (fallback neutre) est
         # exclu plutot que presente avec de faux chiffres personnalises.
@@ -229,9 +253,13 @@ class ComboGenerator:
                 elif ptype == "V2" and "away" in real_odds:
                     estimated = real_odds["away"]
                 elif ptype == "1X" and "home" in real_odds and "draw" in real_odds:
-                    estimated = round(1 / (1/real_odds["home"] + 1/real_odds["draw"]), 2)
+                    combined = self._combine_odds(real_odds["home"], real_odds["draw"])
+                    if combined is not None:
+                        estimated = combined
                 elif ptype == "2X" and "away" in real_odds and "draw" in real_odds:
-                    estimated = round(1 / (1/real_odds["away"] + 1/real_odds["draw"]), 2)
+                    combined = self._combine_odds(real_odds["away"], real_odds["draw"])
+                    if combined is not None:
+                        estimated = combined
                 elif ptype in ["TOTAL_2.5+", "TOTAL_3+"] and "over_2.5" in real_odds:
                     estimated = real_odds["over_2.5"]
                 elif ptype in ["TOTAL_0.5-", "TOTAL_1-", "TOTAL_1.5-", "TOTAL_2-", "TOTAL_2.5-"] and "under_2.5" in real_odds:
@@ -245,9 +273,13 @@ class ComboGenerator:
                 elif ptype.startswith("V2_ET_") and "away" in real_odds:
                     estimated = round(real_odds["away"] * 1.2, 2)
                 elif ptype.startswith("1X_ET_") and "home" in real_odds and "draw" in real_odds:
-                    estimated = round((1 / (1/real_odds["home"] + 1/real_odds["draw"])) * 1.3, 2)
+                    combined = self._combine_odds(real_odds["home"], real_odds["draw"])
+                    if combined is not None:
+                        estimated = round(combined * 1.3, 2)
                 elif ptype.startswith("2X_ET_") and "away" in real_odds and "draw" in real_odds:
-                    estimated = round((1 / (1/real_odds["away"] + 1/real_odds["draw"])) * 1.3, 2)
+                    combined = self._combine_odds(real_odds["away"], real_odds["draw"])
+                    if combined is not None:
+                        estimated = round(combined * 1.3, 2)
                 elif ptype.startswith("EQ1_") and "home" in real_odds:
                     estimated = round(real_odds["home"] * 0.9, 2)
                 elif ptype.startswith("EQ2_") and "away" in real_odds:
