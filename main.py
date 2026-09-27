@@ -42,7 +42,7 @@ class TripleEliteVIP:
                 )
             else:
                 analysis = self.generator.analyzer.analyze_match(match["home_team"], match["away_team"])
-            real_odds = self.generator.get_real_odds(match["home_team"], match["away_team"])
+            real_odds = self.generator.get_real_odds(match["home_team"], match["away_team"], match["league"])
             preds = self.generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
             print(f"  {match['home_team']} vs {match['away_team']} -> {len(preds)} pronostics")

@@ -409,7 +409,7 @@ def api_generate():
                 # (via le fallback neutre) plutot que de lui attribuer par
                 # erreur l'analyse d'un autre match.
                 analysis = generator.analyzer.analyze_match(match["home_team"], match["away_team"])
-            real_odds = generator.get_real_odds(match["home_team"], match["away_team"])
+            real_odds = generator.get_real_odds(match["home_team"], match["away_team"], match["league"])
             preds = generator.get_predictions_from_analysis(match, analysis, real_odds)
             all_preds.extend(preds)
 

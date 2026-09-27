@@ -90,52 +90,81 @@ class ComboGenerator:
             return a == b
         return shorter in longer
 
-    def get_real_odds(self, home_team, away_team):
+    # Correspondance championnat (cle de config.LEAGUES) -> sport the-odds-api.
+    LEAGUE_TO_ODDS_SPORT = {
+        "Premier League": "soccer_epl",
+        "La Liga": "soccer_spain_la_liga",
+        "Bundesliga": "soccer_germany_bundesliga",
+        "Ligue 1": "soccer_france_ligue_one",
+        "Serie A": "soccer_italy_serie_a",
+    }
+
+    def _odds_from_sport(self, sport, home_team, away_team):
+        """Cherche les cotes d'un match precis sur un seul sport the-odds-api.
+        Renvoie un dict de cotes si trouve, sinon None."""
+        url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
+        params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals"}
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code != 200:
+            return None
+        data = response.json()
+        if not isinstance(data, list):
+            return None
+        for match in data:
+            home_api = match.get("home_team", "")
+            away_api = match.get("away_team", "")
+            if self._same_team(home_team, home_api) and self._same_team(away_team, away_api):
+                odds = {}
+                for bookmaker in match.get("bookmakers", []):
+                    for market in bookmaker.get("markets", []):
+                        if market["key"] == "h2h":
+                            for outcome in market["outcomes"]:
+                                if outcome["name"] == match["home_team"]:
+                                    odds["home"] = outcome["price"]
+                                elif outcome["name"] == match["away_team"]:
+                                    odds["away"] = outcome["price"]
+                                elif outcome["name"] == "Draw":
+                                    odds["draw"] = outcome["price"]
+                        elif market["key"] == "totals":
+                            for outcome in market["outcomes"]:
+                                pt = outcome.get("point")
+                                if outcome["name"] == "Over":
+                                    odds[f"over_{pt}"] = outcome["price"]
+                                elif outcome["name"] == "Under":
+                                    odds[f"under_{pt}"] = outcome["price"]
+                        elif market["key"] == "btts":
+                            for outcome in market["outcomes"]:
+                                if outcome["name"] == "Yes":
+                                    odds["btts_yes"] = outcome["price"]
+                                elif outcome["name"] == "No":
+                                    odds["btts_no"] = outcome["price"]
+                    break
+                if odds:
+                    return odds
+        return None
+
+    def get_real_odds(self, home_team, away_team, league=None):
         if not ODDS_API_KEY:
             return None
         try:
-            sports = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
-                      "soccer_france_ligue_one", "soccer_italy_serie_a"]
-            for sport in sports:
-                url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
-                params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals"}
-                response = requests.get(url, params=params, timeout=10)
-                if response.status_code != 200:
-                    continue
-                data = response.json()
-                if not isinstance(data, list):
-                    continue
-                for match in data:
-                    home_api = match.get("home_team", "")
-                    away_api = match.get("away_team", "")
-                    if self._same_team(home_team, home_api) and self._same_team(away_team, away_api):
-                        odds = {}
-                        for bookmaker in match.get("bookmakers", []):
-                            for market in bookmaker.get("markets", []):
-                                if market["key"] == "h2h":
-                                    for outcome in market["outcomes"]:
-                                        if outcome["name"] == match["home_team"]:
-                                            odds["home"] = outcome["price"]
-                                        elif outcome["name"] == match["away_team"]:
-                                            odds["away"] = outcome["price"]
-                                        elif outcome["name"] == "Draw":
-                                            odds["draw"] = outcome["price"]
-                                elif market["key"] == "totals":
-                                    for outcome in market["outcomes"]:
-                                        pt = outcome.get("point")
-                                        if outcome["name"] == "Over":
-                                            odds[f"over_{pt}"] = outcome["price"]
-                                        elif outcome["name"] == "Under":
-                                            odds[f"under_{pt}"] = outcome["price"]
-                                elif market["key"] == "btts":
-                                    for outcome in market["outcomes"]:
-                                        if outcome["name"] == "Yes":
-                                            odds["btts_yes"] = outcome["price"]
-                                        elif outcome["name"] == "No":
-                                            odds["btts_no"] = outcome["price"]
-                            break
-                        if odds:
-                            return odds
+            # Avec la ligue du match, on interroge directement le bon sport
+            # chez the-odds-api au lieu de tous les essayer un par un. Avant :
+            # un match de Serie A (5e/dernier sport de la liste) declenchait
+            # jusqu'a 5 appels HTTP sequentiels (10s de timeout chacun) rien
+            # que pour lui. Tant que seuls 2 championnats etaient reellement
+            # analyses (bug corrige par ailleurs), ca passait a peu pres
+            # inapercu ; avec les 5 championnats desormais tous analyses a
+            # chaque generation, ca pouvait ajouter des dizaines de secondes
+            # et provoquer les "Erreur de connexion" cote client (timeout).
+            sport = self.LEAGUE_TO_ODDS_SPORT.get(league)
+            if sport:
+                return self._odds_from_sport(sport, home_team, away_team)
+            # Ligue inconnue ou non fournie : on retombe sur l'ancien
+            # comportement (on essaie tous les sports suivis un par un).
+            for sport in self.LEAGUE_TO_ODDS_SPORT.values():
+                odds = self._odds_from_sport(sport, home_team, away_team)
+                if odds:
+                    return odds
             return None
         except Exception as e:
             print(f"Erreur odds: {e}")

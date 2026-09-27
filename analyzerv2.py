@@ -150,9 +150,14 @@ et n'utilise que des guillemets doubles standard a l'interieur du JSON."""
         # erreur de parsing faisait abandonner l'analyse pour TOUS les matchs
         # du batch d'un coup (voir analyze_match/fallback), ce qui videait
         # totalement les combines proposes au client alors que le probleme
-        # n'etait que ponctuel. On retente donc plusieurs fois avant de
-        # vraiment abandonner et de retomber sur l'analyse de secours.
-        max_attempts = 3
+        # n'etait que ponctuel. On retente donc avant de vraiment abandonner
+        # et de retomber sur l'analyse de secours. Limite a 2 (et non 3) pour
+        # borner le pire des cas : chaque tentative peut prendre jusqu'a 30s,
+        # et avec les 5 championnats desormais analyses a chaque generation
+        # (au lieu de 2 avant un bug corrige par ailleurs), 3 tentatives
+        # pouvaient a elles seules approcher la minute et declencher un
+        # timeout cote client ("Erreur de connexion").
+        max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             ia_text = ""
             try:
