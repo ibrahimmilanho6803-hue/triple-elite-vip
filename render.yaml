@@ -3,7 +3,7 @@ services:
     name: triple-elite-vip-dashboard
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn dashboard:app --bind 0.0.0.0:10000 --timeout 120
+    startCommand: gunicorn dashboard:app --bind 0.0.0.0:10000 --timeout 180 --graceful-timeout 180
     envVars:
       # sync: false = valeur saisie une seule fois dans le Dashboard Render
       # (Environment), jamais stockee dans ce fichier ni dans Git.

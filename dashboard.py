@@ -266,8 +266,12 @@ HTML_TEMPLATE = """
     <script>
     function generateCombos() {
         document.getElementById('loading').style.display = 'block';
+        document.getElementById('loading').textContent = 'Analyse en cours... (jusqu\'a 1-2 min, merci de patienter)';
         document.getElementById('results').innerHTML = '';
         document.getElementById('updated-at').textContent = '';
+        fetchCombos(true);
+    }
+    function fetchCombos(allowRetry) {
         fetch('/api/generate')
             .then(function(response) {
                 if (response.status === 401) { window.location.href = '/login'; return null; }
@@ -310,8 +314,18 @@ HTML_TEMPLATE = """
                 document.getElementById('results').innerHTML = html;
             })
             .catch(function(error) {
+                if (allowRetry) {
+                    // Un blip reseau ponctuel (ex: redemarrage du service pendant
+                    // un deploiement) peut faire echouer un premier essai alors que
+                    // tout refonctionne l'instant d'apres. On retente une fois,
+                    // silencieusement, avant d'afficher une erreur au client.
+                    document.getElementById('loading').style.display = 'block';
+                    document.getElementById('loading').textContent = 'Nouvelle tentative...';
+                    setTimeout(function() { fetchCombos(false); }, 3000);
+                    return;
+                }
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('results').innerHTML = '<p class="error">Erreur de connexion</p>';
+                document.getElementById('results').innerHTML = '<p class="error">Erreur de connexion. Merci de reessayer dans une minute.</p>';
             });
     }
     function showHistory() {
