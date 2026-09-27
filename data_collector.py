@@ -33,8 +33,18 @@ class DataCollector:
         conn.commit()
         conn.close()
 
+    @staticmethod
+    def _current_season():
+        """Saison TheSportsDB en cours, format 'AAAA-AAAA' (ex: '2026-2027').
+        Les 5 championnats suivis demarrent autour de juillet/aout."""
+        now = datetime.now()
+        if now.month >= 7:
+            return f"{now.year}-{now.year + 1}"
+        return f"{now.year - 1}-{now.year}"
+
     def collect_all_data(self):
         print("Collecte des donnees...")
+        season = self._current_season()
         for league_name, league_id in self.leagues.items():
             url = f"{self.base_url}/eventspastleague.php?id={league_id}"
             try:
@@ -51,9 +61,41 @@ class DataCollector:
                 time.sleep(0.5)
             except Exception as e:
                 print(f"Erreur {league_name}: {e}")
+
+            # eventspastleague.php ne renvoie qu'une poignee des tout derniers
+            # resultats (verifie : 1 seul evenement recupere en test). Sur une
+            # base tout juste reinitialisee (nouveau deploiement -> disque non
+            # persistant sur Render, donc table 'matches' vide), ca laisse la
+            # quasi-totalite des equipes avec moins de 4 matchs connus, ce qui
+            # plafonne leur confiance a 60% (MatchAnalyzer.CONFIDENCE_CAP_BY_
+            # SAMPLE) -- sous le seuil MIN_CONFIDENCE=65, donc AUCUN pronostic
+            # ne passe, meme quand l'IA a parfaitement repondu (constate : 15
+            # analyses IA valides, 0 pronostic retenu). On recupere en plus
+            # tous les matchs deja joues de la saison en cours en un seul
+            # appel, pour qu'une equipe ayant dispute plusieurs journees ait
+            # tout de suite un historique suffisant, sans attendre des jours
+            # (ou un prochain redemarrage qui remettrait tout a zero).
+            season_url = f"{self.base_url}/eventsseason.php?id={league_id}&s={season}"
+            try:
+                response = requests.get(season_url, timeout=self.REQUEST_TIMEOUT)
+                events = response.json().get("events") or []
+                for event in events:
+                    # eventsseason renvoie aussi les matchs pas encore joues :
+                    # on ne garde que ceux avec un score, pour ne pas creer une
+                    # ligne "vide" qu'un futur INSERT OR IGNORE ne pourra plus
+                    # jamais completer avec le vrai resultat.
+                    hs, aws = event.get("intHomeScore"), event.get("intAwayScore")
+                    if hs not in (None, "") and aws not in (None, ""):
+                        self.save_match(event, league_name)
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"Erreur saison {league_name}: {e}")
         conn = sqlite3.connect('triple_elite.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT home_team FROM matches")
+        # UNION des deux colonnes : une equipe qui n'a encore ete que "exterieur"
+        # dans les donnees stockees (frequent juste apres une reinitialisation)
+        # etait sinon oubliee ici, et donc jamais mise a jour dans team_stats.
+        cursor.execute("SELECT DISTINCT home_team FROM matches UNION SELECT DISTINCT away_team FROM matches")
         teams = cursor.fetchall()
         conn.close()
         for (team_name,) in teams:
