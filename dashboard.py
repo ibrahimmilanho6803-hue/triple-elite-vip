@@ -126,30 +126,30 @@ PAGE_ACCUEIL = """
 <body>
     <div class="hero">
         <h1>Triple Elite VIP</h1>
-        <p>Le logiciel qui analyse 5 championnats et genere des combines optimises a 2.50+ chaque semaine</p>
+        <p>Le logiciel qui analyse 5 championnats et génère 3 combinés optimisés à 2.50+ chaque semaine</p>
         <a href="https://triple-elite-vip-paiement.onrender.com" class="btn btn-green">S'abonner maintenant</a>
-        <a href="/login" class="btn">Acces Client VIP</a>
+        <a href="/login" class="btn">Accès Client VIP</a>
     </div>
     <div class="features">
         <div class="feature">
             <h3>Premier League</h3>
-            <p>Analyse complete du championnat anglais</p>
+            <p>Analyse complète du championnat anglais</p>
         </div>
         <div class="feature">
             <h3>La Liga</h3>
-            <p>Analyse complete du championnat espagnol</p>
+            <p>Analyse complète du championnat espagnol</p>
         </div>
         <div class="feature">
             <h3>Bundesliga</h3>
-            <p>Analyse complete du championnat allemand</p>
+            <p>Analyse complète du championnat allemand</p>
         </div>
         <div class="feature">
             <h3>Ligue 1</h3>
-            <p>Analyse complete du championnat francais</p>
+            <p>Analyse complète du championnat français</p>
         </div>
         <div class="feature">
             <h3>Serie A</h3>
-            <p>Analyse complete du championnat italien</p>
+            <p>Analyse complète du championnat italien</p>
         </div>
     </div>
     <div class="pricing">
@@ -158,21 +158,21 @@ PAGE_ACCUEIL = """
             <div class="price-card">
                 <h3>Mensuel</h3>
                 <div class="price">""" + PRICE_MONTHLY_TXT + """<span>/mois</span></div>
-                <p>Acces complet</p>
-                <p>Combines chaque semaine</p>
+                <p>Accès complet</p>
+                <p>Combinés chaque semaine</p>
                 <p>Support Telegram</p>
             </div>
             <div class="price-card premium">
                 <h3>Annuel</h3>
                 <div class="price">""" + PRICE_YEARLY_TXT + """<span>/an</span></div>
-                <p>Acces complet</p>
-                <p>Combines chaque semaine</p>
+                <p>Accès complet</p>
+                <p>Combinés chaque semaine</p>
                 <p>Support prioritaire</p>
             </div>
         </div>
-        <p class="disclaimer">Les pronostics sont generes par une analyse statistique et une IA a partir des
-        donnees disponibles (forme recente, confrontations directes, stats de saison). Il s'agit d'estimations,
-        pas d'une garantie de resultat : parie de maniere responsable.</p>
+        <p class="disclaimer">Les pronostics sont générés par une analyse statistique et une IA à partir des
+        données disponibles (forme récente, confrontations directes, stats de saison). Il s'agit d'estimations,
+        pas d'une garantie de résultat : parie de manière responsable.</p>
         <p style="color:#aaa; margin-top:10px;">Contact : """ + config.SELLER_EMAIL + """</p>
     </div>
 </body>
@@ -228,7 +228,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="header">
         <h1>Triple Elite VIP</h1>
-        <p>Predictions Football - 5 Championnats - Combines 2.50+</p>
+        <p>Prédictions Football - 5 Championnats - 3 Combinés à 2.50+</p>
     </div>
     <div class="container">
         {% if not authenticated %}
@@ -236,24 +236,24 @@ HTML_TEMPLATE = """
             <h2>Connexion VIP</h2>
             <form method="POST" action="/login">
                 <input type="email" name="email" placeholder="E-mail" required>
-                <input type="text" name="license_key" placeholder="Cle de licence" required>
+                <input type="text" name="license_key" placeholder="Clé de licence" required>
                 <button type="submit" class="btn">Se connecter</button>
             </form>
             {% if error %}
             <p class="error">{{ error }}</p>
             <p style="margin-top:10px;"><a href="https://triple-elite-vip-paiement.onrender.com" style="color:#4caf50;">S'abonner / Renouveler</a></p>
             {% endif %}
-            <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour a l'accueil</a></p>
+            <p style="margin-top:20px;"><a href="/" style="color:#ffd700;">Retour à l'accueil</a></p>
         </div>
         {% else %}
         <div style="text-align: center; padding: 20px;">
-            <button onclick="generateCombos()" class="btn">Generer les combines</button>
+            <button onclick="generateCombos()" class="btn">Générer les combinés</button>
             <button onclick="window.location.href='https://triple-elite-vip-paiement.onrender.com'" class="btn btn-green">Renouveler</button>
             <button onclick="showHistory()" class="btn">Historique</button>
-            <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Deconnexion</button></a>
+            <a href="/logout"><button class="btn" style="background:#f44336;color:#fff;">Déconnexion</button></a>
         </div>
-        <p class="disclaimer">La confiance affichee est une estimation statistique et IA basee sur l'historique
-        des equipes (forme recente, confrontations directes, stats de saison), pas une garantie de resultat.</p>
+        <p class="disclaimer">La confiance affichée est une estimation statistique et IA basée sur l'historique
+        des équipes (forme récente, confrontations directes, stats de saison), pas une garantie de résultat.</p>
         <div id="combos-container">
             <div class="loading" id="loading" style="display:none;">Analyse en cours...</div>
             <div id="updated-at" class="updated-at"></div>
@@ -279,7 +279,7 @@ HTML_TEMPLATE = """
                     return;
                 }
                 if (data.combos.length === 0) {
-                    document.getElementById('results').innerHTML = '<p style="color:#ff9800;">Aucun combine trouve pour le moment</p>';
+                    document.getElementById('results').innerHTML = '<p style="color:#ff9800;">Aucun combiné trouvé pour le moment</p>';
                     return;
                 }
                 if (data.cached) {
@@ -380,7 +380,7 @@ def api_generate():
         collector.collect_all_data()
         upcoming = collector.get_upcoming_matches()
         if len(upcoming) < 3:
-            return jsonify({"error": "Pas assez de matchs a venir pour le moment, reessaie plus tard."})
+            return jsonify({"error": "Pas assez de matchs à venir pour le moment, réessaie plus tard."})
         # Avant : on ne gardait que les 6 premiers matchs, ce qui ne couvrait
         # en pratique que 2 des 5 championnats suivis (l'ordre de LEAGUES
         # donnait toujours Premier League + La Liga). On garde maintenant

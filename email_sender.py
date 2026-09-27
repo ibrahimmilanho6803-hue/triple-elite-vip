@@ -42,14 +42,14 @@ def envoyer_licence(email_destinataire, cle_licence, plan):
 <div style="max-width: 500px; margin: auto; background: #1a1f3a; padding: 30px; border-radius: 10px; color: #fff;">
 <h1 style="color: #ffd700; text-align: center;">Triple Elite VIP</h1>
 <p>Bonjour,</p>
-<p>Merci pour votre abonnement ! Voici vos acces :</p>
+<p>Merci pour votre abonnement ! Voici votre clé d'accès :</p>
 <div style="background: #0d1137; padding: 15px; border-radius: 5px; margin: 20px 0;">
 <p><strong>Email :</strong> {email_destinataire}</p>
-<p><strong>Cle :</strong> <span style="color: #ffd700;">{cle_licence}</span></p>
+<p><strong>Clé :</strong> <span style="color: #ffd700;">{cle_licence}</span></p>
 <p><strong>Plan :</strong> {plan}</p>
 </div>
-<p>Connectez-vous sur : <a href="https://triple-elite-vip.com/login" style="color: #ffd700;">Dashboard VIP</a></p>
-<p style="color: #aaa; font-size: 0.8em; margin-top: 30px; text-align: center;">Triple Elite VIP - Predictions Football</p>
+<p>Connectez-vous sur : <a href="https://triple-elite-vip.com/login" style="color: #ffd700;">Dashboard - VIP</a></p>
+<p style="color: #aaa; font-size: 0.8em; margin-top: 30px; text-align: center;">Triple Elite VIP - Prédictions Football</p>
 </div>
 </body>
 </html>

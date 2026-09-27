@@ -57,8 +57,8 @@ PAGE_PAIEMENT = """
             <h2>Abonnement Mensuel</h2>
             <div class="price">{{PRICE_MONTHLY}}<span>/mois</span></div>
             <ul>
-                <li>Acces complet au logiciel</li>
-                <li>3 combines optimises par semaine</li>
+                <li>Accès complet au logiciel</li>
+                <li>3 combinés optimisés par semaine</li>
                 <li>Support Telegram</li>
             </ul>
         </div>
@@ -71,10 +71,10 @@ PAGE_PAIEMENT = """
             </ul>
         </div>
         <button id="pay-btn" class="btn btn-pay" onclick="payer()">Payer avec Mobile Money / Carte</button>
-        <p class="info">Orange Money, MTN, Moov, Wave et Carte Bancaire acceptes.</p>
-        <p class="info">Apres paiement, votre licence sera envoyee par E-mail.</p>
+        <p class="info">Orange Money, MTN, Moov, Wave et Carte Bancaire acceptés.</p>
+        <p class="info">Après paiement, votre licence sera envoyée par E-mail.</p>
         <div id="error-message" class="error"></div>
-        <a href="https://triple-elite-vip.com" class="back-link">Retour a l'accueil</a>
+        <a href="https://triple-elite-vip.com" class="back-link">Retour à l'accueil</a>
     </div>
     <script>
         var selectedPlan = 'monthly';
