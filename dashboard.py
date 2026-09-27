@@ -2,6 +2,7 @@ import os
 import json
 import glob
 import secrets
+import sqlite3
 import time
 from datetime import datetime, timedelta
 from functools import wraps
@@ -400,6 +401,23 @@ def api_generate():
 
         collector = DataCollector()
         generator = ComboGenerator()
+
+        # Diagnostic temporaire : confirme si le disque persistant (DATA_DIR)
+        # est bien en place. "avant" = ce que la base contenait DEJA avant cet
+        # appel (donc herite du dernier deploiement) ; si le disque persistant
+        # fonctionne, ce nombre ne doit plus jamais retomber a 0 apres un
+        # redeploiement.
+        try:
+            conn_diag = sqlite3.connect(config.DB_PATH)
+            nb_ok = conn_diag.execute(
+                "SELECT COUNT(*) FROM team_stats WHERE matches_played >= 4"
+            ).fetchone()[0]
+            conn_diag.close()
+        except Exception:
+            nb_ok = "?"
+        print(f"DEBUG persistance: data_dir={config.DATA_DIR!r} db_path={config.DB_PATH!r} "
+              f"equipes_avec_historique_suffisant_avant_collecte={nb_ok}")
+
         collector.collect_all_data()
         t_collecte = time.time()
         print(f"DEBUG timing: collect_all_data = {t_collecte - t_start:.1f}s")
