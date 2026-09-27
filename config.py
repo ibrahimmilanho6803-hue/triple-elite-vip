@@ -19,6 +19,15 @@ LEAGUES = {
     "Serie A": "4332",
 }
 
+# --- Base de donnees locale (historique matchs/equipes) ---
+# Sans disque persistant configure sur Render, DATA_DIR vaut "." (dossier de
+# l'appli) : le fichier est perdu a chaque redeploiement, car le disque de
+# base est ephemere. Definis DATA_DIR sur Render (ex: "/var/data") une fois
+# un disque persistant attache a ce chemin pour que l'historique survive aux
+# deploiements.
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+DB_PATH = os.path.join(DATA_DIR, "triple_elite.db")
+
 # --- TheSportsDB ---
 # "3" est la cle de test publique et partagee documentee par TheSportsDB.
 # Elle fonctionne sans compte mais est limitee/partagee avec tout le monde.

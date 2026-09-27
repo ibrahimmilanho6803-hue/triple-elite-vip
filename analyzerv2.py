@@ -3,6 +3,8 @@ import sqlite3
 import json
 import anthropic
 
+import config
+
 
 class MatchAnalyzer:
     # En dessous de ces tailles d'echantillon (matchs joues), on plafonne la
@@ -17,7 +19,7 @@ class MatchAnalyzer:
     ]
 
     def __init__(self):
-        self.db = 'triple_elite.db'
+        self.db = config.DB_PATH
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
         # max_retries=0 : le SDK anthropic retente 2 fois par defaut en interne

@@ -20,7 +20,7 @@ class DataCollector:
         self.init_database()
 
     def init_database(self):
-        conn = sqlite3.connect('triple_elite.db')
+        conn = sqlite3.connect(config.DB_PATH)
         cursor = conn.cursor()
         cursor.execute('CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY, name TEXT UNIQUE, league TEXT, elo_rating REAL DEFAULT 1500)')
         cursor.execute('CREATE TABLE IF NOT EXISTS matches (id INTEGER PRIMARY KEY, date TEXT, home_team TEXT, away_team TEXT, home_score INTEGER, away_score INTEGER, league TEXT, season TEXT, status TEXT)')
@@ -90,7 +90,7 @@ class DataCollector:
                 time.sleep(0.5)
             except Exception as e:
                 print(f"Erreur saison {league_name}: {e}")
-        conn = sqlite3.connect('triple_elite.db')
+        conn = sqlite3.connect(config.DB_PATH)
         cursor = conn.cursor()
         # UNION des deux colonnes : une equipe qui n'a encore ete que "exterieur"
         # dans les donnees stockees (frequent juste apres une reinitialisation)
@@ -103,7 +103,7 @@ class DataCollector:
         print("Collecte terminee")
 
     def save_match(self, event, league_name):
-        conn = sqlite3.connect('triple_elite.db')
+        conn = sqlite3.connect(config.DB_PATH)
         cursor = conn.cursor()
         try:
             hs_raw = event.get("intHomeScore")
@@ -126,7 +126,7 @@ class DataCollector:
         conn.close()
 
     def update_team_stats(self, team_name):
-        conn = sqlite3.connect('triple_elite.db')
+        conn = sqlite3.connect(config.DB_PATH)
         cursor = conn.cursor()
         cursor.execute('SELECT home_team, away_team, home_score, away_score FROM matches WHERE (home_team = ? OR away_team = ?) AND home_score IS NOT NULL', (team_name, team_name))
         matches = cursor.fetchall()
