@@ -133,23 +133,23 @@ PAGE_ACCUEIL = """
     <div class="features">
         <div class="feature">
             <h3>Premier League</h3>
-            <p>Analyse complete du championnat Anglais</p>
+            <p>Analyse complete du championnat anglais</p>
         </div>
         <div class="feature">
             <h3>La Liga</h3>
-            <p>Analyse complete du championnat Espagnol</p>
+            <p>Analyse complete du championnat espagnol</p>
         </div>
         <div class="feature">
             <h3>Bundesliga</h3>
-            <p>Analyse complete du championnat Allemand</p>
+            <p>Analyse complete du championnat allemand</p>
         </div>
         <div class="feature">
             <h3>Ligue 1</h3>
-            <p>Analyse complete du championnat Francais</p>
+            <p>Analyse complete du championnat francais</p>
         </div>
         <div class="feature">
             <h3>Serie A</h3>
-            <p>Analyse complete du championnat Italien</p>
+            <p>Analyse complete du championnat italien</p>
         </div>
     </div>
     <div class="pricing">
@@ -157,14 +157,14 @@ PAGE_ACCUEIL = """
         <div class="price-cards">
             <div class="price-card">
                 <h3>Mensuel</h3>
-                <div class="price">""" + PRICE_MONTHLY_TXT + """<span>/ 1mois</span></div>
+                <div class="price">""" + PRICE_MONTHLY_TXT + """<span>/mois</span></div>
                 <p>Acces complet</p>
                 <p>Combines chaque semaine</p>
                 <p>Support Telegram</p>
             </div>
             <div class="price-card premium">
                 <h3>Annuel</h3>
-                <div class="price">""" + PRICE_YEARLY_TXT + """<span>/ 1an</span></div>
+                <div class="price">""" + PRICE_YEARLY_TXT + """<span>/an</span></div>
                 <p>Acces complet</p>
                 <p>Combines chaque semaine</p>
                 <p>Support prioritaire</p>
@@ -381,7 +381,12 @@ def api_generate():
         upcoming = collector.get_upcoming_matches()
         if len(upcoming) < 3:
             return jsonify({"error": "Pas assez de matchs a venir pour le moment, reessaie plus tard."})
-        upcoming = upcoming[:6]
+        # Avant : on ne gardait que les 6 premiers matchs, ce qui ne couvrait
+        # en pratique que 2 des 5 championnats suivis (l'ordre de LEAGUES
+        # donnait toujours Premier League + La Liga). On garde maintenant
+        # tous les matchs a venir remontes (jusqu'a MATCHS_PAR_CHAMPIONNAT x 5
+        # championnats), pour que les 5 championnats soient reellement
+        # analyses et disponibles pour composer les combines.
 
         analyses_ia = generator.analyzer.analyze_multiple_matches(upcoming)
         analyses_par_match = {}
@@ -412,6 +417,14 @@ def api_generate():
         for pred in all_preds:
             key = f"{pred['home_team']} vs {pred['away_team']}"
             preds_by_match.setdefault(key, []).append(pred)
+        # Avec jusqu'a 15 matchs desormais analyses (5 championnats x 3), le
+        # nombre de combinaisons matchs x predictions exploserait si on gardait
+        # tous les types de pronostics valides de chaque match. On ne garde
+        # que les plus confiants par match : largement de quoi varier les
+        # types de pronostics dans chaque combine, sans ralentir la generation.
+        for key in preds_by_match:
+            preds_by_match[key].sort(key=lambda p: p["confidence"], reverse=True)
+            preds_by_match[key] = preds_by_match[key][:config.MAX_PREDICTIONS_PAR_MATCH]
         print(f"DEBUG generate: all_preds={len(all_preds)} matchs_avec_preds={len(preds_by_match)}")
 
         all_combos = []

@@ -55,7 +55,7 @@ PAGE_PAIEMENT = """
         <input type="email" id="email" placeholder="Votre adresse E-mail" required>
         <div class="plan selected" id="plan-monthly" onclick="selectPlan('monthly')">
             <h2>Abonnement Mensuel</h2>
-            <div class="price">{{PRICE_MONTHLY}}<span>/ 1mois</span></div>
+            <div class="price">{{PRICE_MONTHLY}}<span>/mois</span></div>
             <ul>
                 <li>Acces complet au logiciel</li>
                 <li>3 combines optimises par semaine</li>
@@ -64,7 +64,7 @@ PAGE_PAIEMENT = """
         </div>
         <div class="plan" id="plan-yearly" onclick="selectPlan('yearly')">
             <h2>Abonnement Annuel</h2>
-            <div class="price">{{PRICE_YEARLY}}<span>/ 1an</span></div>
+            <div class="price">{{PRICE_YEARLY}}<span>/an</span></div>
             <ul>
                 <li>Tout l'abonnement mensuel</li>
                 <li>Support prioritaire</li>

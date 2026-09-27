@@ -29,8 +29,16 @@ SPORTSDB_API_KEY = os.environ.get("SPORTSDB_API_KEY", "3")
 # --- Generation des combines ---
 TARGET_ODDS = 2.50          # cote totale minimale d'un combine
 MIN_CONFIDENCE = 65         # confiance minimale (%) pour qu'un pronostic soit retenu
-MAX_COMBOS_RETOURNES = 2    # nombre de combines renvoyes au client
+MAX_COMBOS_RETOURNES = 3    # nombre de combines renvoyes au client
 MATCHS_PAR_CHAMPIONNAT = 3  # nombre de matchs a venir analyses par championnat
+
+# Nombre max de types de pronostics conserves par match (les plus confiants)
+# au moment de composer les combines. Avec 5 championnats x 3 matchs, jusqu'a
+# 15 matchs entrent desormais dans le calcul (voir dashboard.py) : sans cette
+# limite, le nombre de combines a evaluer (matchs x predictions au cube)
+# grossirait beaucoup trop. 8 laisse largement de quoi varier les types de
+# pronostics dans chaque combine.
+MAX_PREDICTIONS_PAR_MATCH = 8
 
 # Duree (en minutes) pendant laquelle un combine genere est reutilise avant
 # d'etre recalcule. Evite de refaire une collecte + un appel IA + des appels
