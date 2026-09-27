@@ -20,7 +20,16 @@ class MatchAnalyzer:
         self.db = 'triple_elite.db'
         self.conn = sqlite3.connect(self.db)
         self.cursor = self.conn.cursor()
-        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        # max_retries=0 : le SDK anthropic retente 2 fois par defaut en interne
+        # sur une erreur de timeout/reseau, EN PLUS de nos propres tentatives
+        # ci-dessous (analyze_multiple_matches). Un seul appel pouvait donc
+        # durer jusqu'a 3x son timeout sans qu'on le sache, ce qui faisait
+        # largement depasser le timeout du worker gunicorn -> le worker etait
+        # tue par gunicorn lui-meme (SystemExit non rattrapable par un simple
+        # except Exception) au lieu que notre propre logique de retry/erreur
+        # ne s'en occupe proprement. On garde un seul niveau de retry, le
+        # notre, dont la duree totale est connue et bornee.
+        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"), max_retries=0)
 
     def get_team_stats(self, team_name):
         self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
@@ -161,10 +170,14 @@ et n'utilise que des guillemets doubles standard a l'interieur du JSON."""
         for attempt in range(1, max_attempts + 1):
             ia_text = ""
             try:
+                # 60s (au lieu de 30) : generer une analyse structuree pour 15
+                # matchs (jusqu'a 8000 tokens) prend legitimement plus de 30s
+                # dans bien des cas normaux -- 30s coupait des reponses qui
+                # auraient reussi, forcant une 2e tentative pour rien.
                 response = self.client.messages.create(
                     model="claude-sonnet-5",
                     max_tokens=8000,
-                    timeout=30.0,
+                    timeout=60.0,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 for block in response.content:
