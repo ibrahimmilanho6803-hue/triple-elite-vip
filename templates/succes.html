@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% set titles = {
+  "done": "Paiement confirmé",
+  "pending": "Confirmation en cours",
+  "preparing": "Confirmation en cours",
+  "unavailable": "Vérification en cours",
+  "failed": "Paiement non abouti",
+  "inconnu": "Commande introuvable",
+  "sans_reference": "Ton paiement"
+} %}
+{% block title %}{{ titles.get(state, "Paiement") }} – Triple Elite VIP{% endblock %}
+
+{% block head %}
+  {# Sans JavaScript, l'actualisation passe par une balise « meta » ; avec JavaScript, par paiement.js (attributs data-refresh-*
+     plus bas) : une balise « meta » d'actualisation est signalée comme un défaut d'accessibilité (WCAG 2.2.1) et remplit
+     l'historique du navigateur de pages identiques. #}
+  {% if refresh_url %}<noscript><meta http-equiv="refresh" content="{{ refresh_seconds }};url={{ refresh_url }}"></noscript>{% endif %}
+{% endblock %}
+
+{% block nav %}
+  <a class="btn btn--ligne btn--petit" href="{{ home_url }}">Accueil</a>
+{% endblock %}
+
+{% block main %}
+<div class="centered centered--large"{% if refresh_url %} data-refresh-url="{{ refresh_url }}" data-refresh-seconds="{{ refresh_seconds }}"{% endif %}>
+
+{% if state == "done" and renewed %}
+  <h1 class="centered__title">Abonnement prolongé</h1>
+  <p class="centered__intro">Merci&nbsp;! Ton abonnement est actif{% if expires_label %} jusqu’au <strong>{{ expires_label }}</strong>{% endif %}. Ta clé de licence ne change pas&nbsp;: c’est celle que tu utilises déjà (nous te l’envoyons aussi par e-mail).</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ site_url }}/app">Aller à mon espace</a></p>
+
+{% elif state == "done" %}
+  <h1 class="centered__title">Paiement confirmé</h1>
+  <p class="centered__intro">Bienvenue&nbsp;! Voici ta clé de licence. Avec ton e-mail, elle te permet de te connecter{% if expires_label %} jusqu’au {{ expires_label }}{% endif %}.</p>
+  <div class="keybox">
+    <p class="keybox__label">E-mail</p>
+    <p class="keybox__email">{{ email }}</p>
+    <p class="keybox__label">Clé de licence</p>
+    <code class="keybox__value" id="license-key" data-key="{{ key }}">{% for group in key_groups %}<span class="keybox__group">{{ group }}</span>{% endfor %}</code>
+    <div class="keybox__row">
+      <button class="btn btn--ligne btn--petit" type="button" id="copy-key" hidden>Copier la clé</button>
+      <span class="small muted" id="copy-status" role="status"></span>
+    </div>
+  </div>
+  <p class="result__text">Nous t’envoyons aussi ces informations par e-mail (regarde dans les courriers indésirables s’il tarde). S’il n’arrive pas, tu peux revenir sur cette page pour retrouver ta clé.</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ login_url }}">Me connecter</a></p>
+
+{% elif state == "pending" or state == "preparing" %}
+  <h1 class="centered__title">Confirmation en cours…</h1>
+  {% if gave_up %}
+  <p class="centered__intro">La confirmation prend plus de temps que prévu. Ne paie pas une seconde fois&nbsp;: ta licence est délivrée automatiquement dès que le paiement est confirmé, et envoyée par e-mail{% if email_masked %} à {{ email_masked }}{% endif %}.</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ retry_url }}">Actualiser</a></p>
+  {% else %}
+  <p class="centered__intro">PayDunya confirme ton paiement. Cette page se met à jour toute seule&nbsp;: ne la ferme pas.</p>
+  <div class="bar" role="progressbar" aria-label="Confirmation du paiement en cours"></div>
+  {% endif %}
+
+{% elif state == "unavailable" %}
+  <h1 class="centered__title">Vérification en cours…</h1>
+  {% if gave_up %}
+  <p class="centered__intro">Nous n’arrivons pas à vérifier ton paiement pour le moment. S’il est confirmé chez PayDunya, ta licence est délivrée automatiquement et envoyée par e-mail{% if email_masked %} à {{ email_masked }}{% endif %}. Ne paie pas une seconde fois&nbsp;: réessaie dans quelques minutes.</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ retry_url }}">Réessayer</a></p>
+  {% else %}
+  <p class="centered__intro">Nous vérifions ton paiement, cela prend un peu plus de temps que d’habitude. Cette page se met à jour toute seule&nbsp;: ne la ferme pas.</p>
+  <div class="bar" role="progressbar" aria-label="Vérification du paiement en cours"></div>
+  {% endif %}
+
+{% elif state == "failed" %}
+  <h1 class="centered__title">Paiement non abouti</h1>
+  <p class="centered__intro">PayDunya n’a pas validé ce paiement (annulé ou refusé). Tu peux réessayer avec le même moyen de paiement ou un autre.</p>
+  <p class="result__text">Si de l’argent a pourtant été débité, écris-nous avec la référence ci-dessous&nbsp;: nous régularisons rapidement.</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ paiement_url }}/paiement">Réessayer le paiement</a></p>
+
+{% elif state == "inconnu" %}
+  <h1 class="centered__title">Commande introuvable</h1>
+  <p class="centered__intro">Nous ne trouvons aucune commande avec cette référence. Si tu viens de payer, ta licence arrive par e-mail dans quelques minutes.</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ paiement_url }}/paiement">Voir les offres</a></p>
+
+{% else %}
+  <h1 class="centered__title">Ton paiement</h1>
+  <p class="centered__intro">Si tu viens de payer, ta licence est préparée automatiquement et t’est envoyée par e-mail dans quelques minutes (regarde aussi dans les courriers indésirables).</p>
+  <p class="result__cta"><a class="btn btn--or btn--grand" href="{{ login_url }}">Me connecter</a></p>
+{% endif %}
+
+{% if state != "done" %}
+  <p class="result__help">Un souci&nbsp;? Écris-nous à <a href="mailto:{{ seller_email }}">{{ seller_email }}</a>.
+    {% if reference %}<span class="result__refline">Indique cette référence&nbsp;: <span class="result__ref">{{ reference }}</span></span>{% endif %}
+  </p>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ asset('js/paiement.js') }}" defer></script>
+{% endblock %}
