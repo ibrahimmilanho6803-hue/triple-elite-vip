@@ -1,5 +1,6 @@
-flask
-requests
-gunicorn
-psycopg2-binary
-anthropic
+# Dépendances de production (versions testées ; la borne haute évite une mise à jour majeure surprise).
+flask>=3.1,<4
+gunicorn>=23,<27
+requests>=2.32,<3
+psycopg2-binary>=2.9.10,<3
+anthropic>=0.40,<2

@@ -1,0 +1,4 @@
+-r requirements.txt
+# Tests : pytest pour la logique et les sites ; playwright pour les tests de navigateur (tests/e2e).
+pytest>=8
+playwright>=1.48

@@ -1,48 +1,62 @@
+# Blueprint Render de Triple Elite VIP : la configuration cible des deux services.
+#
+# À SAVOIR : les deux services actuels ont été créés à la main depuis le Dashboard Render, pas depuis ce
+# fichier. Render ne le relit donc pas pour eux : ce qui s'applique, ce sont les réglages saisis dans
+# Dashboard > ton service > Settings (Start Command, Health Check Path), Environment et Disks. Ce fichier
+# sert de référence (compare-le à ton Dashboard) et de point de départ pour recréer les services
+# (Dashboard > New > Blueprint). La version de Python vient du fichier .python-version du dépôt.
+#
+# Les valeurs secrètes (sync: false) ne sont jamais écrites ici ni dans Git : Render les demande une fois.
+
 services:
+  # --- Site des clients : triple-elite-vip.com --------------------------------------------------
   - type: web
     name: triple-elite-vip-dashboard
-    env: python
+    runtime: python
+    # Un disque persistant n'existe que sur une offre payante. Sans lui, l'historique des matchs et des
+    # combinés repart de zéro à chaque déploiement (DATA_DIR vaudrait alors le dossier de l'appli).
+    plan: starter
     buildCommand: pip install -r requirements.txt
+    # --timeout 240 : une génération se fait en arrière-plan, mais on laisse de la marge aux rares requêtes lentes.
     startCommand: gunicorn dashboard:app --bind 0.0.0.0:10000 --timeout 240 --graceful-timeout 240
-    # Disque persistant pour triple_elite.db (historique matchs/equipes) :
-    # sans lui, ce fichier vit sur le disque EPHEMERE du service et repart de
-    # zero a chaque deploiement. ATTENTION : ce service a ete cree depuis le
-    # Dashboard Render (pas via ce Blueprint), donc ce bloc ne s'applique PAS
-    # tout seul ici (meme constat que pour startCommand ci-dessus) -- le
-    # disque doit etre ajoute a la main dans Dashboard Render > ce service >
-    # Disks, avec le meme mountPath. Conserve ici pour documenter la config
-    # cible et pour un futur service recree via Blueprint.
+    # Page légère (sans base de données) : Render attend qu'elle réponde avant de basculer vers une nouvelle version.
+    healthCheckPath: /health
     disk:
       name: triple-elite-data
       mountPath: /var/data
       sizeGB: 1
     envVars:
-      # sync: false = valeur saisie une seule fois dans le Dashboard Render
-      # (Environment), jamais stockee dans ce fichier ni dans Git.
-      - key: SECRET_KEY
+      - key: SECRET_KEY            # signe les sessions des clients ; ne la change pas (tout le monde serait déconnecté)
+        generateValue: true
+      - key: DATABASE_URL          # base PostgreSQL des licences : Internal Database URL de Render > Postgres
         sync: false
-      - key: DATABASE_URL
+      - key: ANTHROPIC_API_KEY     # analyse IA (obligatoire pour générer)
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: SPORTSDB_API_KEY      # ta clé TheSportsDB (« 3 » partagée si absente)
         sync: false
-      - key: SPORTSDB_API_KEY
+      - key: ODDS_API_KEY          # facultatif : vraies cotes (the-odds-api.com) ; sinon cotes estimées, marquées « ≈ »
         sync: false
-      - key: ODDS_API_KEY
-        sync: false
-      # Doit correspondre au mountPath du disque ci-dessus. Meme mise en
-      # garde : a ajouter a la main dans Dashboard Render > Environment.
-      - key: DATA_DIR
+      - key: DATA_DIR              # doit être le mountPath du disque ci-dessus
         value: /var/data
+      - key: SITE_URL
+        value: https://triple-elite-vip.com
+      - key: PAIEMENT_BASE_URL
+        value: https://triple-elite-vip-paiement.onrender.com
 
+  # --- Site de paiement : abonnement, PayDunya, envoi des clés ------------------------------------
   - type: web
     name: triple-elite-vip-paiement
-    env: python
+    runtime: python
+    # L'offre gratuite s'endort après 15 minutes sans visite (premier chargement lent) et bloque l'envoi
+    # d'e-mails par SMTP (Gmail) : voir README. Une offre payante règle les deux.
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn paiement:app --bind 0.0.0.0:10001 --timeout 60
+    healthCheckPath: /health
     envVars:
-      - key: DATABASE_URL
+      - key: DATABASE_URL          # la MÊME base que le site des clients
         sync: false
-      - key: LICENSE_SECRET_KEY
+      - key: LICENSE_SECRET_KEY    # sel de fabrication des nouvelles clés (ne change aucune clé existante)
         sync: false
       - key: PAYDUNYA_MASTER_KEY
         sync: false
@@ -50,9 +64,13 @@ services:
         sync: false
       - key: PAYDUNYA_TOKEN
         sync: false
-      - key: GMAIL_EMAIL
+      - key: GMAIL_EMAIL           # expéditeur des e-mails de licence
+        value: tripleelitevip@gmail.com
+      - key: GMAIL_MDP             # mot de passe d'application Gmail (inutile si BREVO_API_KEY est définie)
         sync: false
-      - key: GMAIL_MDP
+      - key: BREVO_API_KEY         # facultatif : envoi par HTTPS, fonctionne aussi sur l'offre gratuite
         sync: false
+      - key: SITE_URL
+        value: https://triple-elite-vip.com
       - key: PAIEMENT_BASE_URL
-        sync: false
+        value: https://triple-elite-vip-paiement.onrender.com
