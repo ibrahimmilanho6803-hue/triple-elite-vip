@@ -5,6 +5,31 @@ import time
 
 import config
 
+# Statuts TheSportsDB d'un match PAS (ou pas encore) termine ("NS" = pas
+# commence, "1H"/"2H"/"HT" = en cours...). Le score d'un tel match ne doit
+# jamais etre enregistre comme resultat : un score en direct fige en base
+# fausserait les stats des equipes ET le verdict gagne/perdu de l'historique.
+# Un statut vide/inconnu est considere comme termine (anciens evenements).
+NOT_FINAL_STATUSES = {
+    "NS", "NOT STARTED", "TBD", "1H", "2H", "HT", "ET", "BT", "P", "LIVE",
+    "IN PLAY", "INT", "SUSP", "PST", "POSTPONED", "CANC", "CANCELLED",
+    "ABD", "ABANDONED", "SUSPENDED", "INTERRUPTED",
+}
+
+
+def is_final_status(status):
+    return (status or "").strip().upper() not in NOT_FINAL_STATUSES
+
+
+def parse_score(raw):
+    """Score entier, ou None s'il est absent/invalide ("0" reste bien 0)."""
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
 
 class DataCollector:
     REQUEST_TIMEOUT = 10  # secondes
@@ -103,22 +128,30 @@ class DataCollector:
         print("Collecte terminee")
 
     def save_match(self, event, league_name):
+        if event.get("idEvent") in (None, ""):
+            return
+        status = event.get("strStatus", "") or ""
+        hs = parse_score(event.get("intHomeScore"))
+        aws = parse_score(event.get("intAwayScore"))
+        if not is_final_status(status):
+            hs = aws = None
         conn = sqlite3.connect(config.DB_PATH)
         cursor = conn.cursor()
         try:
-            hs_raw = event.get("intHomeScore")
-            aws_raw = event.get("intAwayScore")
-            try:
-                hs = int(hs_raw) if hs_raw else None
-            except (TypeError, ValueError):
-                hs = None
-            try:
-                aws = int(aws_raw) if aws_raw else None
-            except (TypeError, ValueError):
-                aws = None
+            # Upsert (et non plus INSERT OR IGNORE) : avec IGNORE, une ligne
+            # inseree une premiere fois sans score (ou avec un score partiel)
+            # n'etait jamais corrigee par les collectes suivantes, ce qui
+            # figeait un mauvais resultat. Ici le dernier etat connu gagne, mais
+            # un score deja connu n'est jamais efface par un champ vide.
             cursor.execute(
-                'INSERT OR IGNORE INTO matches (id, date, home_team, away_team, home_score, away_score, league, season, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (event.get("idEvent"), event.get("dateEvent", ""), event.get("strHomeTeam", ""), event.get("strAwayTeam", ""), hs, aws, league_name, event.get("strSeason", ""), event.get("strStatus", ""))
+                'INSERT INTO matches (id, date, home_team, away_team, home_score, away_score, league, season, status) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                'ON CONFLICT(id) DO UPDATE SET '
+                'date = excluded.date, home_team = excluded.home_team, away_team = excluded.away_team, '
+                'home_score = COALESCE(excluded.home_score, matches.home_score), '
+                'away_score = COALESCE(excluded.away_score, matches.away_score), '
+                'league = excluded.league, season = excluded.season, status = excluded.status',
+                (event.get("idEvent"), event.get("dateEvent", ""), event.get("strHomeTeam", ""), event.get("strAwayTeam", ""), hs, aws, league_name, event.get("strSeason", ""), status)
             )
         except Exception as e:
             print(f"Erreur sauvegarde match: {e}")

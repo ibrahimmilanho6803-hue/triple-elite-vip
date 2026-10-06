@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 
 import config
 import combo_generator
+import combo_history
 from data_collector import DataCollector
 from combo_generator import ComboGenerator
 from license_manager import LicenseManager
@@ -25,7 +26,9 @@ app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 
 lm = LicenseManager()
 
-RESULTS_DIR = "results"
+# L'historique vit dans DATA_DIR (disque persistant sur Render) pour survivre
+# aux redeploiements ; le cache de 30 min, lui, peut rester ephemere.
+RESULTS_DIR = os.path.join(config.DATA_DIR, "results")
 CACHE_DIR = "cache"
 CACHE_FILE = os.path.join(CACHE_DIR, "last_generation.json")
 
@@ -217,6 +220,20 @@ HTML_TEMPLATE = """
     .loading { text-align: center; padding: 30px; color: #ffd700; font-size: 1em; }
     .updated-at { text-align: center; color: #888; font-size: 0.78em; margin-top: -5px; padding-bottom: 10px; }
     .disclaimer { color: #888; font-size: 0.75em; text-align: center; max-width: 700px; margin: 15px auto; line-height: 1.5; }
+    .history-title { color: #ffd700; font-size: 1.2em; text-align: center; margin: 10px 0; }
+    .history-note { color: #888; font-size: 0.78em; text-align: center; margin-bottom: 10px; }
+    .history-empty { color: #aaa; text-align: center; padding: 20px; }
+    .badge { display: inline-block; margin-left: 8px; padding: 2px 10px; border-radius: 10px; font-size: 0.7em; vertical-align: middle; color: #fff; }
+    .badge-won { background: #4caf50; }
+    .badge-lost { background: #f44336; }
+    .badge-pending { background: #666; }
+    .combo-card.history-won { border-left-color: #4caf50; }
+    .combo-card.history-lost { border-left-color: #f44336; }
+    .combo-card.history-pending { border-left-color: #888; }
+    .match-result { font-size: 0.85em; font-weight: bold; }
+    .match-result.won { color: #4caf50; }
+    .match-result.lost { color: #f44336; }
+    .match-result.pending { color: #888; font-weight: normal; }
         @media (max-width: 768px) {
         .header h1 { font-size: 1.6em; }
         .combo-stats { flex-direction: row; }
@@ -329,7 +346,28 @@ HTML_TEMPLATE = """
                 document.getElementById('results').innerHTML = '<p class="error">Erreur de connexion. Merci de reessayer dans une minute.</p>';
             });
     }
+    function esc(value) {
+        var text = (value === null || value === undefined) ? '' : String(value);
+        return text.replace(/[&<>"']/g, function(ch) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
+        });
+    }
+    function formatDate(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) { return ''; }
+        return d.toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'});
+    }
+    var STATUS_LABELS = {won: 'GAGNÉ', lost: 'PERDU', pending: 'EN COURS'};
+    function historyStat(label, value) {
+        return '<div class="stat"><div class="stat-label">' + label + '</div><div class="stat-value">' + esc(value) + '</div></div>';
+    }
     function showHistory() {
+        var loading = document.getElementById('loading');
+        var box = document.getElementById('results');
+        loading.style.display = 'block';
+        loading.textContent = "Chargement de l'historique (mise à jour des résultats)...";
+        box.innerHTML = '';
+        document.getElementById('updated-at').textContent = '';
         fetch('/api/history')
             .then(function(response) {
                 if (response.status === 401) { window.location.href = '/login'; return null; }
@@ -337,14 +375,48 @@ HTML_TEMPLATE = """
             })
             .then(function(data) {
                 if (!data) { return; }
-                var html = '<h2>Historique des generations</h2>';
-                if (data.length === 0) { html += '<p>Aucun historique</p>'; }
-                else {
-                    data.forEach(function(file) {
-                        html += '<p>' + file + ' <a href="/api/download/' + file + '" style="color:#ffd700;">Telecharger</a></p>';
-                    });
+                loading.style.display = 'none';
+                if (data.error) {
+                    box.innerHTML = '<p style="color:#ff9800;">' + esc(data.error) + '</p>';
+                    return;
                 }
-                document.getElementById('results').innerHTML = html;
+                var html = '<h2 class="history-title">Historique des combinés</h2>';
+                if (data.length === 0) {
+                    html += '<p class="history-empty">' + "Aucun combiné dans l'historique pour le moment. Génère tes combinés : ils apparaîtront ici, avec le résultat de chaque match une fois joué." + '</p>';
+                } else {
+                    html += '<p class="history-note">Les résultats sont ajoutés automatiquement une fois les matchs terminés.</p>';
+                }
+                data.forEach(function(combo) {
+                    var status = STATUS_LABELS[combo.status] ? combo.status : 'pending';
+                    html += '<div class="combo-card history-' + status + '">';
+                    html += '<h2>COMBINÉ du ' + esc(formatDate(combo.generated_at)) + '<span class="badge badge-' + status + '">' + STATUS_LABELS[status] + '</span></h2>';
+                    html += '<div class="combo-stats">';
+                    html += historyStat('Cote totale', combo.total_odds);
+                    html += historyStat('Confiance', combo.avg_confidence + '%');
+                    html += historyStat('Score', combo.score + '/100');
+                    html += '</div>';
+                    combo.predictions.forEach(function(p) {
+                        var resultClass = p.outcome === 'won' ? 'won' : (p.outcome === 'lost' ? 'lost' : 'pending');
+                        var resultText = 'En attente du résultat';
+                        if (p.score) {
+                            resultText = 'Score ' + p.score + (p.outcome === 'won' ? ' ✔ Gagné' : (p.outcome === 'lost' ? ' ✘ Perdu' : ''));
+                        }
+                        html += '<div class="match-row">';
+                        html += '<div><div class="match-teams">' + esc(p.home_team) + ' vs ' + esc(p.away_team) + '</div>';
+                        html += '<div class="match-league">' + esc(p.league) + '</div></div>';
+                        html += '<div class="match-prediction">' + esc(p.type_name) + '</div>';
+                        html += '<div class="match-odds">Cote: ' + esc(p.estimated_odds) + '</div>';
+                        html += '<div class="match-confidence">' + esc(p.confidence) + '%</div>';
+                        html += '<div class="match-result ' + resultClass + '">' + esc(resultText) + '</div>';
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                });
+                box.innerHTML = html;
+            })
+            .catch(function() {
+                loading.style.display = 'none';
+                box.innerHTML = '<p class="error">' + "Impossible de charger l'historique. Merci de réessayer dans un instant." + '</p>';
             });
     }
     </script>
@@ -570,11 +642,13 @@ def api_generate():
 @app.route('/api/history')
 @login_required
 def api_history():
-    if not os.path.exists(RESULTS_DIR):
-        return jsonify([])
-    files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.json')]
-    files.sort(reverse=True)
-    return jsonify(files[:20])
+    # Combines passes + score final et verdict (gagne/perdu) de chaque match
+    # une fois joue. Voir combo_history.py.
+    try:
+        return jsonify(combo_history.load_history(RESULTS_DIR))
+    except Exception as e:
+        print(f"ERREUR /api/history: {type(e).__name__}: {e}")
+        return jsonify({"error": "Impossible de charger l'historique pour le moment. Merci de reessayer dans un instant."}), 500
 
 
 @app.route('/api/download/<path:filename>')
