@@ -1,96 +1,55 @@
-import os
-import requests
-from data_collector import DataCollector
-from analyzerv2 import MatchAnalyzer
-import config
+"""Composition des combinés : probabilités, cotes et sélection.
 
-# SECURITE : cette cle the-odds-api.com etait codee en dur ici et poussee sur
-# un depot public. Definis ODDS_API_KEY sur Render avec une cle regeneree.
-# Sans variable definie, les cotes reelles ne sont simplement pas recuperees
-# et l'appli retombe sur les cotes estimees (get_fallback_odds) : pas de
-# plantage, juste une precision moindre.
-ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+- get_predictions_from_analysis() : transforme l'analyse d'un match en pronostics
+  (probabilité, confiance affichée, cote) ;
+- build_combos() : choisit les meilleurs combinés de 3 matchs différents.
+
+Sur les cotes : si ODDS_API_KEY est définie, les cotes des marchés couverts par
+the-odds-api (résultat 1/N/2 et totaux de buts) sont les vraies cotes des bookmakers
+(médiane de tous les bookmakers). Sinon, et pour tous les autres paris, la cote est
+ESTIMÉE à partir de la probabilité, avec une marge de bookmaker (voir
+probabilities.implied_odds) : une cote cohérente avec la confiance affichée, et non
+plus une valeur fixe identique pour tous les matchs.
+"""
+import json
+import logging
+import os
+import statistics
+import time
+from collections import Counter, defaultdict
+from itertools import combinations, product
+
+import requests
+
+import config
+import markets
+from analyzerv2 import MatchAnalyzer
+from probabilities import implied_odds, market_probability
+
+log = logging.getLogger(__name__)
+
+ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
+ODDS_CACHE_MINUTES = int(os.environ.get("ODDS_CACHE_MINUTES", "360"))
+ODDS_CACHE_DIR = os.path.join(config.DATA_DIR, "cache")
+
+# Poids de la sélection : on classe les combinés selon leur probabilité de réussite
+# (en %), avec un petit bonus de variété (championnats, types de paris) et une
+# pénalité quand un type de pari a déjà été utilisé par un combiné retenu.
+LEAGUE_BONUS = 2.0
+CATEGORY_BONUS = 1.0
+REPEAT_TYPE_PENALTY = 3.0
+
+
+def _odds_api_key():
+    return os.environ.get("ODDS_API_KEY")
+
+
+def _valid_price(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 1.01
 
 
 class ComboGenerator:
-    def __init__(self):
-        self.collector = DataCollector()
-        self.analyzer = MatchAnalyzer()
-        self.min_confidence = config.MIN_CONFIDENCE
-        self.prediction_types = {
-            "V1": "Victoire equipe 1",
-            "V2": "Victoire equipe 2",
-            "1X": "Victoire ou nul equipe 1",
-            "2X": "Victoire ou nul equipe 2",
-            "TOTAL_0.5+": "Plus de 0.5 but",
-            "TOTAL_1+": "Plus de 1 but",
-            "TOTAL_1.5+": "Plus de 1.5 buts",
-            "TOTAL_2+": "Plus de 2 buts",
-            "TOTAL_2.5+": "Plus de 2.5 buts",
-            "TOTAL_3+": "Plus de 3 buts",
-            "TOTAL_0.5-": "Moins de 0.5 but",
-            "TOTAL_1-": "Moins de 1 but",
-            "TOTAL_1.5-": "Moins de 1.5 buts",
-            "TOTAL_2-": "Moins de 2 buts",
-            "TOTAL_2.5-": "Moins de 2.5 buts",
-            "TOTAL_3-": "Moins de 3 buts",
-            "EQ1_0.5+": "Equipe 1 plus de 0.5 but",
-            "EQ1_1.5+": "Equipe 1 plus de 1.5 buts",
-            "EQ1_2.5+": "Equipe 1 plus de 2.5 buts",
-            "EQ2_0.5+": "Equipe 2 plus de 0.5 but",
-            "EQ2_1.5+": "Equipe 2 plus de 1.5 buts",
-            "EQ2_2.5+": "Equipe 2 plus de 2.5 buts",
-            "V1_ET_0.5+": "V1 et plus de 0.5 but",
-            "V1_ET_1.5+": "V1 et plus de 1.5 buts",
-            "V1_ET_2.5+": "V1 et plus de 2.5 buts",
-            "V1_ET_3.5+": "V1 et plus de 3.5 buts",
-            "1X_ET_1.5+": "1X et plus de 1.5 buts",
-            "1X_ET_2.5+": "1X et plus de 2.5 buts",
-            "1X_ET_3.5+": "1X et plus de 3.5 buts",
-            "V2_ET_0.5+": "V2 et plus de 0.5 but",
-            "V2_ET_1.5+": "V2 et plus de 1.5 buts",
-            "V2_ET_2.5+": "V2 et plus de 2.5 buts",
-            "V2_ET_3.5+": "V2 et plus de 3.5 buts",
-            "2X_ET_1.5+": "2X et plus de 1.5 buts",
-            "2X_ET_2.5+": "2X et plus de 2.5 buts",
-            "2X_ET_3.5+": "2X et plus de 3.5 buts",
-            "AU_MOINS_1.5": "Au moins une equipe marque plus de 1.5 buts",
-            "AU_MOINS_2.5": "Au moins une equipe marque plus de 2.5 buts",
-            "AU_MOINS_3.5": "Au moins une equipe marque plus de 3.5 buts",
-            "V1_T1_0.5+": "V1 et Total 1 plus de 0.5 but",
-            "V1_T1_1.5+": "V1 et Total 1 plus de 1.5 buts",
-            "V1_T1_2.5+": "V1 et Total 1 plus de 2.5 buts",
-            "V1_T1_3.5+": "V1 et Total 1 plus de 3.5 buts",
-            "1X_T1_0.5+": "1X et Total 1 plus de 0.5 but",
-            "1X_T1_1.5+": "1X et Total 1 plus de 1.5 buts",
-            "1X_T1_2.5+": "1X et Total 1 plus de 2.5 buts",
-            "1X_T1_3.5+": "1X et Total 1 plus de 3.5 buts",
-            "V2_T2_0.5+": "V2 et Total 2 plus de 0.5 but",
-            "V2_T2_1.5+": "V2 et Total 2 plus de 1.5 buts",
-            "V2_T2_2.5+": "V2 et Total 2 plus de 2.5 buts",
-            "V2_T2_3.5+": "V2 et Total 2 plus de 3.5 buts",
-            "2X_T2_0.5+": "2X et Total 2 plus de 0.5 but",
-            "2X_T2_1.5+": "2X et Total 2 plus de 1.5 buts",
-            "2X_T2_2.5+": "2X et Total 2 plus de 2.5 buts",
-            "2X_T2_3.5+": "2X et Total 2 plus de 3.5 buts",
-            "BTTS_OUI": "Les deux equipes marquent OUI",
-            "BTTS_NON": "Les deux equipes marquent NON"
-        }
-
-    @staticmethod
-    def _same_team(name_a, name_b):
-        """Comparaison tolerante mais moins permissive que la version
-        d'origine (une trop courte sous-chaine commune faisait matcher des
-        equipes differentes)."""
-        a, b = name_a.lower().strip(), name_b.lower().strip()
-        if not a or not b:
-            return False
-        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-        if len(shorter) < 4:
-            return a == b
-        return shorter in longer
-
-    # Correspondance championnat (cle de config.LEAGUES) -> sport the-odds-api.
+    # Correspondance championnat (clé de config.LEAGUES) -> sport the-odds-api.
     LEAGUE_TO_ODDS_SPORT = {
         "Premier League": "soccer_epl",
         "La Liga": "soccer_spain_la_liga",
@@ -99,204 +58,256 @@ class ComboGenerator:
         "Serie A": "soccer_italy_serie_a",
     }
 
-    def _odds_from_sport(self, sport, home_team, away_team):
-        """Cherche les cotes d'un match precis sur un seul sport the-odds-api.
-        Renvoie un dict de cotes si trouve, sinon None."""
-        url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
-        params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals"}
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code != 200:
-            return None
-        data = response.json()
-        if not isinstance(data, list):
-            return None
-        for match in data:
-            home_api = match.get("home_team", "")
-            away_api = match.get("away_team", "")
-            if self._same_team(home_team, home_api) and self._same_team(away_team, away_api):
-                odds = {}
-                for bookmaker in match.get("bookmakers", []):
-                    for market in bookmaker.get("markets", []):
-                        if market["key"] == "h2h":
-                            for outcome in market["outcomes"]:
-                                if outcome["name"] == match["home_team"]:
-                                    odds["home"] = outcome["price"]
-                                elif outcome["name"] == match["away_team"]:
-                                    odds["away"] = outcome["price"]
-                                elif outcome["name"] == "Draw":
-                                    odds["draw"] = outcome["price"]
-                        elif market["key"] == "totals":
-                            for outcome in market["outcomes"]:
-                                pt = outcome.get("point")
-                                if outcome["name"] == "Over":
-                                    odds[f"over_{pt}"] = outcome["price"]
-                                elif outcome["name"] == "Under":
-                                    odds[f"under_{pt}"] = outcome["price"]
-                        elif market["key"] == "btts":
-                            for outcome in market["outcomes"]:
-                                if outcome["name"] == "Yes":
-                                    odds["btts_yes"] = outcome["price"]
-                                elif outcome["name"] == "No":
-                                    odds["btts_no"] = outcome["price"]
-                    break
-                # Ne garde que des cotes numeriques strictement positives. Une
-                # cote nulle/invalide venant de l'API (marche suspendu, champ
-                # manquant...) faisait planter un calcul plus loin (division ou
-                # multiplication) et faisait echouer TOUTE la generation (500)
-                # a cause d'un seul match a la cote douteuse.
-                odds = {
-                    k: v for k, v in odds.items()
-                    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
-                }
-                if odds:
-                    return odds
-        return None
+    def __init__(self, analyzer=None):
+        self.analyzer = analyzer if analyzer is not None else MatchAnalyzer()
+        self.min_confidence = config.MIN_CONFIDENCE
+        # Évènements the-odds-api déjà téléchargés pendant cette génération
+        # (une requête par championnat, pas une par match).
+        self._league_events = {}
 
-    def get_real_odds(self, home_team, away_team, league=None):
-        if not ODDS_API_KEY:
-            return None
-        try:
-            # Avec la ligue du match, on interroge directement le bon sport
-            # chez the-odds-api au lieu de tous les essayer un par un. Avant :
-            # un match de Serie A (5e/dernier sport de la liste) declenchait
-            # jusqu'a 5 appels HTTP sequentiels (10s de timeout chacun) rien
-            # que pour lui. Tant que seuls 2 championnats etaient reellement
-            # analyses (bug corrige par ailleurs), ca passait a peu pres
-            # inapercu ; avec les 5 championnats desormais tous analyses a
-            # chaque generation, ca pouvait ajouter des dizaines de secondes
-            # et provoquer les "Erreur de connexion" cote client (timeout).
-            sport = self.LEAGUE_TO_ODDS_SPORT.get(league)
-            if sport:
-                return self._odds_from_sport(sport, home_team, away_team)
-            # Ligue inconnue ou non fournie : on retombe sur l'ancien
-            # comportement (on essaie tous les sports suivis un par un).
-            for sport in self.LEAGUE_TO_ODDS_SPORT.values():
-                odds = self._odds_from_sport(sport, home_team, away_team)
-                if odds:
-                    return odds
-            return None
-        except Exception as e:
-            print(f"Erreur odds: {e}")
-            return None
+    # ------------------------------------------------------------------
+    # Cotes réelles (optionnel : nécessite ODDS_API_KEY)
+    # ------------------------------------------------------------------
 
-    def get_confidence(self, ptype, analysis):
-        preds = analysis.get("predictions", {})
-        mapping = {
-            "V1": "1", "V2": "2", "1X": "1X", "2X": "2X",
-            "TOTAL_0.5+": "+0.5", "TOTAL_1+": "+1", "TOTAL_1.5+": "+1.5",
-            "TOTAL_2+": "+2", "TOTAL_2.5+": "+2.5", "TOTAL_3+": "+3",
-            "TOTAL_0.5-": "-0.5", "TOTAL_1-": "-1", "TOTAL_1.5-": "-1.5",
-            "TOTAL_2-": "-2", "TOTAL_2.5-": "-2.5", "TOTAL_3-": "-3",
-            "EQ1_0.5+": "+0.5", "EQ1_1.5+": "+1.5", "EQ1_2.5+": "+2.5",
-            "EQ2_0.5+": "+0.5", "EQ2_1.5+": "+1.5", "EQ2_2.5+": "+2.5",
-            "V1_ET_0.5+": "+0.5", "V1_ET_1.5+": "+1.5", "V1_ET_2.5+": "+2.5", "V1_ET_3.5+": "+3",
-            "1X_ET_1.5+": "+1.5", "1X_ET_2.5+": "+2.5", "1X_ET_3.5+": "+3",
-            "V2_ET_0.5+": "+0.5", "V2_ET_1.5+": "+1.5", "V2_ET_2.5+": "+2.5", "V2_ET_3.5+": "+3",
-            "2X_ET_1.5+": "+1.5", "2X_ET_2.5+": "+2.5", "2X_ET_3.5+": "+3",
-            "AU_MOINS_0.5": "AU_MOINS_0.5", "AU_MOINS_1.5": "AU_MOINS_1.5",
-            "AU_MOINS_2.5": "AU_MOINS_2.5", "AU_MOINS_3.5": "AU_MOINS_3.5",
-            "V1_T1_0.5+": "+0.5", "V1_T1_1.5+": "+1.5", "V1_T1_2.5+": "+2.5", "V1_T1_3.5+": "+3",
-            "1X_T1_0.5+": "+0.5", "1X_T1_1.5+": "+1.5", "1X_T1_2.5+": "+2.5", "1X_T1_3.5+": "+3",
-            "V2_T2_0.5+": "+0.5", "V2_T2_1.5+": "+1.5", "V2_T2_2.5+": "+2.5", "V2_T2_3.5+": "+3",
-            "2X_T2_0.5+": "+0.5", "2X_T2_1.5+": "+1.5", "2X_T2_2.5+": "+2.5", "2X_T2_3.5+": "+3",
-            "BTTS_OUI": "BTTS_YES", "BTTS_NON": "BTTS_NO"
-        }
-        key = mapping.get(ptype, "1")
-        return preds.get(key, {}).get("confidence", 50)
-
-    def get_fallback_odds(self, ptype):
-        if ptype == "V1": return 1.80
-        elif ptype == "V2": return 3.50
-        elif ptype == "1X": return 1.25
-        elif ptype == "2X": return 1.35
-        elif "0.5+" in ptype: return 1.10
-        elif "1+" in ptype or "1.5+" in ptype: return 1.30
-        elif "2+" in ptype or "2.5+" in ptype: return 1.70
-        elif "3+" in ptype or "3.5+" in ptype: return 2.50
-        elif "0.5-" in ptype: return 4.00
-        elif "1.5-" in ptype: return 2.20
-        elif "2.5-" in ptype: return 1.55
-        elif "3.5-" in ptype: return 1.35
-        elif ptype == "BTTS_OUI": return 1.65
-        elif ptype == "BTTS_NON": return 1.60
-        elif "AU_MOINS" in ptype: return 1.40
-        return 1.50
+    @staticmethod
+    def _same_team(name_a, name_b):
+        """Comparaison tolérante (« Man City » ~ « Manchester City »), mais une
+        sous-chaîne trop courte ne suffit pas à confondre deux équipes."""
+        a, b = (name_a or "").lower().strip(), (name_b or "").lower().strip()
+        if not a or not b:
+            return False
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        if len(shorter) < 4:
+            return a == b
+        return shorter in longer
 
     @staticmethod
     def _combine_odds(odds_a, odds_b):
-        """Fusionne deux cotes decimales comme un seul pari (ex: cote "1X" =
-        cote de la victoire + cote du nul combinees). Renvoie None si une des
-        deux cotes est manquante ou vaut 0 (deja vu sur des flux the-odds-api
-        pour un marche suspendu/illiquide) au lieu de planter avec un
-        ZeroDivisionError non rattrape, qui faisait echouer TOUTE la
-        generation (500) a cause d'un seul match a la cote douteuse."""
-        if not odds_a or not odds_b:
+        """Cote d'un pari « A ou B » (double chance) à partir des cotes de A et B.
+        None si une des cotes manque ou est nulle (marché suspendu...)."""
+        if not _valid_price(odds_a) or not _valid_price(odds_b):
             return None
+        return round(1 / (1 / odds_a + 1 / odds_b), 2)
+
+    @staticmethod
+    def _extract_odds(event):
+        """Cotes médianes (sur tous les bookmakers) d'un évènement the-odds-api :
+        home / draw / away, over_<ligne> / under_<ligne>."""
+        home_api, away_api = event.get("home_team"), event.get("away_team")
+        prices = defaultdict(list)
+        for bookmaker in event.get("bookmakers") or []:
+            for market in bookmaker.get("markets") or []:
+                key = market.get("key")
+                for outcome in market.get("outcomes") or []:
+                    price, name = outcome.get("price"), outcome.get("name")
+                    if not _valid_price(price):
+                        continue
+                    if key == "h2h":
+                        if name == home_api:
+                            prices["home"].append(price)
+                        elif name == away_api:
+                            prices["away"].append(price)
+                        elif name == "Draw":
+                            prices["draw"].append(price)
+                    elif key == "totals":
+                        point = outcome.get("point")
+                        if not isinstance(point, (int, float)) or isinstance(point, bool):
+                            continue
+                        if name in ("Over", "Under"):
+                            prices[f"{name.lower()}_{float(point):g}"].append(price)
+        return {k: round(statistics.median(v), 2) for k, v in prices.items() if v}
+
+    def _cache_path(self, sport):
+        return os.path.join(ODDS_CACHE_DIR, f"odds_{sport}.json")
+
+    def _load_events(self, sport):
+        """Évènements d'un sport : cache disque (pour économiser le quota de
+        the-odds-api), sinon une requête. En cas d'échec on retombe sur un cache
+        même périmé."""
+        path = self._cache_path(sport)
+        cached = None
         try:
-            return round(1 / (1 / odds_a + 1 / odds_b), 2)
-        except ZeroDivisionError:
+            with open(path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+        except (OSError, ValueError):
+            cached = None
+        if cached and time.time() - cached.get("fetched_at", 0) < ODDS_CACHE_MINUTES * 60:
+            return cached.get("events") or []
+        try:
+            response = requests.get(
+                f"{ODDS_API_BASE}/{sport}/odds",
+                params={"apiKey": _odds_api_key(), "regions": "eu", "markets": "h2h,totals"},
+                timeout=10,
+            )
+            if response.status_code != 200:
+                log.warning("the-odds-api %s : HTTP %s (clé invalide ou quota atteint ?)",
+                            sport, response.status_code)
+                return (cached or {}).get("events") or []
+            events = response.json()
+            if not isinstance(events, list):
+                return (cached or {}).get("events") or []
+        except Exception as e:
+            log.warning("the-odds-api %s : %s", sport, e)
+            return (cached or {}).get("events") or []
+        try:
+            os.makedirs(ODDS_CACHE_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"fetched_at": time.time(), "events": events}, f)
+        except OSError as e:
+            log.warning("cache cotes non écrit : %s", e)
+        return events
+
+    def get_real_odds(self, home_team, away_team, league=None):
+        """Vraies cotes (médiane des bookmakers) du match, ou None."""
+        if not _odds_api_key():
             return None
+        sport = self.LEAGUE_TO_ODDS_SPORT.get(league)
+        sports = [sport] if sport else list(self.LEAGUE_TO_ODDS_SPORT.values())
+        for sport_key in sports:
+            if sport_key not in self._league_events:
+                self._league_events[sport_key] = self._load_events(sport_key)
+            for event in self._league_events[sport_key]:
+                if (self._same_team(home_team, event.get("home_team"))
+                        and self._same_team(away_team, event.get("away_team"))):
+                    odds = self._extract_odds(event)
+                    if odds:
+                        return odds
+        return None
+
+    @classmethod
+    def _market_price(cls, code, real_odds):
+        """Vraie cote d'un pronostic quand son marché est coté par the-odds-api."""
+        if not real_odds:
+            return None
+        market = markets.parse_market(code)
+        if market is None:
+            return None
+        if market.kind == "result":
+            if code == "V1":
+                price = real_odds.get("home")
+            elif code == "V2":
+                price = real_odds.get("away")
+            elif code == "1X":
+                price = cls._combine_odds(real_odds.get("home"), real_odds.get("draw"))
+            else:
+                price = cls._combine_odds(real_odds.get("away"), real_odds.get("draw"))
+            return price if _valid_price(price) else None
+        if market.kind == "total":
+            side = "over" if market.side == "+" else "under"
+            price = real_odds.get(f"{side}_{market.line:g}")
+            return price if _valid_price(price) else None
+        return None
+
+    # ------------------------------------------------------------------
+    # Pronostics d'un match
+    # ------------------------------------------------------------------
 
     def get_predictions_from_analysis(self, match, analysis, real_odds=None):
-        # Un match dont l'IA n'a pas pu s'occuper (fallback neutre) est
-        # exclu plutot que presente avec de faux chiffres personnalises.
+        """Pronostics retenus pour un match : ceux dont la confiance atteint le
+        seuil minimal. Un match que l'IA n'a pas pu analyser est exclu."""
         if analysis.get("fallback"):
             return []
-        valid = []
-        for ptype, label in self.prediction_types.items():
-            confidence = self.get_confidence(ptype, analysis)
-            estimated = self.get_fallback_odds(ptype)
+        base = analysis.get("base") or {}
+        cap = analysis.get("cap", 100)
+        legs = []
+        for code in markets.PREDICTION_CODES:
+            probability = market_probability(code, base)
+            if probability is None:
+                continue
+            probability = min(probability, cap)
+            confidence = int(round(probability))
+            if confidence < self.min_confidence:
+                continue
+            real_price = self._market_price(code, real_odds)
+            if real_price is not None:
+                odds, source = real_price, "bookmakers"
+            else:
+                odds, source = implied_odds(probability, config.ODDS_MARGIN), "estimee"
+            legs.append({
+                "match_id": match["id"],
+                "home_team": match["home_team"],
+                "away_team": match["away_team"],
+                "league": match["league"],
+                "kickoff": match.get("kickoff"),
+                "type": code,
+                "type_name": markets.describe_prediction(code, match["home_team"], match["away_team"]),
+                "category": markets.category_of(code),
+                "confidence": confidence,
+                "probability": round(probability, 2),
+                "estimated_odds": odds,
+                "odds_source": source,
+            })
+        return legs
 
-            if real_odds:
-                if ptype == "V1" and "home" in real_odds:
-                    estimated = real_odds["home"]
-                elif ptype == "V2" and "away" in real_odds:
-                    estimated = real_odds["away"]
-                elif ptype == "1X" and "home" in real_odds and "draw" in real_odds:
-                    combined = self._combine_odds(real_odds["home"], real_odds["draw"])
-                    if combined is not None:
-                        estimated = combined
-                elif ptype == "2X" and "away" in real_odds and "draw" in real_odds:
-                    combined = self._combine_odds(real_odds["away"], real_odds["draw"])
-                    if combined is not None:
-                        estimated = combined
-                elif ptype in ["TOTAL_2.5+", "TOTAL_3+"] and "over_2.5" in real_odds:
-                    estimated = real_odds["over_2.5"]
-                elif ptype in ["TOTAL_0.5-", "TOTAL_1-", "TOTAL_1.5-", "TOTAL_2-", "TOTAL_2.5-"] and "under_2.5" in real_odds:
-                    estimated = real_odds["under_2.5"]
-                elif ptype == "TOTAL_1.5+" and "over_2.5" in real_odds:
-                    estimated = round(real_odds["over_2.5"] * 0.7, 2)
-                elif ptype == "TOTAL_0.5+" and "over_2.5" in real_odds:
-                    estimated = round(real_odds["over_2.5"] * 0.5, 2)
-                elif ptype.startswith("V1_ET_") and "home" in real_odds:
-                    estimated = round(real_odds["home"] * 1.2, 2)
-                elif ptype.startswith("V2_ET_") and "away" in real_odds:
-                    estimated = round(real_odds["away"] * 1.2, 2)
-                elif ptype.startswith("1X_ET_") and "home" in real_odds and "draw" in real_odds:
-                    combined = self._combine_odds(real_odds["home"], real_odds["draw"])
-                    if combined is not None:
-                        estimated = round(combined * 1.3, 2)
-                elif ptype.startswith("2X_ET_") and "away" in real_odds and "draw" in real_odds:
-                    combined = self._combine_odds(real_odds["away"], real_odds["draw"])
-                    if combined is not None:
-                        estimated = round(combined * 1.3, 2)
-                elif ptype.startswith("EQ1_") and "home" in real_odds:
-                    estimated = round(real_odds["home"] * 0.9, 2)
-                elif ptype.startswith("EQ2_") and "away" in real_odds:
-                    estimated = round(real_odds["away"] * 0.9, 2)
+    # ------------------------------------------------------------------
+    # Sélection des combinés
+    # ------------------------------------------------------------------
 
-            if confidence >= self.min_confidence:
-                valid.append({
-                    "match_id": match["id"],
-                    "home_team": match["home_team"],
-                    "away_team": match["away_team"],
-                    "league": match["league"],
-                    "type": ptype,
-                    "type_name": label,
-                    "confidence": confidence,
-                    "estimated_odds": estimated
-                })
-        return valid
+    @staticmethod
+    def _shortlist(legs, size):
+        """Les `size` pronostics les plus cotés d'un match. Garder les plus
+        « confiants » serait une erreur : ce sont les moins cotés, et aucun
+        combiné à 2,50+ ne peut être composé uniquement de paris très sûrs."""
+        ranked = sorted(legs, key=lambda leg: (-leg["estimated_odds"], -leg["probability"]))
+        return ranked[:size]
+
+    @staticmethod
+    def _best_combo(legs_by_match, excluded_matches, used_types, target_odds):
+        """Meilleur combiné de 3 matchs (hors matchs déjà utilisés), ou None."""
+        keys = [k for k in legs_by_match if k not in excluded_matches]
+        best, best_score = None, None
+        for ka, kb, kc in combinations(keys, 3):
+            for la, lb, lc in product(legs_by_match[ka], legs_by_match[kb], legs_by_match[kc]):
+                total_odds = round(la["estimated_odds"] * lb["estimated_odds"] * lc["estimated_odds"], 2)
+                if total_odds < target_odds:
+                    continue
+                categories = {la["category"], lb["category"], lc["category"]}
+                if len(categories) < 2:
+                    continue
+                leagues = {la["league"], lb["league"], lc["league"]}
+                joint = la["probability"] * lb["probability"] * lc["probability"] / 10000.0
+                score = (joint + LEAGUE_BONUS * (len(leagues) - 1) + CATEGORY_BONUS * (len(categories) - 1)
+                         - REPEAT_TYPE_PENALTY * sum(1 for leg in (la, lb, lc) if used_types[leg["type"]]))
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best = (la, lb, lc, total_odds, joint, categories, leagues)
+        return best
+
+    def build_combos(self, all_preds, target_odds=None, max_combos=None):
+        """Jusqu'à `max_combos` combinés de 3 matchs, sans match en commun entre
+        combinés, chacun d'une cote totale >= `target_odds`, variés (championnats,
+        types de pronostics) et classés par probabilité de réussite."""
+        target_odds = config.TARGET_ODDS if target_odds is None else target_odds
+        max_combos = config.MAX_COMBOS_RETOURNES if max_combos is None else max_combos
+
+        grouped = defaultdict(list)
+        for leg in all_preds:
+            grouped[leg["match_id"]].append(leg)
+        legs_by_match = {k: self._shortlist(v, config.MAX_PREDICTIONS_PAR_MATCH) for k, v in grouped.items()}
+
+        selected = []
+        used_matches = set()
+        used_types = Counter()
+        while len(selected) < max_combos:
+            best = self._best_combo(legs_by_match, used_matches, used_types, target_odds)
+            if best is None:
+                break
+            la, lb, lc, total_odds, joint, categories, leagues = best
+            legs = [la, lb, lc]
+            selected.append({
+                "predictions": legs,
+                "total_odds": total_odds,
+                "avg_confidence": round(sum(leg["confidence"] for leg in legs) / 3, 1),
+                "success_probability": round(joint, 1),
+                "leagues": sorted(leagues),
+                "categories": sorted(categories),
+            })
+            used_matches.update(leg["match_id"] for leg in legs)
+            used_types.update(leg["type"] for leg in legs)
+        selected.sort(key=lambda c: c["success_probability"], reverse=True)
+        return selected
 
     def close(self):
-        self.analyzer.close()
+        close = getattr(self.analyzer, "close", None)
+        if close:
+            close()

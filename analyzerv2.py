@@ -1,52 +1,173 @@
+"""Analyse des matchs par l'IA (Claude).
+
+Les matchs sont envoyés à l'IA par petits lots, EN PARALLÈLE : une analyse de
+15 matchs en un seul appel prenait 35 à 95 secondes (et perdait tout si la réponse
+était tronquée) ; avec des lots de 3 matchs, la génération complète dure ~15 à
+25 secondes et un lot en échec n'empêche pas les autres.
+
+L'IA ne sert qu'à ESTIMER des probabilités à partir des données fournies (forme,
+confrontations directes, bilan de saison) ; tout le reste (cohérence, paris composés,
+cotes, sélection) est calculé de façon déterministe, voir probabilities.py et
+combo_generator.py.
+"""
+import json
+import logging
 import os
 import sqlite3
-import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import anthropic
 
 import config
+from probabilities import reconcile
+
+log = logging.getLogger(__name__)
+
+class ModelChooser:
+    """Modèle d'IA à utiliser : celui de la configuration, puis les modèles de repli si l'API répond
+    « modèle introuvable » (404). Partagé par tous les appels : une fois un modèle valide trouvé,
+    les générations suivantes l'utilisent directement."""
+
+    def __init__(self, models):
+        self.models = list(dict.fromkeys(m for m in models if m))
+        self.index = 0
+        self._lock = threading.Lock()
+
+    def current(self):
+        with self._lock:
+            return self.models[self.index]
+
+    def reject(self, model):
+        """`model` est introuvable. Renvoie True s'il reste un autre modèle à essayer (ou si un appel
+        simultané en a déjà choisi un autre)."""
+        with self._lock:
+            if self.models[self.index] == model:
+                if self.index + 1 >= len(self.models):
+                    log.error("modèle d'IA introuvable : %s (aucun modèle de repli)", model)
+                    return False
+                self.index += 1
+                log.error("modèle d'IA introuvable : %s ; essai de %s", model, self.models[self.index])
+            return True
+
+
+SHARED_MODELS = ModelChooser([config.IA_MODEL, *config.IA_FALLBACK_MODELS])
+
+PROMPT_HEADER = """Tu es un analyste football expert. Pour CHAQUE match ci-dessous, estime des probabilités
+(des entiers de 0 à 100) en te basant UNIQUEMENT sur les données fournies : forme récente,
+confrontations directes (H2H), bilan et moyennes de buts de la saison.
+
+Définitions (temps réglementaire, prolongations exclues) :
+- v1 : l'équipe à domicile gagne. v2 : l'équipe à l'extérieur gagne.
+- 1x : le domicile gagne OU match nul. 2x : l'extérieur gagne OU match nul.
+- over_X_Y : le nombre total de buts du match est STRICTEMENT supérieur à X,Y (over_2_5 = au moins 3 buts).
+- under_X_Y : le nombre total de buts du match est STRICTEMENT inférieur à X,Y.
+- eq1_over_0_5 / eq2_over_0_5 : l'équipe à domicile / à l'extérieur marque au moins 1 but.
+- au_moins_1_marque_X_Y : au moins une des deux équipes marque STRICTEMENT plus de X,Y buts
+  (au_moins_1_marque_1_5 = au moins une équipe marque 2 buts ou plus).
+- btts_oui : les deux équipes marquent. btts_non : au moins une équipe ne marque pas.
+
+Cohérence attendue : v1 + nul + v2 = 100 ; over_X_Y + under_X_Y = 100 ; btts_oui + btts_non = 100 ;
+les probabilités « over » baissent quand la ligne monte.
+Sois honnête sur l'incertitude : si les données manquent ou sont partagées, donne des
+probabilités proches de 50 plutôt que des valeurs extrêmes injustifiées.
+
+Clés à fournir pour chaque match :
+id, home_team, away_team, v1, v2, 1x, 2x,
+over_0_5, over_1_5, over_2_5, over_3_5, under_0_5, under_1_5, under_2_5, under_3_5,
+eq1_over_0_5, eq2_over_0_5,
+au_moins_1_marque_1_5, au_moins_1_marque_2_5, au_moins_1_marque_3_5,
+btts_oui, btts_non
+"""
+
+PROMPT_FOOTER = """
+Réponds UNIQUEMENT avec un tableau JSON valide (un objet par match), commençant par [ et
+finissant par ]. Recopie "id", "home_team" et "away_team" tels qu'ils sont donnés. N'écris
+rien avant ni après le JSON (aucune explication) et n'utilise que des guillemets doubles."""
+
+
+def parse_ai_json(text):
+    """Liste d'objets JSON extraite de la réponse de l'IA.
+
+    Tolère les balises ```json, du texte autour, et une réponse TRONQUÉE : on
+    récupère alors tous les objets complets reçus avant la coupure.
+    """
+    text = (text or "").replace("```json", "").replace("```", "").strip()
+    start = text.find("[")
+    if start < 0:
+        return []
+    end = text.rfind("]")
+    if end > start:
+        try:
+            data = json.loads(text[start:end + 1])
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+        except ValueError:
+            pass
+    # Réponse invalide ou tronquée : on lit les objets un par un.
+    decoder = json.JSONDecoder()
+    items, pos = [], start + 1
+    while pos < len(text):
+        while pos < len(text) and text[pos] in " \n\r\t,":
+            pos += 1
+        if pos >= len(text) or text[pos] != "{":
+            break
+        try:
+            obj, pos = decoder.raw_decode(text, pos)
+        except ValueError:
+            break
+        if isinstance(obj, dict):
+            items.append(obj)
+    return items
 
 
 class MatchAnalyzer:
-    # En dessous de ces tailles d'echantillon (matchs joues), on plafonne la
-    # confiance affichee : on ne peut pas etre "sur a 90%" d'un pronostic sur
-    # une equipe dont on n'a presque pas d'historique. Ce plafond s'applique
-    # au minimum des deux equipes (le maillon le plus faible).
+    # En dessous de ces tailles d'échantillon (matchs joués), on plafonne la
+    # confiance affichée : on ne peut pas être « sûr à 90 % » d'un pronostic sur
+    # une équipe dont on n'a presque pas d'historique. Le plafond s'applique au
+    # minimum des deux équipes (le maillon le plus faible).
     CONFIDENCE_CAP_BY_SAMPLE = [
-        (15, 90),  # 15 matchs ou plus -> jusqu'a 90%
+        (15, 90),  # 15 matchs ou plus -> jusqu'à 90 %
         (8, 82),
         (4, 72),
-        (0, 60),   # moins de 4 matchs connus -> jamais plus de 60%
+        (0, 60),   # moins de 4 matchs connus -> jamais plus de 60 %
     ]
 
-    def __init__(self):
-        self.db = config.DB_PATH
-        self.conn = sqlite3.connect(self.db)
+    def __init__(self, client=None, models=None):
+        self.models = models or SHARED_MODELS
+        self.conn = sqlite3.connect(config.DB_PATH)
         self.cursor = self.conn.cursor()
-        # max_retries=0 : le SDK anthropic retente 2 fois par defaut en interne
-        # sur une erreur de timeout/reseau, EN PLUS de nos propres tentatives
-        # ci-dessous (analyze_multiple_matches). Un seul appel pouvait donc
-        # durer jusqu'a 3x son timeout sans qu'on le sache, ce qui faisait
-        # largement depasser le timeout du worker gunicorn -> le worker etait
-        # tue par gunicorn lui-meme (SystemExit non rattrapable par un simple
-        # except Exception) au lieu que notre propre logique de retry/erreur
-        # ne s'en occupe proprement. On garde un seul niveau de retry, le
-        # notre, dont la duree totale est connue et bornee.
-        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"), max_retries=0)
+        if client is None:
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                log.error("ANTHROPIC_API_KEY manquante : l'analyse IA est impossible")
+            # max_retries=0 : le SDK retente 2 fois par défaut en interne, EN PLUS
+            # de nos propres tentatives (voir _ask_ai). La durée maximale d'un
+            # appel serait alors imprévisible. Un seul niveau de retry : le nôtre.
+            client = anthropic.Anthropic(api_key=api_key, max_retries=0)
+        self.client = client
+
+    # ------------------------------------------------------------------
+    # Données de contexte pour l'IA
+    # ------------------------------------------------------------------
 
     def get_team_stats(self, team_name):
-        self.cursor.execute("SELECT * FROM team_stats WHERE team_name = ?", (team_name,))
-        result = self.cursor.fetchone()
-        if not result:
+        self.cursor.execute(
+            "SELECT matches_played, wins, draws, losses, goals_for, goals_against, btts_yes, btts_no "
+            "FROM team_stats WHERE team_name = ?", (team_name,))
+        row = self.cursor.fetchone()
+        if not row:
             return None
         return {
-            "matches_played": int(result[2] or 0),
-            "wins": int(result[3] or 0),
-            "draws": int(result[4] or 0),
-            "losses": int(result[5] or 0),
-            "goals_for_avg": float(result[6] or 0),
-            "goals_against_avg": float(result[7] or 0),
-            "btts_yes": int(result[8] or 0),
-            "btts_no": int(result[9] or 0)
+            "matches_played": int(row[0] or 0),
+            "wins": int(row[1] or 0),
+            "draws": int(row[2] or 0),
+            "losses": int(row[3] or 0),
+            "goals_for_avg": float(row[4] or 0),
+            "goals_against_avg": float(row[5] or 0),
+            "btts_yes": int(row[6] or 0),
+            "btts_no": int(row[7] or 0),
         }
 
     def get_recent_form(self, team_name, limit=5):
@@ -54,27 +175,15 @@ class MatchAnalyzer:
             SELECT home_team, away_team, home_score, away_score, date
             FROM matches
             WHERE (home_team = ? OR away_team = ?)
-            AND home_score IS NOT NULL
+            AND home_score IS NOT NULL AND away_score IS NOT NULL
             ORDER BY date DESC
             LIMIT ?
         ''', (team_name, team_name, limit))
-        results = self.cursor.fetchall()
         form = []
-        for home, away, hs, aws, date in results:
-            if team_name == home:
-                if hs > aws:
-                    form.append(f"V {home} {hs}-{aws} {away}")
-                elif hs == aws:
-                    form.append(f"N {home} {hs}-{aws} {away}")
-                else:
-                    form.append(f"D {home} {hs}-{aws} {away}")
-            else:
-                if aws > hs:
-                    form.append(f"V {away} {aws}-{hs} {home}")
-                elif aws == hs:
-                    form.append(f"N {away} {aws}-{hs} {home}")
-                else:
-                    form.append(f"D {away} {aws}-{hs} {home}")
+        for home, away, hs, aws, _date in self.cursor.fetchall():
+            own, other = (hs, aws) if team_name == home else (aws, hs)
+            letter = "V" if own > other else ("N" if own == other else "D")
+            form.append(f"{letter} {home} {hs}-{aws} {away}")
         return form
 
     def get_h2h(self, home_team, away_team, limit=5):
@@ -82,19 +191,15 @@ class MatchAnalyzer:
             SELECT home_team, away_team, home_score, away_score, date
             FROM matches
             WHERE ((home_team = ? AND away_team = ?) OR (home_team = ? AND away_team = ?))
-            AND home_score IS NOT NULL
+            AND home_score IS NOT NULL AND away_score IS NOT NULL
             ORDER BY date DESC
             LIMIT ?
         ''', (home_team, away_team, away_team, home_team, limit))
-        results = self.cursor.fetchall()
-        h2h = []
-        for home, away, hs, aws, date in results:
-            h2h.append(f"{home} {hs}-{aws} {away}")
-        return h2h
+        return [f"{home} {hs}-{aws} {away}" for home, away, hs, aws, _date in self.cursor.fetchall()]
 
     def _confidence_cap(self, home_team, away_team):
-        """Plafond de confiance base sur la quantite de donnees reellement
-        disponibles pour les deux equipes (le maillon le plus faible)."""
+        """Plafond de confiance selon la quantité de données réellement
+        disponibles pour les deux équipes (le maillon le plus faible)."""
         home_stats = self.get_team_stats(home_team)
         away_stats = self.get_team_stats(away_team)
         sample = min(
@@ -106,163 +211,134 @@ class MatchAnalyzer:
                 return cap
         return self.CONFIDENCE_CAP_BY_SAMPLE[-1][1]
 
-    @staticmethod
-    def _clamp(value, low=1, high=99):
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            value = 50
-        return max(low, min(high, value))
+    def _team_summary(self, team_name):
+        stats = self.get_team_stats(team_name)
+        if not stats:
+            return "aucune donnée"
+        return (f"{stats['matches_played']} matchs : {stats['wins']}V {stats['draws']}N {stats['losses']}D, "
+                f"buts marqués/encaissés par match {stats['goals_for_avg']:.2f}/{stats['goals_against_avg']:.2f}, "
+                f"les deux équipes ont marqué dans {stats['btts_yes']} de ces matchs")
 
-    def analyze_multiple_matches(self, matches):
-        match_list = []
+    def _build_prompt(self, matches):
+        blocks = []
         for m in matches:
-            home_stats = self.get_team_stats(m["home_team"])
-            away_stats = self.get_team_stats(m["away_team"])
-            home_form = self.get_recent_form(m["home_team"])
-            away_form = self.get_recent_form(m["away_team"])
-            h2h = self.get_h2h(m["home_team"], m["away_team"])
-            home_txt = f"{home_stats['wins']}V{home_stats['draws']}N{home_stats['losses']}D" if home_stats else "N/A"
-            away_txt = f"{away_stats['wins']}V{away_stats['draws']}N{away_stats['losses']}D" if away_stats else "N/A"
-            match_txt = f"""
-=== {m['home_team']} vs {m['away_team']} ({m['league']}) ===
-{home_txt} (dom) vs {away_txt} (ext)
-FORME {m['home_team']} : {', '.join(home_form) if home_form else 'N/A'}
-FORME {m['away_team']} : {', '.join(away_form) if away_form else 'N/A'}
-H2H : {', '.join(h2h) if h2h else 'N/A'}
-"""
-            match_list.append(match_txt)
-        prompt = f"""Tu es un analyste football expert. Analyse chaque match avec attention en te basant sur :
-- La forme recente (5 derniers matchs)
-- Les confrontations directes (H2H)
-- Les stats de la saison
+            home, away = m["home_team"], m["away_team"]
+            home_form = self.get_recent_form(home)
+            away_form = self.get_recent_form(away)
+            h2h = self.get_h2h(home, away)
+            blocks.append(
+                f"=== MATCH id={m['id']} | {home} (domicile) vs {away} (extérieur) | {m['league']} ===\n"
+                f"Bilan saison {home} : {self._team_summary(home)}\n"
+                f"Bilan saison {away} : {self._team_summary(away)}\n"
+                f"Forme {home} (5 derniers) : {', '.join(home_form) if home_form else 'N/A'}\n"
+                f"Forme {away} (5 derniers) : {', '.join(away_form) if away_form else 'N/A'}\n"
+                f"H2H : {', '.join(h2h) if h2h else 'N/A'}\n")
+        return f"{PROMPT_HEADER}\nMATCHS :\n{chr(10).join(blocks)}{PROMPT_FOOTER}"
 
-Pour CHACUN donne ces probabilites (0-100) :
-home_team, away_team, v1, v2, 1x, 2x,
-over_0_5, over_1_5, over_2_5, over_3_5,
-under_0_5, under_1_5, under_2_5, under_3_5,
-eq1_over_0_5, eq2_over_0_5,
-au_moins_1_marque_0_5, au_moins_1_marque_1_5, au_moins_1_marque_2_5, au_moins_1_marque_3_5,
-btts_oui, btts_non
+    # ------------------------------------------------------------------
+    # Appels à l'IA
+    # ------------------------------------------------------------------
 
-Sois honnete sur l'incertitude : si les donnees manquent ou sont partagees,
-n'hesite pas a donner des probabilites proches de 50 plutot que des valeurs
-extremes injustifiees.
-
-MATCHS :
-{chr(10).join(match_list)}
-
-Reponds UNIQUEMENT avec un JSON valide commencant par [ et finissant par ].
-N'ecris rien avant ni apres ce JSON (aucune explication, aucun commentaire),
-et n'utilise que des guillemets doubles standard a l'interieur du JSON."""
-
-        # L'IA renvoie de temps en temps un JSON tronque ou malforme (reponse
-        # coupee en cours de generation, sortie vide, etc.). Avant, la moindre
-        # erreur de parsing faisait abandonner l'analyse pour TOUS les matchs
-        # du batch d'un coup (voir analyze_match/fallback), ce qui videait
-        # totalement les combines proposes au client alors que le probleme
-        # n'etait que ponctuel. On retente donc avant de vraiment abandonner
-        # et de retomber sur l'analyse de secours. Limite a 2 (et non 3) pour
-        # borner le pire des cas : chaque tentative peut prendre jusqu'a 30s,
-        # et avec les 5 championnats desormais analyses a chaque generation
-        # (au lieu de 2 avant un bug corrige par ailleurs), 3 tentatives
-        # pouvaient a elles seules approcher la minute et declencher un
-        # timeout cote client ("Erreur de connexion").
-        max_attempts = 2
-        for attempt in range(1, max_attempts + 1):
-            ia_text = ""
+    def _ask_ai(self, prompt, expected, label):
+        """Un appel à l'IA (2 tentatives). Ne lève jamais : renvoie la meilleure
+        liste obtenue (éventuellement partielle, ou vide)."""
+        best = []
+        attempt = model_switches = 0
+        while attempt < config.IA_MAX_ATTEMPTS:
+            attempt += 1
+            started = time.time()
+            text = ""
+            model = self.models.current()
             try:
-                # 60s (au lieu de 30) : generer une analyse structuree pour 15
-                # matchs (jusqu'a 8000 tokens) prend legitimement plus de 30s
-                # dans bien des cas normaux -- 30s coupait des reponses qui
-                # auraient reussi, forcant une 2e tentative pour rien.
                 response = self.client.messages.create(
-                    model="claude-sonnet-5",
-                    max_tokens=8000,
-                    timeout=60.0,
-                    messages=[{"role": "user", "content": prompt}]
+                    model=model,
+                    max_tokens=config.IA_MAX_TOKENS,
+                    timeout=config.IA_TIMEOUT,
+                    messages=[{"role": "user", "content": prompt}],
                 )
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        ia_text += block.text
-                ia_text = ia_text.strip()
-                ia_text = ia_text.replace("```json", "").replace("```", "").strip()
-                start = ia_text.find("[")
-                end = ia_text.rfind("]")
-                if start >= 0 and end > start:
-                    ia_text = ia_text[start:end+1]
-                if not ia_text:
-                    raise ValueError("reponse IA vide")
-                ia_data = json.loads(ia_text)
-                print(f"IA parse OK (tentative {attempt}/{max_attempts}): {len(ia_data)} analyses")
-                return ia_data
-            except Exception as e:
-                apercu = ia_text[:150].replace("\n", " ") if ia_text else "(vide)"
-                print(f"IA erreur (tentative {attempt}/{max_attempts}): {e} | debut reponse: {apercu}")
-        return []
+                text = "".join(getattr(block, "text", "") for block in response.content)
+                items = parse_ai_json(text)
+                if len(items) > len(best):
+                    best = items
+                log.info("IA lot %s tentative %d/%d : %d/%d analyses en %.1fs",
+                         label, attempt, config.IA_MAX_ATTEMPTS, len(items), expected, time.time() - started)
+                if len(best) >= expected:
+                    return best
+            except Exception as e:  # réseau, quota, délai dépassé...
+                if (getattr(e, "status_code", None) == 404 and model_switches < len(self.models.models)
+                        and self.models.reject(model)):
+                    model_switches += 1
+                    attempt -= 1                     # changer de modèle ne compte pas comme une tentative ratée
+                    continue
+                log.warning("IA lot %s tentative %d/%d en erreur après %.1fs : %s: %s | début de réponse : %s",
+                            label, attempt, config.IA_MAX_ATTEMPTS, time.time() - started,
+                            type(e).__name__, e, (text[:120] or "(vide)").replace("\n", " "))
+            if attempt < config.IA_MAX_ATTEMPTS:
+                time.sleep(1.5 * attempt)
+        return best
+
+    def analyze_multiple_matches(self, matches, progress=None):
+        """Estimations de l'IA pour tous les matchs : liste d'objets JSON (avec
+        "id"). `progress(lots_termines, lots_total)` est appelé à chaque lot terminé."""
+        size = max(1, config.IA_BATCH_SIZE)
+        batches = [matches[i:i + size] for i in range(0, len(matches), size)]
+        if not batches:
+            return []
+        # Les prompts sont construits ICI (la connexion SQLite n'est pas partagée
+        # entre threads) ; seuls les appels réseau partent dans des threads.
+        prompts = [self._build_prompt(batch) for batch in batches]
+        results = []
+        workers = max(1, min(config.IA_MAX_PARALLEL, len(batches)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ia") as pool:
+            futures = [pool.submit(self._ask_ai, prompt, len(batch), f"{i + 1}/{len(batches)}")
+                       for i, (batch, prompt) in enumerate(zip(batches, prompts))]
+            for done, future in enumerate(as_completed(futures), start=1):
+                results.extend(future.result())
+                if progress:
+                    progress(done, len(batches))
+        return results
+
+    @staticmethod
+    def _norm(name):
+        return " ".join((name or "").lower().split())
+
+    def match_analyses(self, matches, ia_items):
+        """{id du match: estimation de l'IA}. L'association se fait par "id" (que
+        l'IA recopie) et, à défaut, par les noms exacts des équipes : jamais par
+        approximation, pour ne pas attribuer l'analyse d'un match à un autre."""
+        by_id, by_names = {}, {}
+        for item in ia_items:
+            if item.get("id") not in (None, ""):
+                by_id[str(item["id"]).strip()] = item
+            if item.get("home_team") and item.get("away_team"):
+                by_names[(self._norm(item["home_team"]), self._norm(item["away_team"]))] = item
+        matched = {}
+        for m in matches:
+            item = by_id.get(str(m["id"]).strip())
+            if item is None:
+                item = by_names.get((self._norm(m["home_team"]), self._norm(m["away_team"])))
+            if item is not None:
+                matched[m["id"]] = item
+        return matched
+
+    # ------------------------------------------------------------------
+    # Analyse d'un match
+    # ------------------------------------------------------------------
 
     def build_analysis_from_ia(self, home_team, away_team, ia_data):
-        cap = self._confidence_cap(home_team, away_team)
+        """Probabilités cohérentes (voir probabilities.reconcile) + plafond de
+        confiance lié à la quantité de données disponibles."""
+        return {
+            "home_team": home_team,
+            "away_team": away_team,
+            "base": reconcile(ia_data),
+            "cap": self._confidence_cap(home_team, away_team),
+        }
 
-        def c(key, default):
-            return min(self._clamp(ia_data.get(key, default)), cap)
-
-        analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}}
-        v1 = c("v1", 50)
-        v2 = c("v2", 30)
-        x1 = c("1x", 60)
-        x2 = c("2x", 50)
-        over05 = c("over_0_5", 90)
-        over15 = c("over_1_5", 75)
-        over25 = c("over_2_5", 55)
-        over35 = c("over_3_5", 35)
-        under05 = c("under_0_5", 10)
-        under15 = c("under_1_5", 25)
-        under25 = c("under_2_5", 45)
-        under35 = c("under_3_5", 65)
-        au05 = c("au_moins_1_marque_0_5", 92)
-        au15 = c("au_moins_1_marque_1_5", 75)
-        au25 = c("au_moins_1_marque_2_5", 55)
-        au35 = c("au_moins_1_marque_3_5", 35)
-        btts_oui = c("btts_oui", 50)
-        btts_non = c("btts_non", 50)
-        analysis["predictions"]["1"] = {"confidence": v1, "details": {}}
-        analysis["predictions"]["2"] = {"confidence": v2, "details": {}}
-        analysis["predictions"]["1X"] = {"confidence": x1, "details": {}}
-        analysis["predictions"]["2X"] = {"confidence": x2, "details": {}}
-        analysis["predictions"]["+0.5"] = {"confidence": over05, "details": {}}
-        analysis["predictions"]["+1"] = {"confidence": over15, "details": {}}
-        analysis["predictions"]["+1.5"] = {"confidence": over15, "details": {}}
-        analysis["predictions"]["+2"] = {"confidence": over25, "details": {}}
-        analysis["predictions"]["+2.5"] = {"confidence": over25, "details": {}}
-        analysis["predictions"]["+3"] = {"confidence": over35, "details": {}}
-        analysis["predictions"]["-0.5"] = {"confidence": under05, "details": {}}
-        analysis["predictions"]["-1"] = {"confidence": under15, "details": {}}
-        analysis["predictions"]["-1.5"] = {"confidence": under15, "details": {}}
-        analysis["predictions"]["-2"] = {"confidence": under25, "details": {}}
-        analysis["predictions"]["-2.5"] = {"confidence": under25, "details": {}}
-        analysis["predictions"]["-3"] = {"confidence": under35, "details": {}}
-        analysis["predictions"]["BTTS_YES"] = {"confidence": btts_oui, "details": {}}
-        analysis["predictions"]["BTTS_NO"] = {"confidence": btts_non, "details": {}}
-        analysis["predictions"]["AU_MOINS_0.5"] = {"confidence": au05, "details": {}}
-        analysis["predictions"]["AU_MOINS_1.5"] = {"confidence": au15, "details": {}}
-        analysis["predictions"]["AU_MOINS_2.5"] = {"confidence": au25, "details": {}}
-        analysis["predictions"]["AU_MOINS_3.5"] = {"confidence": au35, "details": {}}
-        return analysis
-
-    def analyze_match(self, home_team, away_team, real_odds=None):
-        """Analyse de secours SANS IA. N'est utilisee que si Claude n'a pas
-        pu analyser ce match du tout. Renvoie des valeurs neutres et
-        deliberement peu confiantes plutot que de simuler une vraie analyse :
-        mieux vaut l'exclure des combines que d'afficher un faux pourcentage
-        de fiabilite a un client."""
-        analysis = {"home_team": home_team, "away_team": away_team, "predictions": {}, "fallback": True}
-        neutral_low = 45
-        for key in ["1", "2", "1X", "2X", "+0.5", "+1", "+1.5", "+2", "+2.5", "+3",
-                    "-0.5", "-1", "-1.5", "-2", "-2.5", "-3", "BTTS_YES", "BTTS_NO",
-                    "AU_MOINS_0.5", "AU_MOINS_1.5", "AU_MOINS_2.5", "AU_MOINS_3.5"]:
-            analysis["predictions"][key] = {"confidence": neutral_low, "details": {}}
-        return analysis
+    def analyze_match(self, home_team, away_team):
+        """Analyse de secours SANS IA, pour un match que l'IA n'a pas pu traiter :
+        il est exclu des combinés plutôt que présenté avec de faux pourcentages."""
+        return {"home_team": home_team, "away_team": away_team, "base": {}, "cap": 0, "fallback": True}
 
     def close(self):
         self.conn.close()
