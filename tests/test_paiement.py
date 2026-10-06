@@ -31,9 +31,13 @@ def order_row(env, token):
                (token,))
 
 
-def start(env, email=EMAIL, plan="monthly", **kwargs):
-    """Le client choisit une offre : renvoie (réponse, jeton de la facture créée)."""
-    response = env.client.post("/payer", data={"email": email, "plan": plan}, **kwargs)
+def start(env, email=EMAIL, plan="monthly", accept="1", **kwargs):
+    """Le client choisit une offre et coche la case des conditions (accept=None : il ne la coche pas) :
+    renvoie (réponse, jeton de la facture créée)."""
+    data = {"email": email, "plan": plan}
+    if accept is not None:
+        data["accept"] = accept
+    response = env.client.post("/payer", data=data, **kwargs)
     token = env.pd.created[-1]["token"] if response.status_code == 303 else None
     return response, token
 
@@ -56,6 +60,13 @@ def test_page_d_offres_prix_et_formulaire(env):
     assert 'value="monthly" checked' in page and 'value="yearly" checked' not in page
     assert "365 jours d’accès" in page and "30 jours d’accès" in page
     assert "Support Telegram" not in page and "style=" not in page and "onclick" not in page
+
+
+def test_la_page_demande_d_accepter_les_conditions(env):
+    page = text(env.client.get("/paiement"))
+    assert '<input type="checkbox" id="accept" name="accept" value="1" required>' in page      # jamais cochée d'avance
+    assert "droit de rétractation" in page and "accès immédiat" in page and "18&nbsp;ans ou plus" in page
+    assert f'href="{config.SITE_URL}/conditions"' in page
 
 
 def test_offre_et_e_mail_preselectionnes_par_l_adresse(env):
@@ -130,6 +141,29 @@ def test_e_mail_invalide_refuse_sans_toucher_paydunya(env, email):
     assert env.pd.created == []
 
 
+def test_sans_la_case_des_conditions_aucune_facture(env):
+    for accept in (None, "", "0", "non"):
+        response, token = start(env, accept=accept)
+        assert response.status_code == 400 and token is None
+        assert "Coche la case" in text(response) and "required checked" not in text(response)
+    assert env.pd.created == [] and raw(env.path, "SELECT * FROM pending_orders") == []
+
+
+def test_refuser_les_conditions_n_use_pas_les_tentatives_autorisees(env):
+    for _ in range(config.PAYMENT_MAX_PER_EMAIL + 2):
+        assert start(env, accept=None)[0].status_code == 400
+    assert start(env)[0].status_code == 303                                       # la limite n'a pas été entamée
+
+
+def test_apres_une_erreur_la_case_cochee_reste_cochee(env):
+    page = text(start(env, email="pas-un-email")[0])
+    assert "adresse e-mail ne semble pas valide" in page and 'value="1" required checked>' in page
+    page = text(start(env, email="pas-un-email", accept=None)[0])
+    assert 'value="1" required>' in page                                          # pas cochée : elle ne l'a jamais été
+    env.pd.configured = False
+    assert 'value="1" required checked>' in text(start(env)[0])
+
+
 def test_offre_invalide_refusee(env):
     for plan in ("", "gratuit", "yearly; DROP TABLE"):
         response, _ = start(env, plan=plan)
@@ -175,7 +209,7 @@ def test_limite_de_tentatives_par_adresse_ip(env):
 def test_les_formulaires_d_autres_sites_sont_refuses(env):
     response = env.client.post("/payer", data={"email": EMAIL, "plan": "monthly"}, headers={"Origin": "https://pirate.example"})
     assert response.status_code == 403 and env.pd.created == []
-    response = env.client.post("/payer", data={"email": EMAIL, "plan": "monthly"},
+    response = env.client.post("/payer", data={"email": EMAIL, "plan": "monthly", "accept": "1"},
                                headers={"Origin": config.PAIEMENT_URL})
     assert response.status_code == 303
 

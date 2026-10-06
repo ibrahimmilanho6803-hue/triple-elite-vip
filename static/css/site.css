@@ -296,6 +296,9 @@ button { cursor: pointer; }
 .field + .field { margin-top: 18px; }
 .field label { display: block; font-weight: 600; margin-bottom: 6px; }
 .field .hint { margin-top: 6px; font-size: 0.8125rem; color: var(--craie); }
+/* case à cocher avec son texte (.field label la mettrait en gras et en bloc : d'où le sélecteur plus précis) */
+.field .check { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 0; font-weight: 400; font-size: 0.9375rem; line-height: 1.5; cursor: pointer; }
+.check input { flex: none; width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--or); cursor: pointer; }
 .input {
   display: block; width: 100%; min-height: 50px; padding: 0 14px;
   background: var(--champ); border: 1px solid var(--ligne); border-radius: var(--rayon);

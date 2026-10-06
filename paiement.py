@@ -33,6 +33,8 @@ EMAIL_RE = re.compile(r"^[^@\s,;<>()\[\]\\\"]+@[^@\s,;<>()\[\]\\\"]+\.[^@\s,;<>(
 
 MSG_PLAN = "Choisis une offre pour continuer."
 MSG_EMAIL = "Cette adresse e-mail ne semble pas valide. Vérifie-la : c'est avec elle que tu te connecteras."
+MSG_ACCEPT = ("Coche la case pour confirmer que tu as lu les conditions et que tu demandes l'accès immédiat "
+              "à ton abonnement.")
 MSG_UNAVAILABLE = ("Le paiement est momentanément indisponible. Réessaie dans quelques minutes, "
                    f"ou écris-nous : {config.SELLER_EMAIL}")
 
@@ -102,9 +104,10 @@ def create_app(lm=None, paydunya=None, send_license=None):
     # Pages
     # ------------------------------------------------------------------
 
-    def render_pay(selected=DEFAULT_PLAN, email="", error=None, notice=None, status=200):
+    def render_pay(selected=DEFAULT_PLAN, email="", error=None, notice=None, status=200, accepted=False):
         page = render_template("paiement.html", plans=list(PLANS.values()), selected=selected,
-                               selected_plan=PLANS[selected], email=email, error=error, notice=notice)
+                               selected_plan=PLANS[selected], email=email, error=error, notice=notice,
+                               accepted=accepted)
         return page, status
 
     def render_result(state, status=200, **context):
@@ -137,20 +140,25 @@ def create_app(lm=None, paydunya=None, send_license=None):
         plan_key = request.form.get("plan")
         email = normalize_email(request.form.get("email"))[:254]
         selected = plan_key if plan_key in PLANS else DEFAULT_PLAN
+        # Case des conditions : le client demande l'accès immédiat et renonce à se rétracter une fois la clé
+        # remise. Le navigateur la rend obligatoire (« required »), le serveur la vérifie quand même.
+        accepted = request.form.get("accept") == "1"
         if plan_key not in PLANS:
-            return render_pay(selected, email, error=MSG_PLAN, status=400)
+            return render_pay(selected, email, error=MSG_PLAN, accepted=accepted, status=400)
         if not valid_email(email):
-            return render_pay(selected, email, error=MSG_EMAIL, status=400)
+            return render_pay(selected, email, error=MSG_EMAIL, accepted=accepted, status=400)
+        if not accepted:
+            return render_pay(selected, email, error=MSG_ACCEPT, status=400)
         if not paydunya.configured:
             log.error("paiement impossible : clés PayDunya absentes")
-            return render_pay(selected, email, error=MSG_UNAVAILABLE, status=503)
+            return render_pay(selected, email, error=MSG_UNAVAILABLE, accepted=True, status=503)
 
         ip = request.remote_addr or "?"
         wait = wait_time(email, ip)
         if wait:
             log.warning("paiement bloqué (trop de tentatives) : %s", web.mask_email(email))
             minutes = max(1, -(-wait // 60))
-            return render_pay(selected, email, status=429,
+            return render_pay(selected, email, status=429, accepted=True,
                               error=f"Trop de tentatives. Réessaie dans {minutes} minute{'s' if minutes > 1 else ''}.")
         for name, key in (("email", email), ("ip", ip), ("global", "*")):
             limits[name].hit(key)
@@ -169,16 +177,16 @@ def create_app(lm=None, paydunya=None, send_license=None):
             )
         except PayDunyaError as exc:
             log.error("facture PayDunya impossible (%s) : %s", web.mask_email(email), exc)
-            return render_pay(selected, email, error=MSG_UNAVAILABLE, status=503)
+            return render_pay(selected, email, error=MSG_UNAVAILABLE, accepted=True, status=503)
 
         # La commande est enregistrée AVANT d'envoyer le client payer : sans elle, un paiement
         # ne pourrait pas être rattaché à un e-mail. Si l'enregistrement échoue, on s'arrête là.
         if not lm.create_pending_order(invoice["token"], email, plan["label"], plan["months"]):
             log.error("commande non enregistrée (%s) : le client n'est pas envoyé payer", web.mask_email(email))
-            return render_pay(selected, email, error=MSG_UNAVAILABLE, status=503)
+            return render_pay(selected, email, error=MSG_UNAVAILABLE, accepted=True, status=503)
 
-        log.info("facture créée : %s, %s, %s FCFA, %s", plan["label"], web.mask_email(email), plan["fcfa"],
-                 short(invoice["token"]))
+        log.info("facture créée : %s, %s, %s FCFA, %s, conditions acceptées", plan["label"], web.mask_email(email),
+                 plan["fcfa"], short(invoice["token"]))
         return redirect(invoice["url"], code=303)
 
     # ------------------------------------------------------------------

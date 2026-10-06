@@ -52,6 +52,13 @@
       </div>
 
       <div class="field">
+        <label class="check" for="accept">
+          <input type="checkbox" id="accept" name="accept" value="1" required{% if accepted %} checked{% endif %}>
+          <span>J’ai 18&nbsp;ans ou plus et j’ai lu les <a href="{{ conditions_url }}" target="_blank" rel="noopener">conditions</a>. Je demande l’accès immédiat à mon abonnement&nbsp;: une fois ma clé remise, je renonce à mon droit de rétractation.</span>
+        </label>
+      </div>
+
+      <div class="field">
         <button class="btn btn--or btn--grand btn--bloc" type="submit" id="pay-btn">Payer avec Mobile Money ou carte</button>
         <p class="hint">Tu es redirigé vers PayDunya, la plateforme de paiement sécurisée. Nous ne voyons ni ne gardons tes informations de paiement.</p>
       </div>

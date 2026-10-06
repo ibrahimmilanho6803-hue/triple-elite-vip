@@ -126,6 +126,7 @@ def capture_payment(browser, out):
             # Achat réussi : nouvelle licence.
             page.goto(site.url + "/paiement")
             page.fill("#email", f"{name}@exemple.com")
+            page.check("#accept")
             page.click("#pay-btn")
             page.wait_for_url("**/paydunya-simule/**")
             token = site.pd.created[-1]["token"]
@@ -137,6 +138,7 @@ def capture_payment(browser, out):
             page.screenshot(path=os.path.join(out, f"succes-{name}.png"), full_page=True)
             # Renouvellement d'une licence encore valide.
             page.goto(site.url + f"/paiement?email={name}%40exemple.com&plan=monthly")
+            page.check("#accept")
             page.click("#pay-btn")
             page.wait_for_url("**/paydunya-simule/**")
             token = site.pd.created[-1]["token"]
@@ -147,6 +149,7 @@ def capture_payment(browser, out):
             # Paiement annulé.
             page.goto(site.url + "/paiement")
             page.fill("#email", f"autre-{name}@exemple.com")
+            page.check("#accept")
             page.click("#pay-btn")
             page.wait_for_url("**/paydunya-simule/**")
             token = site.pd.created[-1]["token"]

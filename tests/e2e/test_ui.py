@@ -274,6 +274,7 @@ def start_payment(page, pay_site, email, plan="monthly"):
     """Choisit l'offre, saisit l'e-mail, valide : le navigateur doit arriver chez « PayDunya » (simulé)."""
     page.goto(pay_site.url + f"/paiement?plan={plan}")
     page.fill("#email", email)
+    page.check("#accept")                                             # la case des conditions est obligatoire
     page.click("#pay-btn")
     page.wait_for_url("**/paydunya-simule/**")
     return pay_site.pd.created[-1]["token"]
@@ -331,6 +332,8 @@ class TestPaiement:
         key = pay_site.lm.issue_license(email, 1)["key"]
         page.goto(pay_site.url + f"/paiement?email={quote(email, safe='')}&plan=monthly")
         expect(page.locator("#email")).to_have_value(email)           # le lien de renouvellement préremplit l'e-mail
+        expect(page.locator("#accept")).not_to_be_checked()           # mais jamais la case des conditions
+        page.check("#accept")
         page.click("#pay-btn")
         page.wait_for_url("**/paydunya-simule/**")
         token = pay_site.pd.created[-1]["token"]
@@ -373,6 +376,7 @@ class TestPaiement:
             page = context.new_page()
             page.goto(pay_site.url + "/paiement")
             page.fill("#email", "sansjs@exemple.com")
+            page.check("#accept")
             page.click("#pay-btn")                                    # sans JavaScript : simple envoi de formulaire
             page.wait_for_url("**/paydunya-simule/**")
             token = pay_site.pd.created[-1]["token"]
@@ -402,19 +406,59 @@ class TestPaiement:
         expect(page.locator("#pay-btn")).to_be_enabled()
         assert pay_site.pd.created == []
 
+    def test_le_navigateur_bloque_l_envoi_tant_que_la_case_n_est_pas_cochee(self, page, pay_site):
+        page.goto(pay_site.url + "/paiement")
+        page.fill("#email", "pressee@exemple.com")
+        page.click("#pay-btn")
+        expect(page.locator("#accept")).to_be_focused()               # le navigateur désigne la case à cocher
+        assert page.evaluate("document.getElementById('accept').validity.valueMissing")
+        assert page.url.endswith("/paiement") and pay_site.pd.created == []
+        page.check("#accept")
+        page.click("#pay-btn")
+        page.wait_for_url("**/paydunya-simule/**")
+
+    def test_sans_la_case_le_serveur_refuse_aussi(self, page, pay_site):
+        page.goto(pay_site.url + "/paiement")
+        page.evaluate("document.getElementById('pay-form').noValidate = true")   # laisse le serveur répondre
+        page.fill("#email", "pressee@exemple.com")
+        page.click("#pay-btn")
+        expect(page.locator(".notice--erreur")).to_contain_text("Coche la case")
+        expect(page.locator("#accept")).not_to_be_checked()
+        expect(page.locator("#email")).to_have_value("pressee@exemple.com")
+        assert pay_site.pd.created == []
+
+    def test_la_case_cochee_reste_cochee_apres_une_erreur(self, page, pay_site):
+        page.goto(pay_site.url + "/paiement")
+        page.evaluate("document.getElementById('pay-form').noValidate = true")
+        page.fill("#email", "pas-un-email")
+        page.check("#accept")
+        page.click("#pay-btn")
+        expect(page.locator(".notice--erreur")).to_contain_text("adresse e-mail")
+        expect(page.locator("#accept")).to_be_checked()
+
+    def test_les_conditions_s_ouvrent_dans_un_autre_onglet_sans_perdre_le_formulaire(self, page, pay_site):
+        page.goto(pay_site.url + "/paiement")
+        link = page.locator("label[for=accept] a")
+        expect(link).to_have_attribute("target", "_blank")
+        assert "noopener" in link.get_attribute("rel")
+        assert link.get_attribute("href").endswith("/conditions")
+
     def test_paydunya_indisponible(self, page, pay_site):
         pay_site.pd.fail_create = PayDunyaError("PayDunya injoignable", transient=True)
         page.goto(pay_site.url + "/paiement")
         page.fill("#email", "client@exemple.com")
+        page.check("#accept")
         page.click("#pay-btn")
         expect(page.locator(".notice--erreur")).to_contain_text("momentanément indisponible")
         expect(page.locator("#email")).to_have_value("client@exemple.com")
+        expect(page.locator("#accept")).to_be_checked()               # elle l'avait cochée : inutile de recommencer
         assert "injoignable" not in page.content()                    # jamais de détail technique côté client
         assert pay_site.lm.get_status("client@exemple.com")["state"] == "unknown"
 
     def test_double_clic_sur_payer_ne_cree_qu_une_facture(self, page, pay_site):
         page.goto(pay_site.url + "/paiement")
         page.fill("#email", "presse@exemple.com")
+        page.check("#accept")
         page.dblclick("#pay-btn")
         page.wait_for_url("**/paydunya-simule/**")
         assert len(pay_site.pd.created) == 1

@@ -35,6 +35,16 @@ def test_message_nouvelle_licence():
     assert message.get_content_charset() in (None, "utf-8") and message.is_multipart()
 
 
+@pytest.mark.parametrize("renewed", [False, True])
+def test_message_rappelle_l_acces_immediat_et_la_renonciation(renewed):
+    """L'accord donné à la case des conditions doit être confirmé sur un support durable : cet e-mail."""
+    text, html = bodies(build_message("client@exemple.com", "a1b2c3d4e5f60718", "Mensuel", EXPIRES, renewed=renewed))
+    for content in (text, html):
+        assert "ton accès a été ouvert immédiatement" in content
+        assert "renonces à ton droit de rétractation" in content
+        assert f"{config.SITE_URL}/conditions" in content
+
+
 def test_message_renouvellement_garde_la_cle():
     message = build_message("client@exemple.com", "a1b2c3d4e5f60718", "Annuel", EXPIRES, renewed=True)
     text, html = bodies(message)

@@ -65,10 +65,17 @@ def build_message(destinataire, cle, plan, expires=None, renewed=False, expedite
         intro = f"Merci pour ton {plan_label} Triple Elite VIP !"
         key_note = typo("Garde cet e-mail : tu en auras besoin pour te reconnecter.")
 
+    # Rappel de l'accord donné à la case des conditions (accès immédiat, renonciation à la rétractation) :
+    # la loi demande qu'il soit confirmé sur un support durable, donc dans ce message.
+    conditions_url = f"{config.SITE_URL}/conditions"
+    consent_note = typo("Conformément à ta demande, ton accès a été ouvert immédiatement : tu as reconnu qu'une fois "
+                        "ta clé remise, tu renonces à ton droit de rétractation.")
+
     lines = ["Bonjour,", "", intro, "", f"E-mail : {destinataire}", f"Clé de licence : {cle}"]
     if until:
         lines.append(f"{until_label} : {until}")
     lines += ["", key_note, "", f"Pour te connecter : {login_url}", "",
+              consent_note, f"Conditions : {conditions_url}", "",
               "Rappel : nos pronostics sont des estimations statistiques, jamais une garantie de gain. "
               "Les paris sont réservés aux personnes majeures : ne mise que ce que tu peux te permettre de perdre.",
               "", f"Une question ? Réponds à cet e-mail ou écris à {config.SELLER_EMAIL}.", "", "Triple Elite VIP"]
@@ -100,6 +107,7 @@ def build_message(destinataire, cle, plan, expires=None, renewed=False, expedite
       {until_row}
       <p style="margin:14px 0 24px;font-size:14px;line-height:1.5;color:#4a5278;">{e(key_note)}</p>
       <p style="margin:0 0 28px;"><a href="{e(login_url)}" style="display:inline-block;background:#e3b341;color:#0a0f2c;font-weight:bold;font-size:16px;text-decoration:none;padding:13px 26px;border-radius:4px;">Me connecter</a></p>
+      <p style="margin:0 0 12px;font-size:12px;line-height:1.5;color:#6a7298;">{e(consent_note)} <a href="{e(conditions_url)}" style="color:#6a7298;">Voir les conditions</a>.</p>
       <p style="margin:0;font-size:12px;line-height:1.5;color:#6a7298;">Nos pronostics sont des estimations statistiques, jamais une garantie de gain. Les paris sont réservés aux personnes majeures : ne mise que ce que tu peux te permettre de perdre.</p>
       <p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:#6a7298;">Une question ? Réponds à cet e-mail ou écris à <a href="mailto:{e(config.SELLER_EMAIL)}" style="color:#6a7298;">{e(config.SELLER_EMAIL)}</a>.</p>
     </td></tr>
