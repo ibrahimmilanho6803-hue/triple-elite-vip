@@ -125,21 +125,25 @@ python scripts/send_test_email.py moi@exemple.com   # vérifie que l'envoi d'e-m
 Les services actuels ont été créés à la main : **les réglages du Dashboard font foi**, pas `render.yaml` (qui documente
 la cible). Liste de contrôle :
 
+- **Offres** (relevé du 6 octobre 2026) : les deux services sont sur l'offre à 7 $/mois (0,5 CPU, 512 Mo), région
+  Frankfurt, branche `main`, déploiement automatique à chaque envoi sur `main`.
 - **Start Command** : `gunicorn dashboard:app --bind 0.0.0.0:10000 --timeout 240 --graceful-timeout 240` et
-  `gunicorn paiement:app --bind 0.0.0.0:10001 --timeout 60`. `gunicorn.conf.py` ajoute des fils d'exécution
-  (pages réactives pendant une génération) sans rien changer côté Render.
+  `gunicorn paiement:app --bind 0.0.0.0:10000` (chaque service a son propre port chez Render). `gunicorn.conf.py` ajoute
+  des fils d'exécution (pages réactives pendant une génération) sans rien changer côté Render.
 - **Health Check Path** : `/health` sur les deux services.
 - **Python** : `.python-version` fixe la version (3.13). Une variable `PYTHON_VERSION` sur Render prime sur ce fichier.
 - **Disque persistant** (dashboard) monté sur `/var/data`, avec `DATA_DIR=/var/data`. Sans lui, l'historique des matchs et
   des combinés est perdu à chaque déploiement.
 - **Base PostgreSQL** : sur l'offre gratuite de Render, la base **expire** (suppression après un délai, voir le tableau
   de bord). Elle contient toutes les licences : passer à une offre payante avant l'échéance, et garder une sauvegarde.
-- **E-mails** : l'offre gratuite de Render **bloque les ports SMTP**, donc Gmail ne fonctionne pas depuis le site de
-  paiement. Deux solutions : définir `BREVO_API_KEY` (envoi par HTTPS ; l'offre gratuite de Brevo permet environ 300 e-mails par jour), ou passer le
-  service de paiement sur une offre payante. En attendant, la clé s'affiche sur la page de confirmation, et le client peut
-  la retrouver en rouvrant cette page.
-- **Supervision** (UptimeRobot) : surveiller `/health` des **deux** services. Le service de paiement gratuit s'endort
-  après 15 minutes sans visite ; un client qui paie le réveille, mais le premier chargement est lent.
+- **E-mails** : l'offre gratuite de Render **bloque les ports SMTP** ; sur une offre payante (le cas aujourd'hui),
+  Gmail fonctionne avec un mot de passe d'application (`GMAIL_MDP`). Si on revenait à l'offre gratuite, définir
+  `BREVO_API_KEY` (envoi par HTTPS ; l'offre gratuite de Brevo permet environ 300 e-mails par jour). Dans tous les cas, la
+  clé s'affiche sur la page de confirmation, et le client peut la retrouver en rouvrant cette page.
+- **Supervision** (UptimeRobot) : surveiller `/health` des **deux** services. Sur l'offre gratuite, un service s'endort
+  après 15 minutes sans visite (premier chargement lent) ; sur l'offre payante, la supervision sert à être prévenu d'une panne.
+- **Variables inutiles** : le code ne lit plus `STRIPE_SECRET_KEY`, `LICENSES` ni `APIFY_TOKEN` (restes d'anciennes versions) ;
+  les supprimer de Render réduit les secrets exposés. `GMAIL_MDP` ne sert qu'au service de paiement.
 - **Secrets** : après toute fuite (clé collée dans une conversation, capture d'écran…), régénérer la clé chez son
   fournisseur (PayDunya, Anthropic, Google, TheSportsDB) puis la remplacer dans Render.
 
@@ -150,7 +154,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | Symptôme | Où regarder, que faire |
 | --- | --- |
 | Un client a payé mais ne reçoit rien | Chercher son e-mail (masqué) dans les logs du service de paiement. `PAIEMENT CONFIRMÉ MAIS LICENCE NON DÉLIVRÉE` : la base était injoignable, le client peut réactualiser sa page de confirmation ; sinon créer sa licence à la main avec `python generate_keys.py` (même e-mail que l'achat). Si PayDunya montre le paiement `completed`, il est dû |
-| Aucun e-mail de licence n'arrive | Logs du service de paiement : `e-mail de licence NON envoyé` suivi de la cause (`connexion SMTP impossible` : port bloqué ; `Brevo` : réponse de l'API ; variables absentes). Sur l'offre gratuite de Render, Gmail est bloqué : définir `BREVO_API_KEY` ou passer le service sur une offre payante. Le client voit sa clé sur la page de confirmation |
+| Aucun e-mail de licence n'arrive | Logs du service de paiement : `e-mail de licence NON envoyé` suivi de la cause (`connexion SMTP impossible` : port bloqué ; `Brevo` : réponse de l'API ; variables absentes). Sur l'offre gratuite de Render, Gmail est bloqué : définir `BREVO_API_KEY` ou rester sur une offre payante. `Gmail a refusé l'identifiant ou le mot de passe d'application` : le mot de passe d'application a été révoqué ou mal collé. Le client voit sa clé sur la page de confirmation |
 | « Le paiement est momentanément indisponible » | Clés PayDunya absentes ou invalides, ou PayDunya en panne : logs du service de paiement (`facture PayDunya impossible`) |
 | « Service momentanément indisponible » à la connexion | La base PostgreSQL est injoignable ou a expiré (offre gratuite) : Render > Postgres |
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
