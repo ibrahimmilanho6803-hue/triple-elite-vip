@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Connexion – Triple Elite VIP{% endblock %}
+
+{% block nav %}
+  <a class="btn btn--ligne btn--petit" href="{{ home_url }}">Accueil</a>
+{% endblock %}
+
+{% block main %}
+<div class="centered">
+  <h1 class="centered__title">Connexion</h1>
+  <p class="centered__intro">Entre l’e-mail de ton achat et ta clé de licence.</p>
+
+  {% if info %}
+  <div class="notice notice--info" role="status">
+    <p>{{ info|typo }}</p>
+    {% if show_renew %}<p><a href="{{ renew_url }}">Renouveler mon abonnement</a></p>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="notice notice--erreur" role="alert">
+    <p>{{ error|typo }}</p>
+    {% if show_renew %}<p><a href="{{ renew_url }}">Renouveler mon abonnement</a></p>{% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <div class="field">
+      <label for="email">E-mail</label>
+      <input class="input" id="email" name="email" type="email" inputmode="email" autocomplete="email"
+             autocapitalize="none" spellcheck="false" maxlength="254" required value="{{ email }}">
+    </div>
+    <div class="field">
+      <label for="license_key">Clé de licence</label>
+      <input class="input" id="license_key" name="license_key" type="text" autocomplete="off"
+             autocapitalize="none" spellcheck="false" maxlength="64" required>
+      <p class="hint">Elle t’a été envoyée par e-mail après ton paiement (vérifie aussi les courriers indésirables).</p>
+    </div>
+    <div class="field">
+      <button class="btn btn--or btn--grand btn--bloc" type="submit">Se connecter</button>
+    </div>
+  </form>
+
+  <div class="centered__links">
+    <p>Pas encore abonné&nbsp;? <a href="{{ paiement_url }}">Voir les offres</a></p>
+    <p>Clé perdue&nbsp;? Écris-nous à <a href="mailto:{{ seller_email }}">{{ seller_email }}</a>.</p>
+  </div>
+</div>
+{% endblock %}

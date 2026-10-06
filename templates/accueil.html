@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}Triple Elite VIP : 3 combinés de football, cote 2,50 minimum{% endblock %}
+{% block robots %}<meta name="robots" content="index, follow">
+  <link rel="canonical" href="{{ site_url }}/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Triple Elite VIP : 3 combinés de football, cote 2,50 minimum">
+  <meta property="og:description" content="Cinq championnats analysés par IA, trois combinés de trois matchs, la chance de réussite estimée affichée pour chacun.">
+  <meta property="og:url" content="{{ site_url }}/">
+{% endblock %}
+
+{% block nav %}
+  <a class="btn btn--ligne btn--petit nav-secondary" href="{{ login_url }}">Connexion</a>
+  <a class="btn btn--or btn--petit" href="{{ paiement_url }}">S’abonner</a>
+{% endblock %}
+
+{% block main %}
+<section class="hero">
+  <div class="container hero__grid">
+    <div class="hero__text">
+      <h1 class="hero__title">Trois combinés. Trois matchs chacun. Cote 2,50 minimum.</h1>
+      <p class="hero__lead">À chaque journée de championnat, notre IA analyse les cinq grands championnats européens et compose tes coupons. Pour chaque combiné, tu vois la cote, la confiance de chaque pronostic et la chance de réussite estimée.</p>
+      <div class="hero__cta">
+        <a class="btn btn--or btn--grand" href="{{ paiement_url }}">S’abonner</a>
+        <a class="btn btn--ligne btn--grand" href="{{ login_url }}">J’ai déjà un accès</a>
+      </div>
+      <p class="hero__fine">À partir de {{ price_monthly }} par mois. Orange Money, MTN, Moov, Wave ou carte bancaire.</p>
+    </div>
+
+    <figure class="hero__slip">
+      <article class="slip" aria-label="Exemple de combiné">
+        <div class="slip__paper">
+          <div class="slip__head">
+            <div>
+              <h2 class="slip__title">Combiné 1</h2>
+            </div>
+          </div>
+          <ol class="legs">
+            <li class="leg">
+              <div>
+                <p class="leg__teams">Équipe A – Équipe B</p>
+                <p class="leg__pick">Double chance&nbsp;: Équipe A ou match nul</p>
+                <p class="leg__meta">Premier League</p>
+              </div>
+              <div class="leg__side">
+                <p class="leg__odds"><span class="approx">≈</span>1,33</p>
+                <p class="leg__conf">confiance 70&nbsp;%</p>
+              </div>
+            </li>
+            <li class="leg">
+              <div>
+                <p class="leg__teams">Équipe C – Équipe D</p>
+                <p class="leg__pick">Plus de 1,5 but dans le match</p>
+                <p class="leg__meta">Serie A</p>
+              </div>
+              <div class="leg__side">
+                <p class="leg__odds"><span class="approx">≈</span>1,37</p>
+                <p class="leg__conf">confiance 68&nbsp;%</p>
+              </div>
+            </li>
+            <li class="leg">
+              <div>
+                <p class="leg__teams">Équipe E – Équipe F</p>
+                <p class="leg__pick">Équipe E&nbsp;: plus de 0,5 but</p>
+                <p class="leg__meta">La Liga</p>
+              </div>
+              <div class="leg__side">
+                <p class="leg__odds"><span class="approx">≈</span>1,41</p>
+                <p class="leg__conf">confiance 66&nbsp;%</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+        <div class="slip__stub">
+          <div>
+            <span class="slip__label">Cote totale</span>
+            <span class="slip__total-value">2,57</span>
+          </div>
+          <div class="slip__chance">
+            <span class="slip__label">Chance estimée</span>
+            <span class="slip__chance-value">31&nbsp;%</span>
+          </div>
+        </div>
+      </article>
+      <figcaption>Exemple de présentation&nbsp;: équipes et cotes fictives.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section section--ligne" id="fonctionnement">
+  <div class="container">
+    <div class="section__head">
+      <h2 class="h2">Comment ça marche</h2>
+    </div>
+    <ol class="steps">
+      <li class="step">
+        <p class="step__n">1</p>
+        <h3 class="step__t">On rassemble les données</h3>
+        <p class="step__p">Résultats récents, forme à domicile et à l’extérieur, confrontations directes et statistiques de saison des cinq championnats.</p>
+      </li>
+      <li class="step">
+        <p class="step__n">2</p>
+        <h3 class="step__t">L’IA estime chaque pari</h3>
+        <p class="step__p">Pour chaque match, elle évalue la probabilité de nombreux paris (victoire, double chance, nombre de buts, deux équipes qui marquent…). Seuls ceux jugés fiables à {{ min_confidence }}&nbsp;% ou plus sont gardés.</p>
+      </li>
+      <li class="step">
+        <p class="step__n">3</p>
+        <h3 class="step__t">Tu reçois tes coupons</h3>
+        <p class="step__p">Trois combinés de trois matchs, avec une cote totale d’au moins {{ target_odds }} et la chance de réussite estimée de chacun.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section class="section section--ligne" id="championnats">
+  <div class="container">
+    <div class="section__head">
+      <h2 class="h2">Cinq championnats analysés</h2>
+      <p class="lead">Quand l’un fait une pause, les autres prennent le relais.</p>
+    </div>
+    <ul class="leagues">
+      <li><strong>Premier League</strong><span>Angleterre</span></li>
+      <li><strong>La Liga</strong><span>Espagne</span></li>
+      <li><strong>Bundesliga</strong><span>Allemagne</span></li>
+      <li><strong>Ligue 1</strong><span>France</span></li>
+      <li><strong>Serie A</strong><span>Italie</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section section--ligne" id="transparence">
+  <div class="container honest">
+    <div>
+      <p class="honest__fig">34&nbsp;%</p>
+      <p class="honest__cap">C’est la chance qu’un combiné de trois paris à 70&nbsp;% soit gagnant.</p>
+    </div>
+    <div class="prose">
+      <h2 class="h2">On te dit franchement ce que tu achètes</h2>
+      <p>Un combiné n’est gagné que si ses trois pronostics le sont. Même avec des paris jugés fiables à 70&nbsp;% chacun, le combiné réussit environ une fois sur trois. Aucun service sérieux ne peut te garantir 80 ou 90&nbsp;%.</p>
+      <p>Chez nous, la chance estimée de chaque combiné est affichée sur le coupon, et tout l’historique reste visible dans ton espace&nbsp;: combinés gagnés et perdus, match par match, avec le score réel.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--ligne" id="offres">
+  <div class="container">
+    <div class="section__head">
+      <h2 class="h2">Deux formules, le même accès</h2>
+      <p class="lead">Paiement unique, sans prélèvement automatique. Tu peux renouveler avant la fin&nbsp;: la durée s’ajoute au temps restant.</p>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <h3 class="plan__name">Mensuel</h3>
+        <p class="plan__price"><span class="plan__amount">{{ price_monthly_num }}&nbsp;€</span><span class="plan__per">par mois</span></p>
+        <p class="plan__fcfa">Facturé {{ fcfa_monthly }}</p>
+        <ul class="plan__list">
+          <li>Génération des combinés à la demande</li>
+          <li>Cote, confiance et chance de réussite de chaque coupon</li>
+          <li>Historique des résultats et bilan</li>
+          <li>Support par e-mail</li>
+        </ul>
+        <a class="btn btn--ligne btn--bloc" href="{{ paiement_url }}/paiement?plan=monthly">Choisir le mensuel</a>
+      </div>
+      <div class="plan plan--vedette">
+        <h3 class="plan__name">Annuel</h3>
+        <p class="plan__price"><span class="plan__amount">{{ price_yearly_num }}&nbsp;€</span><span class="plan__per">par an, soit {{ price_yearly_per_month }} par mois</span></p>
+        <p class="plan__fcfa">Facturé {{ fcfa_yearly }}</p>
+        <ul class="plan__list">
+          <li>Tout l’abonnement mensuel</li>
+          <li>Douze mois d’accès</li>
+          <li>Support prioritaire par e-mail</li>
+        </ul>
+        <a class="btn btn--or btn--bloc" href="{{ paiement_url }}/paiement?plan=yearly">Choisir l’annuel</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--ligne" id="faq">
+  <div class="container">
+    <div class="section__head">
+      <h2 class="h2">Questions fréquentes</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>Comment je reçois ma clé de licence&nbsp;?</summary>
+        <p>Dès que le paiement est confirmé, ta clé s’affiche sur la page de confirmation et t’est envoyée par e-mail (regarde aussi dans les courriers indésirables). Tu te connectes ensuite avec ton e-mail et cette clé.</p>
+      </details>
+      <details>
+        <summary>Quels moyens de paiement&nbsp;?</summary>
+        <p>Orange Money, MTN, Moov, Wave et carte bancaire, via la plateforme sécurisée PayDunya. Nous ne voyons jamais tes informations de paiement.</p>
+      </details>
+      <details>
+        <summary>Pourquoi le paiement est-il en FCFA&nbsp;?</summary>
+        <p>PayDunya encaisse uniquement en FCFA. Les prix en euros sont convertis au taux fixe de 1&nbsp;€ = 655,957&nbsp;FCFA, arrondi à la centaine supérieure&nbsp;: {{ price_monthly }} = {{ fcfa_monthly }}, {{ price_yearly }} = {{ fcfa_yearly }}.</p>
+      </details>
+      <details>
+        <summary>Les cotes sont-elles celles de mon bookmaker&nbsp;?</summary>
+        <p>Pas toujours. Quand nous n’avons pas la cote du marché, nous l’estimons à partir de la probabilité&nbsp;: elle est alors précédée du signe «&nbsp;≈&nbsp;». Vérifie toujours la cote chez ton bookmaker avant de parier.</p>
+      </details>
+      <details>
+        <summary>L’abonnement se renouvelle-t-il tout seul&nbsp;?</summary>
+        <p>Non. Il s’arrête à la date prévue et aucun prélèvement automatique n’est fait. Pour continuer, tu paies à nouveau&nbsp;: si ton abonnement est encore actif, la durée s’ajoute au temps restant et ta clé reste la même.</p>
+      </details>
+      <details>
+        <summary>Garantissez-vous des gains&nbsp;?</summary>
+        <p>Non. Ce sont des estimations statistiques, pas des certitudes. Voir la section ci-dessus et nos <a href="{{ conditions_url }}">conditions et avertissement</a>.</p>
+      </details>
+    </div>
+  </div>
+</section>
+{% endblock %}

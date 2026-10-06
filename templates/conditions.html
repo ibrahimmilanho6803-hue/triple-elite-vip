@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Conditions et avertissement – Triple Elite VIP{% endblock %}
+{% block robots %}<meta name="robots" content="index, follow">{% endblock %}
+
+{% block nav %}
+  <a class="btn btn--ligne btn--petit nav-secondary" href="{{ login_url }}">Connexion</a>
+  <a class="btn btn--or btn--petit" href="{{ paiement_url }}">S’abonner</a>
+{% endblock %}
+
+{% block main %}
+<div class="container">
+  <article class="doc">
+    <h1>Conditions et avertissement</h1>
+
+    <h2>Nature du service</h2>
+    <p>Triple Elite VIP propose des pronostics de football générés automatiquement à partir de données statistiques (résultats récents, forme, confrontations directes, statistiques de saison) et d’un modèle d’intelligence artificielle. Ce sont des estimations de probabilité&nbsp;: elles peuvent se tromper.</p>
+
+    <h2>Aucune garantie de gain</h2>
+    <ul>
+      <li>Aucun pronostic n’est certain. Un combiné n’est gagnant que si ses trois pronostics le sont.</li>
+      <li>La confiance et la chance de réussite affichées sont des estimations du modèle&nbsp;; elles ne garantissent rien.</li>
+      <li>Les cotes précédées du signe «&nbsp;≈&nbsp;» sont estimées et peuvent différer de celles de ton bookmaker. Vérifie toujours la cote avant de parier.</li>
+      <li>Les résultats passés ne préjugent pas des résultats futurs.</li>
+    </ul>
+
+    <h2>Jeu responsable</h2>
+    <ul>
+      <li>Le service est réservé aux personnes majeures (18&nbsp;ans révolus, ou l’âge légal dans ton pays).</li>
+      <li>Renseigne-toi sur la législation des paris sportifs dans ton pays&nbsp;: tu es seul responsable de tes paris.</li>
+      <li>Ne mise que ce que tu peux te permettre de perdre. Si le jeu devient un problème, parles-en à un proche ou à un professionnel.</li>
+    </ul>
+
+    <h2>Abonnement et accès</h2>
+    <ul>
+      <li>L’abonnement donne accès au logiciel pendant la durée payée (un mois ou un an). Il n’est jamais renouvelé automatiquement&nbsp;: à l’échéance, l’accès s’arrête.</li>
+      <li>Si tu renouvelles avant la fin, la durée achetée s’ajoute au temps restant et ta clé reste la même.</li>
+      <li>La clé de licence est personnelle. Une clé partagée ou utilisée de façon abusive peut être désactivée.</li>
+      <li>Le paiement est traité par PayDunya, uniquement en FCFA. Les prix en euros sont convertis au taux fixe de 1&nbsp;€ = 655,957&nbsp;FCFA, arrondi à la centaine supérieure.</li>
+      <li>Pour toute question sur un paiement, écris-nous avec l’adresse e-mail utilisée et la référence du paiement.</li>
+    </ul>
+
+    <h2>Données personnelles</h2>
+    <p>Nous conservons ton adresse e-mail et ta clé de licence pour gérer ton accès, et nous t’écrivons uniquement pour ton abonnement. Nous ne recevons ni ne stockons tes informations de paiement&nbsp;: elles sont traitées par PayDunya. Le site n’utilise qu’un cookie technique, nécessaire pour te garder connecté&nbsp;; il n’y a ni publicité ni outil de suivi.</p>
+
+    <h2>Contact</h2>
+    <p><a href="mailto:{{ seller_email }}">{{ seller_email }}</a></p>
+  </article>
+</div>
+{% endblock %}

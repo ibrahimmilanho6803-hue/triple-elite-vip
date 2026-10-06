@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Mon espace – Triple Elite VIP{% endblock %}
+
+{% block nav %}
+  <form method="post" action="/logout">
+    <button class="btn btn--ligne btn--petit" type="submit">Déconnexion</button>
+  </form>
+{% endblock %}
+
+{% block main %}
+<div class="container" id="app" data-cache-minutes="{{ cache_minutes }}">
+  <h1 class="sr-only">Mon espace Triple Elite VIP</h1>
+
+  <div class="account">
+    <p class="account__text">Abonnement actif jusqu’au <strong>{{ expires_label }}</strong> ({{ days_left }}).
+      <a class="account__link" href="{{ renew_url }}">Renouveler</a></p>
+  </div>
+
+  {% if renew_soon %}
+  <div class="notice" role="status">
+    <p><strong>Ton abonnement se termine {{ days_left }}.</strong> Renouvelle-le dès maintenant&nbsp;: la durée achetée s’ajoute au temps restant et ta clé ne change pas.</p>
+    <p><a href="{{ renew_url }}">Renouveler mon abonnement</a></p>
+  </div>
+  {% endif %}
+
+  <noscript>
+    <div class="notice notice--erreur"><p>JavaScript est nécessaire pour afficher et générer les combinés. Active-le dans ton navigateur, puis recharge la page.</p></div>
+  </noscript>
+
+  <div class="tabs" role="tablist" aria-label="Sections de ton espace">
+    <button class="tab" role="tab" type="button" id="tab-combos" aria-controls="panel-combos" aria-selected="true">Combinés</button>
+    <button class="tab" role="tab" type="button" id="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1">Historique</button>
+  </div>
+
+  <div class="dash">
+    <section id="panel-combos" role="tabpanel" aria-labelledby="tab-combos">
+      <div class="generate" id="generate">
+        <p class="dash__intro" id="generate-intro">L’IA étudie les prochains matchs des cinq championnats et compose tes trois combinés. Compte une vingtaine de secondes.</p>
+        <div class="generate__row">
+          <button class="btn btn--or btn--grand" type="button" id="btn-generate">Générer les combinés</button>
+        </div>
+      </div>
+
+      <div class="progress" id="progress" role="status" aria-live="polite" hidden>
+        <p class="progress__msg" id="progress-msg">Démarrage de l’analyse…</p>
+        <progress id="progress-bar" max="100" value="0" aria-label="Avancement de l’analyse"></progress>
+        <p class="progress__hint">Tu peux rester sur cette page&nbsp;: les combinés s’affichent dès qu’ils sont prêts.</p>
+      </div>
+
+      <div id="notice" aria-live="polite"></div>
+
+      <div id="results" hidden>
+        <p class="results__meta" id="results-meta"></p>
+        <div class="results__grid" id="results-grid"></div>
+        <div class="legend">
+          <p><strong>Confiance</strong>&nbsp;: probabilité estimée que le pronostic se réalise. <strong>Chance estimée</strong>&nbsp;: probabilité que les trois pronostics se réalisent ensemble.</p>
+          <p>Le signe «&nbsp;≈&nbsp;» devant une cote indique une cote estimée par notre modèle&nbsp;: elle peut différer de celle de ton bookmaker. Vérifie la cote avant de parier.</p>
+          <p>Les horaires sont affichés dans le fuseau de ton appareil. Ces combinés sont partagés entre tous les abonnés et actualisés environ toutes les {{ cache_hours }}&nbsp;heures.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+      <p class="dash__intro">Tous les combinés générés, avec le score de chaque match une fois joué. Les résultats se mettent à jour tout seuls, les combinés perdus comme les gagnés.</p>
+
+      <div class="progress" id="history-loading" role="status" hidden>
+        <p class="progress__msg">Chargement de l’historique…</p>
+      </div>
+      <div id="history-error" aria-live="polite"></div>
+
+      <div id="history-content" hidden>
+        <dl class="bilan" id="bilan">
+          <div>
+            <dt>Combinés gagnés</dt>
+            <dd>
+              <span class="bilan__n bilan__n--or" id="bilan-combos">–</span>
+              <p class="bilan__sub" id="bilan-combos-sub"></p>
+            </dd>
+          </div>
+          <div>
+            <dt>Pronostics gagnés</dt>
+            <dd>
+              <span class="bilan__n" id="bilan-legs">–</span>
+              <p class="bilan__sub" id="bilan-legs-sub"></p>
+            </dd>
+          </div>
+          <div>
+            <dt>En attente</dt>
+            <dd>
+              <span class="bilan__n" id="bilan-pending">–</span>
+              <p class="bilan__sub">combinés dont le résultat n’est pas encore connu</p>
+            </dd>
+          </div>
+        </dl>
+        <p class="bilan__note" id="bilan-note"></p>
+
+        <div class="history__list">
+          <div class="history__grid" id="history-grid"></div>
+        </div>
+
+        <div class="empty" id="history-empty" hidden>
+          <p class="empty__title">Pas encore d’historique</p>
+          <p>Génère tes premiers combinés&nbsp;: ils apparaîtront ici, avec le score de chaque match et le verdict une fois les rencontres jouées.</p>
+          <button class="btn btn--or" type="button" id="btn-to-combos">Générer les combinés</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ asset('js/dashboard.js') }}" defer></script>
+{% endblock %}
