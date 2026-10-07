@@ -13,6 +13,7 @@ from flask import Flask, g, jsonify, redirect, render_template, request, session
 
 import combo_history
 import config
+import pwa
 import web_common as web
 from generation_service import GenerationService
 from license_manager import LicenseManager, normalize_email
@@ -51,9 +52,10 @@ def create_app(lm=None, service=None, history_loader=None):
     app.secret_key = secret or secrets.token_hex(32)
 
     web.install_security(app, csp=web.DASHBOARD_CSP)
-    web.install_templating(app, home_url="/", login_url="/login", conditions_url="/conditions")
+    web.install_templating(app, home_url="/", login_url="/login", conditions_url="/conditions", pwa=True)
     web.register_error_pages(app)
     web.install_health_and_robots(app, robots_txt=ROBOTS_TXT)
+    pwa.install_pwa(app)
 
     lm = lm or LicenseManager()
     gate = web.LicenseGate(lm)

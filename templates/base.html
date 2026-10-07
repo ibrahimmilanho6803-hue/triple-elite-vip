@@ -9,6 +9,15 @@
   <meta name="color-scheme" content="dark">
   {% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
   <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
+  {% if pwa %}
+  {# Application installable (pwa.py) : manifeste, icône d'iPhone et mode « application » d'iOS. Site client seulement. #}
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="{{ asset('icons/apple-touch-icon.png') }}">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Triple Elite">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  {% endif %}
   {# Même adresse que dans la feuille de style (sans empreinte), sinon la police est téléchargée deux fois et le navigateur signale un préchargement inutilisé. #}
   <link rel="preload" href="{{ url_for('static', filename='fonts/onest-latin.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="{{ url_for('static', filename='fonts/big-shoulders-display-latin.woff2') }}" as="font" type="font/woff2" crossorigin>
@@ -40,6 +49,7 @@
 
   <footer class="footer">
     <div class="container">
+      {% block install %}{% if pwa %}{% include "_installer.html" %}{% endif %}{% endblock %}
       <div class="footer__grid">
         <div>
           <p><strong>Triple Elite VIP</strong></p>
@@ -56,6 +66,7 @@
       <p class="footer__legal">Nos pronostics sont des estimations statistiques, jamais une garantie de résultat. Les paris comportent des risques (perte d’argent, dépendance) et sont interdits aux moins de 18&nbsp;ans. Ne mise que ce que tu peux te permettre de perdre.</p>
     </div>
   </footer>
+  {% block pwa_script %}{% if pwa %}<script src="{{ asset('js/pwa.js') }}" defer></script>{% endif %}{% endblock %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

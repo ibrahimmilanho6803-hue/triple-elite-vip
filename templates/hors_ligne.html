@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{# Page affichée par le service worker (static : sw.js) quand le téléphone n'a pas de connexion. Elle est mise en cache :
+   aucune donnée personnelle ici, et pas de script (il ne serait pas disponible sans réseau). #}
+{% block title %}Pas de connexion – Triple Elite VIP{% endblock %}
+{% block pwa_script %}{% endblock %}
+{% block install %}{% endblock %}
+
+{% block main %}
+<div class="centered">
+  <h1 class="centered__title">Pas de connexion</h1>
+  <p class="centered__intro">Triple Elite VIP a besoin d’internet pour afficher et générer tes combinés. Vérifie ta connexion (données mobiles ou Wi-Fi), puis réessaie.</p>
+  <p class="centered__actions"><a class="btn btn--or btn--grand" href="/app">Réessayer</a></p>
+</div>
+{% endblock %}

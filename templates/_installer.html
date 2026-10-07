@@ -1,0 +1,12 @@
+{# Invitation à installer l'application. Masquée par défaut : static/js/pwa.js l'affiche seulement quand le navigateur
+   propose l'installation (Android) ou sur iPhone/iPad (Safari), jamais quand l'application est déjà installée ni
+   après un clic sur « Plus tard ». #}
+<div class="install" data-install hidden>
+  <p><strong>Installe l’application sur ton téléphone.</strong>
+    <span data-install-android hidden>Un geste, et Triple Elite VIP s’ouvre en plein écran depuis ton écran d’accueil.</span>
+    <span data-install-ios hidden>Dans Safari, touche le bouton Partager, puis «&nbsp;Sur l’écran d’accueil&nbsp;».</span></p>
+  <p class="install__actions">
+    <button class="btn btn--or btn--petit" type="button" data-install-button hidden>Installer l’application</button>
+    <button class="link-btn" type="button" data-install-dismiss>Plus tard</button>
+  </p>
+</div>

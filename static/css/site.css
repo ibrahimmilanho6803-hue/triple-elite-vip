@@ -294,6 +294,17 @@ button { cursor: pointer; }
 .notice--test { border-left-color: var(--or); background: rgba(227, 179, 65, 0.1); }
 .notice strong { font-weight: 650; }
 
+/* invitation à installer l'application : masquée par l'attribut hidden tant que static/js/pwa.js ne la montre pas.
+   Même apparence qu'un .notice--info, mais classe à part : ce n'est pas un message du site (erreur, succès, avis). */
+.install {
+  margin: 0 0 24px; max-width: 640px; padding: 14px 16px;
+  border-left: 3px solid var(--craie); background: var(--nuit-2); border-radius: 0 var(--rayon) var(--rayon) 0;
+}
+.install p + p { margin-top: 10px; }
+.install strong { font-weight: 650; }
+.install__actions { display: flex; align-items: center; flex-wrap: wrap; }
+.install__actions .btn { margin-right: 18px; }
+
 .field + .field { margin-top: 18px; }
 .field label { display: block; font-weight: 600; margin-bottom: 6px; }
 .field .hint { margin-top: 6px; font-size: 0.8125rem; color: var(--craie); }
@@ -313,7 +324,7 @@ button { cursor: pointer; }
 .centered { width: 100%; max-width: 460px; margin: 0 auto; padding: 48px 20px 72px; }
 .centered__title { margin-top: 28px; font-family: var(--font-display); font-weight: 800; font-size: 2.6rem; line-height: 1; }
 .centered__intro { margin-top: 10px; color: var(--craie); }
-.centered form { margin-top: 26px; }
+.centered form, .centered__actions { margin-top: 26px; }
 .centered .notice { margin-top: 22px; }
 .centered__links { margin-top: 26px; color: var(--craie); font-size: 0.9375rem; }
 .centered__links p + p { margin-top: 8px; }

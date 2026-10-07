@@ -273,7 +273,9 @@ def install_security(app, *, csp, referrer_policy="strict-origin-when-cross-orig
 # Gabarits : adresses, prix, fichiers statiques versionnés
 # --------------------------------------------------------------------------
 
-def install_templating(app, *, home_url, login_url, conditions_url):
+def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
+    """pwa : le site est une application installable (manifeste, icônes, service worker : voir pwa.py). Seul le site
+    client l'est ; le site de paiement, sur une autre adresse, ne l'est pas."""
     versions = {}
 
     def asset(path):
@@ -302,6 +304,7 @@ def install_templating(app, *, home_url, login_url, conditions_url):
             "home_url": home_url,
             "login_url": login_url,
             "conditions_url": conditions_url,
+            "pwa": pwa,
             "site_url": config.SITE_URL,
             "paiement_url": config.PAIEMENT_URL,
             "seller_email": config.SELLER_EMAIL,

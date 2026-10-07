@@ -45,6 +45,7 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
    Après expiration, une nouvelle clé est délivrée. Un mois compte 30 jours, un an 365 jours.
 6. Il se connecte sur le site avec son e-mail et sa clé, puis génère ses combinés (un seul calcul en arrière-plan pour
    tous les clients, réutilisé pendant 3 heures) et consulte l'historique avec le score de chaque match.
+7. Il peut installer le site sur son téléphone comme une application (voir « Application installable »).
 
 ## Les fichiers
 
@@ -61,6 +62,7 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
 | `web_common.py`, `privacy.py` | Sécurité commune (en-têtes, anti-CSRF, limitation d'essais), gabarits, e-mails masqués dans les journaux |
 | `config.py` | Réglages non secrets ; lit aussi un fichier `.env` en local |
 | `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site |
+| `pwa.py`, `templates/sw.js`, `static/js/pwa.js`, `static/icons/` | Application installable : manifeste, service worker, page « hors connexion », bouton d'installation, icônes |
 | `main.py`, `generate_keys.py`, `scripts/send_test_email.py` | Outils en ligne de commande (voir plus bas) |
 | `render.yaml`, `gunicorn.conf.py`, `.python-version` | Déploiement |
 | `tests/` | Tests automatiques (Flask et navigateur) |
@@ -106,7 +108,7 @@ avec de fausses données.
 ```bash
 python -m pytest tests -q                 # tests de la logique et des deux sites (sans réseau, sans clé)
 python -m playwright install chromium     # une seule fois, pour les tests de navigateur
-python -m pytest tests/e2e -q             # parcours réels dans Chromium : connexion, génération, historique, paiement
+python -m pytest tests/e2e -q             # parcours réels dans Chromium : connexion, génération, historique, paiement, application installable
 ```
 
 Les tests ne contactent jamais TheSportsDB, PayDunya, Anthropic ni un serveur d'e-mail : tout est simulé. Les tests
@@ -204,6 +206,47 @@ Quand PayDunya active les cartes internationales (ou un pays de plus) :
 1. Ouvrir une vraie page de paiement PayDunya (commencer un achat sur `/paiement`, sans le terminer) et vérifier que la
    carte (ou le nouveau pays) apparaît, pays « Autres » compris.
 2. Passer `CARDS_ENABLED = True` (ou compléter `PAYMENT_COUNTRIES`) dans `config.py`, lancer les tests, envoyer sur `main`.
+
+## Application installable (Android et iPhone)
+
+Le site des clients est une application web installable (PWA) : `pwa.py` fournit le manifeste (`/manifest.webmanifest`),
+le service worker (`/sw.js`) et la page `/hors-ligne` ; `static/js/pwa.js` enregistre le service worker et affiche
+l'invitation à installer ; `static/icons/` contient les icônes. Le site de paiement n'est pas concerné.
+
+- **Android (Chrome, Samsung Internet)** : l'espace client (et le pied de page des pages publiques) propose un bouton « Installer
+  l'application ». L'icône arrive sur l'écran d'accueil et le site s'ouvre en plein écran, sans barre d'adresse. Sur
+  ordinateur, le site n'ajoute rien : Chrome et Edge gardent leur propre icône d'installation dans la barre d'adresse.
+- **iPhone, iPad (Safari)** : Apple n'a pas de bouton d'installation ; l'invitation explique le geste (Partager, puis
+  « Sur l'écran d'accueil »). Les autres navigateurs d'iOS (Chrome, Firefox, Edge) n'ont pas ce menu : aucune invitation.
+- **« Plus tard »** masque l'invitation pour de bon sur cet appareil (`localStorage`, clé `tev-install-masque`) ; elle ne
+  s'affiche jamais quand le site est déjà ouvert comme une application.
+- **Sans connexion** : le téléphone affiche « Pas de connexion » avec un bouton « Réessayer ». Le service worker ne garde
+  **que** cette page et ses fichiers (style, polices, icône) : jamais une page de l'espace client ni une réponse de
+  l'API (données privées, téléphone parfois prêté). Tout le reste passe par le réseau, comme sans service worker.
+- Le lancement de l'application ouvre `/login` : un client connecté est redirigé vers son espace, les autres voient la
+  connexion. Si un fichier gardé change (style, icône), le nom du cache change : l'ancien est supprimé à l'activation.
+- Les icônes sont générées à partir du logo par `python scripts/make_icons.py` (Playwright) et versionnées dans Git ;
+  à relancer seulement si le logo change.
+- Vérifier : Chrome > outils de développement > Application > Manifest (« Installability »), ou les tests navigateur
+  (`TestApplication`), qui interrogent Chromium comme le fait Chrome avant de proposer l'installation.
+
+### Version Google Play (pas encore faite)
+
+La version Play sera un habillage de ce site (Trusted Web Activity), construit avec PWABuilder ou Bubblewrap, pas une
+seconde application à maintenir. À vérifier au moment de publier, les règles de Google changent :
+
+- Compte développeur Google Play (25 $ une fois, pièce d'identité). Un compte personnel doit d'abord faire un test fermé
+  avec au moins 12 testeurs pendant 14 jours ; compter 3 à 4 semaines au total, examen compris.
+- `/.well-known/assetlinks.json` à ajouter au site, avec l'empreinte de la clé de signature fournie par Google Play, pour
+  que l'application s'ouvre sans barre d'adresse ; ainsi qu'une page de politique de confidentialité.
+- **Paiement** : une application qui vend des abonnements numériques doit passer par Google Play Billing et ne doit pas
+  renvoyer vers un paiement extérieur. La version Play ne devra donc proposer ni « S'abonner » ni lien vers le site de
+  paiement : seulement la connexion de clients qui ont déjà acheté sur le site.
+- **Jeux d'argent** : les pronostics ne sont pas nommés dans la politique de Google, mais ce qui « facilite » les paris est
+  encadré. Zone grise : risque de refus, voire de suspension du compte. Poser la question au support de la politique Play
+  avant d'investir du temps.
+- Une application qui n'est qu'un site peut être refusée pour manque de fonctions propres : ajouter des notifications
+  (nouveaux combinés, abonnement bientôt terminé) réduit ce risque.
 
 ## Dépannage
 

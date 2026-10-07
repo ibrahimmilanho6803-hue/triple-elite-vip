@@ -8,6 +8,9 @@
   </form>
 {% endblock %}
 
+{# L'invitation à installer l'application est en haut de l'espace client, pas dans le pied de page. #}
+{% block install %}{% endblock %}
+
 {% block main %}
 <div class="container" id="app" data-cache-minutes="{{ cache_minutes }}">
   <h1 class="sr-only">Mon espace Triple Elite VIP</h1>
@@ -16,6 +19,8 @@
     <p class="account__text">Abonnement actif jusqu’au <strong>{{ expires_label }}</strong> ({{ days_left }}).
       <a class="account__link" href="{{ renew_url }}">Renouveler</a></p>
   </div>
+
+  {% if pwa %}{% include "_installer.html" %}{% endif %}
 
   {% if renew_soon %}
   <div class="notice" role="status">

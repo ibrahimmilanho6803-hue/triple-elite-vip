@@ -114,7 +114,8 @@ def test_https_derriere_le_proxy_active_hsts(env):
 
 def test_aucun_script_ni_style_en_ligne_dans_les_pages(env):
     login(env.client)
-    pages = {path: env.client.get(path).get_data(as_text=True) for path in ("/", "/login", "/conditions", "/app", "/nope")}
+    pages = {path: env.client.get(path).get_data(as_text=True)
+             for path in ("/", "/login", "/conditions", "/app", "/hors-ligne", "/nope")}
     for path, html in pages.items():
         assert "<style" not in html, path
         assert not re.search(r"<script(?![^>]*\bsrc=)", html), path

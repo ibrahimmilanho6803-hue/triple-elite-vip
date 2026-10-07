@@ -146,6 +146,16 @@ def test_accueil_robots_et_sante(env):
     assert env.client.get("/introuvable").status_code == 404
 
 
+def test_le_site_de_paiement_n_est_pas_une_application_installable(env):
+    """Seul le site client est installable (pwa.py) : la page de paiement s'ouvre dans le navigateur, sans manifeste
+    ni service worker (qui, sur cette adresse, n'aurait aucune raison de s'occuper des paiements)."""
+    page = text(env.client.get("/paiement"))
+    for marker in ('rel="manifest"', "apple-touch-icon", "pwa.js", "data-install", "apple-mobile-web-app"):
+        assert marker not in page, marker
+    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne"):
+        assert env.client.get(path).status_code == 404, path
+
+
 # --------------------------------------------------------------------------
 # Création de la facture
 # --------------------------------------------------------------------------

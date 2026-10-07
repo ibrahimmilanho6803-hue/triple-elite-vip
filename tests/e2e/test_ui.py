@@ -8,6 +8,7 @@ un formulaire refusé par le navigateur (en-têtes Origin/Referer), une page qui
 un bouton qui ne réagit pas, une erreur JavaScript.
 """
 import re
+import time
 from datetime import timedelta
 from urllib.parse import quote
 
@@ -264,6 +265,196 @@ def test_espace_client_sans_debordement_sur_telephone(phone_page, site):
     phone_page.click("#tab-history")
     expect(phone_page.locator("#history-content")).to_be_visible()
     assert no_horizontal_overflow(phone_page)
+
+
+# ======================================================================================================
+# Application installable (site des clients)
+# ======================================================================================================
+
+# Ce que fait Chrome sur Android quand le site est installable : il annonce l'événement « beforeinstallprompt »,
+# que le site garde pour son propre bouton. Chromium sans écran ne le déclenche pas tout seul : on le simule.
+PROPOSITION_D_INSTALLER = """() => {
+    const event = new Event('beforeinstallprompt', { cancelable: true });
+    event.prompt = () => { window.__invitations = (window.__invitations || 0) + 1; return Promise.resolve(); };
+    event.userChoice = Promise.resolve({ outcome: 'accepted', platform: 'web' });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+}"""
+CACHES_DU_NAVIGATEUR = """async () => {
+    const out = {};
+    for (const name of await caches.keys()) {
+        const cache = await caches.open(name);
+        out[name] = (await cache.keys()).map(request => new URL(request.url).pathname + new URL(request.url).search);
+    }
+    return out;
+}"""
+CHROME_ANDROID = {
+    "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/126.0.0.0 Mobile Safari/537.36",
+    "viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
+SAFARI_IPHONE = {
+    "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                  "Version/17.5 Mobile/15E148 Safari/604.1",
+    "viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
+CHROME_IPHONE = dict(SAFARI_IPHONE, user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+                     "AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.6478.153 Mobile/15E148 Safari/604.1")
+
+
+def propose_install(page):
+    """Simule l'annonce « le site est installable » de Chrome sur Android. Renvoie True si le site a retenu
+    l'invitation (preventDefault) pour la présenter avec son propre bouton."""
+    return page.evaluate(PROPOSITION_D_INSTALLER)
+
+
+def wait_for(page, expression, what, seconds=15):
+    """Attend qu'une expression JavaScript devienne vraie. (page.wait_for_function passe par eval, que la politique
+    de sécurité du site interdit : d'où cette boucle.)"""
+    deadline = time.monotonic() + seconds
+    while not page.evaluate(expression):
+        assert time.monotonic() < deadline, f"Délai dépassé : {what}"
+        page.wait_for_timeout(100)
+
+
+def wait_for_service_worker(page):
+    """Le service worker est installé, activé et contrôle la page : le mode « hors connexion » est prêt."""
+    wait_for(page, "navigator.serviceWorker.controller !== null", "le service worker prend le contrôle de la page")
+
+
+def go_offline(page):
+    """Coupe le réseau du navigateur, service worker compris. Constaté avec Playwright : la coupure ne tient que pour la
+    prochaine requête du service worker ; on la renouvelle donc avant chaque navigation."""
+    page.context.set_offline(False)
+    page.context.set_offline(True)
+
+
+class TestApplication:
+    def test_chromium_juge_le_site_installable(self, page, site):
+        page.goto(site.url + "/login")
+        wait_for_service_worker(page)
+        cdp = page.context.new_cdp_session(page)
+        manifest = cdp.send("Page.getAppManifest")
+        assert manifest["url"].endswith("/manifest.webmanifest") and manifest["errors"] == []
+        # Les mêmes vérifications que Chrome fait avant de proposer « Installer » : manifeste, icônes, service worker.
+        assert cdp.send("Page.getInstallabilityErrors")["installabilityErrors"] == []
+
+    def test_le_service_worker_ne_garde_que_la_page_hors_connexion_apres_une_vraie_session(self, page, site):
+        log_in_and_generate(page, site)
+        wait_for_service_worker(page)
+        page.click("#tab-history")
+        expect(page.locator("#history-content")).to_be_visible()
+        caches = page.evaluate(CACHES_DU_NAVIGATEUR)
+        (name, files), = caches.items()                                       # un seul cache...
+        assert name.startswith("tev-")
+        assert files[0] == "/hors-ligne" and len(files) == 5, files           # ...avec la page, le style, l'icône, 2 polices
+        # Ni espace client, ni API, ni connexion : un téléphone peut être prêté, ces données restent chez le serveur.
+        assert not [path for path in files if path.startswith(("/app", "/api/", "/login", "/logout"))], files
+
+    def test_l_ancien_cache_est_supprime_a_l_activation_pas_ceux_des_autres(self, page, site):
+        page.add_init_script("""if (window.caches) {
+            caches.open('tev-ancien').then(cache => cache.put('/vieux', new Response('vieux')));
+            caches.open('autre-cache').then(cache => cache.put('/autre', new Response('autre')));
+        }""")
+        page.goto(site.url + "/login")
+        wait_for_service_worker(page)
+        names = sorted(page.evaluate(CACHES_DU_NAVIGATEUR))
+        assert "tev-ancien" not in names and "autre-cache" in names and len(names) == 2, names
+
+    def test_sans_connexion_la_page_hors_connexion_s_affiche_puis_reessayer_ramene_a_l_espace(self, page, site):
+        enter(page, site)
+        wait_for_service_worker(page)
+        for path in ("/app", "/conditions"):                                  # n'importe quelle page, pas seulement l'espace
+            go_offline(page)
+            page.goto(site.url + path)
+            expect(page.locator("h1")).to_have_text("Pas de connexion")
+        # Le style et les polices viennent du cache du service worker : sans réseau, il n'y a pas d'autre source.
+        expect(page.locator("body")).to_have_css("background-color", "rgb(10, 15, 44)")
+        families = page.evaluate("""async () => { await document.fonts.ready;
+            return [...document.fonts].filter(font => font.status === 'loaded').map(font => font.family.replaceAll('"', '')); }""")
+        assert {"Onest", "Big Shoulders Display"} <= set(families), families
+        expect(page.locator("body")).not_to_contain_text(EMAIL)               # rien de personnel dans la page gardée
+        page.context.set_offline(False)
+        page.get_by_role("link", name="Réessayer").click()
+        expect(page).to_have_url(re.compile(r"/app$"))
+        expect(page.locator("#app")).to_contain_text("Abonnement actif jusqu’au")
+
+    def test_le_bouton_installer_apparait_quand_le_navigateur_propose_l_installation(self, make_page, site):
+        page = make_page(**CHROME_ANDROID)
+        enter(page, site)
+        box = page.locator("[data-install]")
+        expect(box).to_be_hidden()                                            # rien tant que le navigateur ne propose rien
+        assert propose_install(page) is True                                  # l'invitation est gardée pour notre bouton
+        expect(box).to_be_visible()
+        expect(box.locator("[data-install-android]")).to_be_visible()
+        expect(box.locator("[data-install-ios]")).to_be_hidden()
+        assert box.bounding_box()["y"] < page.locator(".tabs").bounding_box()["y"]       # en haut de l'espace client
+        page.get_by_role("button", name="Installer l’application").click()
+        wait_for(page, "window.__invitations === 1", "l'invitation du navigateur est présentée")
+        expect(box).to_be_hidden()
+
+    def test_sur_ordinateur_le_navigateur_garde_sa_propre_invitation(self, page, site):
+        enter(page, site)
+        assert propose_install(page) is False                                 # le site n'y touche pas (icône de la barre d'adresse)
+        expect(page.locator("[data-install]")).to_be_hidden()
+
+    def test_l_invitation_se_montre_aussi_sur_les_pages_publiques(self, make_page, site):
+        page = make_page(**CHROME_ANDROID)
+        for path in ("/", "/login"):
+            page.goto(site.url + path)
+            assert propose_install(page) is True
+            expect(page.locator("[data-install]")).to_be_visible()
+            expect(page.get_by_role("button", name="Installer l’application")).to_be_visible()
+
+    def test_plus_tard_masque_l_invitation_aux_visites_suivantes(self, make_page, site):
+        page = make_page(**CHROME_ANDROID)
+        enter(page, site)
+        propose_install(page)
+        page.get_by_role("button", name="Plus tard").click()
+        expect(page.locator("[data-install]")).to_be_hidden()
+        for path in ("/app", "/"):
+            page.goto(site.url + path)
+            assert propose_install(page) is False                             # le site laisse alors faire le navigateur
+            expect(page.locator("[data-install]")).to_be_hidden()
+
+    @pytest.mark.parametrize("script", [
+        "Object.defineProperty(navigator, 'standalone', { value: true })",                      # iPhone : ajouté à l'écran d'accueil
+        """const reel = window.matchMedia.bind(window);
+           window.matchMedia = query => query.includes('display-mode: standalone')
+               ? { matches: true, media: query, addEventListener() {}, removeEventListener() {} } : reel(query);""",
+    ], ids=["ios-ecran-d-accueil", "android-application-installee"])
+    def test_une_application_deja_installee_ne_propose_pas_de_l_installer(self, make_page, site, script):
+        page = make_page(**CHROME_ANDROID)
+        page.add_init_script(script)
+        enter(page, site)
+        assert propose_install(page) is False
+        expect(page.locator("[data-install]")).to_be_hidden()
+
+    def test_sur_iphone_l_invitation_explique_le_geste_de_safari(self, make_page, site):
+        page = make_page(**SAFARI_IPHONE)
+        enter(page, site)
+        box = page.locator("[data-install]")
+        expect(box).to_be_visible()
+        expect(box.locator("[data-install-ios]")).to_contain_text("Partager")
+        expect(box.locator("[data-install-ios]")).to_contain_text("Sur l’écran d’accueil")
+        expect(box.locator("[data-install-android]")).to_be_hidden()
+        expect(box.locator("[data-install-button]")).to_be_hidden()           # Safari n'a pas de bouton d'installation
+        page.get_by_role("button", name="Plus tard").click()
+        expect(box).to_be_hidden()
+
+    def test_dans_chrome_sur_iphone_l_invitation_ne_promet_rien(self, make_page, site):
+        page = make_page(**CHROME_IPHONE)                                     # menu différent de Safari : rien à expliquer
+        enter(page, site)
+        expect(page.locator("[data-install]")).to_be_hidden()
+
+    @pytest.mark.parametrize("path", ["/", "/login", "/app"])
+    def test_l_invitation_ne_fait_pas_deborder_la_page_sur_telephone(self, make_page, site, path):
+        page = make_page(**CHROME_ANDROID)
+        if path == "/app":
+            enter(page, site)
+        else:
+            page.goto(site.url + path)
+        propose_install(page)
+        expect(page.locator("[data-install]")).to_be_visible()
+        assert no_horizontal_overflow(page)
 
 
 # ======================================================================================================

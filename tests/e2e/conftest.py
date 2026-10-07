@@ -4,6 +4,7 @@ par test, et une page qui échoue au moindre message d'erreur du navigateur (Jav
 Installation, une seule fois : python -m pip install playwright && python -m playwright install chromium
 """
 import contextlib
+import os
 
 import pytest
 
@@ -14,6 +15,9 @@ from site_fakes import make_pipeline
 @pytest.fixture(scope="session")
 def browser():
     sync_api = pytest.importorskip("playwright.sync_api", reason="Playwright n'est pas installé")
+    # Sans ce réglage (lu au lancement de Playwright), « hors connexion » ne s'applique pas aux requêtes d'un service
+    # worker : le test du mode sans réseau (TestApplication) verrait le site répondre alors que le réseau est « coupé ».
+    os.environ.setdefault("PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS", "1")
     with sync_api.sync_playwright() as playwright:
         try:
             chromium = playwright.chromium.launch()
@@ -90,6 +94,30 @@ def phone_page(browser):
     yield page
     ctx.close()
     check_no_problems(problems)
+
+
+@pytest.fixture
+def make_page(browser):
+    """Fabrique de pages aux réglages particuliers (navigateur d'iPhone, application déjà installée...) :
+    `make_page(user_agent=...)`. Chacune est surveillée comme `page` et fermée en fin de test."""
+    contexts, watched = [], []
+
+    def make(**options):
+        options.setdefault("locale", "fr-FR")
+        options.setdefault("timezone_id", "Europe/Paris")
+        options.setdefault("viewport", DESKTOP)
+        context = browser.new_context(**options)
+        context.set_default_timeout(15_000)
+        page = context.new_page()
+        watched.append(watch(page))
+        contexts.append(context)
+        return page
+
+    yield make
+    for context in contexts:
+        context.close()
+    for problems in watched:
+        check_no_problems(problems)
 
 
 @pytest.fixture
