@@ -190,12 +190,20 @@ class BrevoTransport:
                              transient=response.status_code >= 500 or response.status_code == 429)
 
 
+def clean_app_password(value):
+    """Un mot de passe d'application Google s'affiche en quatre blocs de quatre lettres séparés par des espaces,
+    parfois insécables. Collé tel quel dans Render, il ferait échouer la connexion (une espace insécable plante
+    même l'envoi avant d'atteindre Gmail) et le client ne recevrait pas sa clé. On retire donc toute espace :
+    le mot de passe lui-même n'en contient jamais."""
+    return "".join(str(value or "").split())
+
+
 def default_transport():
     """Transport selon l'environnement, ou None si l'envoi n'est pas configuré."""
-    brevo = os.environ.get("BREVO_API_KEY")
+    brevo = (os.environ.get("BREVO_API_KEY") or "").strip()
     if brevo:
         return BrevoTransport(brevo, sender_address())
-    password = os.environ.get("GMAIL_MDP")
+    password = clean_app_password(os.environ.get("GMAIL_MDP"))
     if password:
         return SmtpTransport(sender_address(), password)
     return None

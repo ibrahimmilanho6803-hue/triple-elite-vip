@@ -140,6 +140,36 @@ def test_choix_du_transport_selon_l_environnement(monkeypatch):
     assert email_sender.sender_address() == "autre@gmail.com"
 
 
+@pytest.mark.parametrize("saisi", [
+    "abcd efgh ijkl mnop",              # tel que Google l'affiche
+    "abcd efgh ijkl mnop",   # espaces insécables, fréquentes après un copier-coller
+    "  abcdefghijklmnop \n",            # espaces et retour à la ligne autour
+    "abcdefghijklmnop",                 # déjà propre
+])
+def test_mot_de_passe_d_application_colle_avec_des_espaces(monkeypatch, saisi):
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
+    monkeypatch.setenv("GMAIL_MDP", saisi)
+    transport = email_sender.default_transport()
+    assert isinstance(transport, SmtpTransport) and transport.password == "abcdefghijklmnop"
+    assert transport.password.isascii()          # sinon smtplib plante au moment de s'identifier
+
+
+def test_mot_de_passe_vide_ou_blanc_equivaut_a_non_configure(monkeypatch):
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
+    for vide in ("", "   ", " \n"):
+        monkeypatch.setenv("GMAIL_MDP", vide)
+        assert email_sender.default_transport() is None
+
+
+def test_cle_brevo_avec_espaces_autour(monkeypatch):
+    monkeypatch.setenv("BREVO_API_KEY", "  cle-brevo\n")
+    transport = email_sender.default_transport()
+    assert isinstance(transport, BrevoTransport) and transport.api_key == "cle-brevo"
+    monkeypatch.setenv("BREVO_API_KEY", "   ")
+    monkeypatch.delenv("GMAIL_MDP", raising=False)
+    assert email_sender.default_transport() is None
+
+
 # --------------------------------------------------------------------------
 # SMTP
 # --------------------------------------------------------------------------
