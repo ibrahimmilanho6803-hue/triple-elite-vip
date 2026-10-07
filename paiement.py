@@ -114,8 +114,8 @@ def create_app(lm=None, paydunya=None, send_license=None, test_emails=None):
     app.extensions["tev"] = SimpleNamespace(lm=lm, paydunya=paydunya, limits=limits, send_license=send_license)
 
     if not paydunya.configured:
-        log.error("clés PayDunya absentes (PAYDUNYA_MASTER_KEY, PAYDUNYA_PRIVATE_KEY, PAYDUNYA_TOKEN) : "
-                  "aucun paiement ne sera possible")
+        log.error("clés PayDunya absentes (%s) : aucun paiement ne sera possible",
+                  getattr(paydunya, "expected_variables", "PAYDUNYA_MASTER_KEY, PAYDUNYA_PRIVATE_KEY, PAYDUNYA_TOKEN"))
     elif paydunya.test_mode:
         log.warning("MODE TEST PayDunya : paiements fictifs, réservés à %d adresse(s) de test (PAYDUNYA_TEST_EMAILS)",
                     len(allowed_test_emails))

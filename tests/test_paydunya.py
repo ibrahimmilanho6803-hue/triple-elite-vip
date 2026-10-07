@@ -212,3 +212,58 @@ def test_sans_le_prefixe_test_c_est_la_production(key):
 def test_jeton_de_test():
     assert is_test_token("test_abc123XYZ") and not is_test_token("abc123XYZ") and not is_test_token(None)
     assert not is_test_token("TEST_abc123") and not is_test_token("")
+
+
+# --------------------------------------------------------------------------
+# Interrupteur PAYDUNYA_MODE=test : variables de test séparées, clés de production intactes
+# --------------------------------------------------------------------------
+
+def set_keys(monkeypatch, **values):
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_le_mode_test_lit_les_variables_de_test_et_laisse_la_production_intacte(monkeypatch):
+    set_keys(monkeypatch, PAYDUNYA_MASTER_KEY="MASTER", PAYDUNYA_PRIVATE_KEY="live_private_X", PAYDUNYA_TOKEN="LIVETOKEN",
+             PAYDUNYA_TEST_PRIVATE_KEY="test_private_X", PAYDUNYA_TEST_TOKEN="TESTTOKEN")
+    live = PayDunya()
+    assert (live.mode, live.test_mode, live.private_key, live.token, live.master_key) == \
+        ("live", False, "live_private_X", "LIVETOKEN", "MASTER")
+    assert live.configured and live.api_base.endswith("/api/v1")
+
+    monkeypatch.setenv("PAYDUNYA_MODE", " Test ")                      # casse et espaces ignorés
+    test = PayDunya()
+    assert (test.mode, test.test_mode, test.private_key, test.token) == ("test", True, "test_private_X", "TESTTOKEN")
+    assert test.master_key == "MASTER" and test.configured             # la clé principale est commune sauf indication contraire
+    assert test.api_base.endswith("/sandbox-api/v1")
+
+    monkeypatch.setenv("PAYDUNYA_TEST_MASTER_KEY", "TESTMASTER")
+    assert PayDunya().master_key == "TESTMASTER"
+    assert PayDunya(mode="live").private_key == "live_private_X"        # le paramètre prime sur l'environnement
+
+
+def test_mode_test_sans_cles_de_test_n_utilise_jamais_la_production(monkeypatch):
+    set_keys(monkeypatch, PAYDUNYA_MASTER_KEY="MASTER", PAYDUNYA_PRIVATE_KEY="live_private_X", PAYDUNYA_TOKEN="LIVETOKEN",
+             PAYDUNYA_MODE="test")
+    pd = PayDunya()
+    assert pd.configured is False and pd.private_key is None and pd.token is None and pd.test_mode is True
+    assert "PAYDUNYA_TEST_PRIVATE_KEY" in pd.expected_variables
+    with pytest.raises(PayDunyaError, match="PAYDUNYA_TEST_PRIVATE_KEY"):
+        pd.create_invoice(**INVOICE)
+    assert "PAYDUNYA_PRIVATE_KEY" in PayDunya(mode="live").expected_variables
+
+
+@pytest.mark.parametrize("value", ["", "live", "prod", "production", "tset", "test2", None])
+def test_toute_autre_valeur_que_test_est_la_production(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("PAYDUNYA_MODE", raising=False)
+    else:
+        monkeypatch.setenv("PAYDUNYA_MODE", value)
+    pd = PayDunya()
+    assert pd.mode == "live" and pd.test_mode is False
+
+
+def test_les_parametres_explicites_priment_en_mode_test(monkeypatch):
+    set_keys(monkeypatch, PAYDUNYA_TEST_PRIVATE_KEY="test_private_ENV", PAYDUNYA_TEST_TOKEN="ENVTOKEN")
+    pd = PayDunya(mode="test", master_key="M", private_key="test_private_ARG", token="T")
+    assert (pd.master_key, pd.private_key, pd.token) == ("M", "test_private_ARG", "T")

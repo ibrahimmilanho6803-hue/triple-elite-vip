@@ -58,11 +58,23 @@ def _is_paydunya_url(url):
 
 
 class PayDunya:
-    def __init__(self, master_key=None, private_key=None, token=None, http=None, timeout=None):
+    def __init__(self, master_key=None, private_key=None, token=None, http=None, timeout=None, mode=None):
         # Les clés vivent UNIQUEMENT dans les variables d'environnement de Render, jamais dans le code.
-        self.master_key = os.environ.get("PAYDUNYA_MASTER_KEY") if master_key is None else master_key
-        self.private_key = os.environ.get("PAYDUNYA_PRIVATE_KEY") if private_key is None else private_key
-        self.token = os.environ.get("PAYDUNYA_TOKEN") if token is None else token
+        # PAYDUNYA_MODE=test fait lire les clés de TEST (PAYDUNYA_TEST_PRIVATE_KEY, PAYDUNYA_TEST_TOKEN et, si elle
+        # diffère, PAYDUNYA_TEST_MASTER_KEY) : les clés de production restent en place, intactes. Toute autre
+        # valeur (ou aucune) : production. Seule la clé principale peut être commune aux deux modes.
+        mode = os.environ.get("PAYDUNYA_MODE") if mode is None else mode
+        self.mode = "test" if (mode or "").strip().lower() == "test" else "live"
+        env = os.environ.get
+        if self.mode == "test":
+            self.master_key = master_key if master_key is not None else (
+                env("PAYDUNYA_TEST_MASTER_KEY") or env("PAYDUNYA_MASTER_KEY"))
+            self.private_key = env("PAYDUNYA_TEST_PRIVATE_KEY") if private_key is None else private_key
+            self.token = env("PAYDUNYA_TEST_TOKEN") if token is None else token
+        else:
+            self.master_key = env("PAYDUNYA_MASTER_KEY") if master_key is None else master_key
+            self.private_key = env("PAYDUNYA_PRIVATE_KEY") if private_key is None else private_key
+            self.token = env("PAYDUNYA_TOKEN") if token is None else token
         self.http = http or requests
         self.timeout = timeout or config.PAYDUNYA_TIMEOUT
 
@@ -71,9 +83,17 @@ class PayDunya:
         return bool(self.master_key and self.private_key and self.token)
 
     @property
+    def expected_variables(self):
+        """Variables d'environnement à définir, pour les messages d'erreur."""
+        if self.mode == "test":
+            return "PAYDUNYA_TEST_PRIVATE_KEY, PAYDUNYA_TEST_TOKEN et PAYDUNYA_MASTER_KEY (ou PAYDUNYA_TEST_MASTER_KEY)"
+        return "PAYDUNYA_MASTER_KEY, PAYDUNYA_PRIVATE_KEY, PAYDUNYA_TOKEN"
+
+    @property
     def test_mode(self):
-        """Vrai avec les clés de test de PayDunya : les paiements sont alors fictifs."""
-        return (self.private_key or "").strip().startswith("test_")
+        """Vrai en mode test (PAYDUNYA_MODE=test) ou dès que la clé privée est une clé de test : les paiements
+        sont alors fictifs."""
+        return self.mode == "test" or (self.private_key or "").strip().startswith("test_")
 
     @property
     def api_base(self):
@@ -89,7 +109,7 @@ class PayDunya:
 
     def _call(self, method, url, **kwargs):
         if not self.configured:
-            raise PayDunyaError("clés PayDunya absentes (PAYDUNYA_MASTER_KEY, PAYDUNYA_PRIVATE_KEY, PAYDUNYA_TOKEN)")
+            raise PayDunyaError(f"clés PayDunya absentes ({self.expected_variables})")
         try:
             response = self.http.request(method, url, headers=self._headers(), timeout=self.timeout, **kwargs)
         except requests.RequestException as exc:

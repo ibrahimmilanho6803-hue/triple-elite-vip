@@ -79,7 +79,7 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `ODDS_API_KEY` | dashboard | Facultatif : vraies cotes (the-odds-api.com). Sans elle, cotes estimées |
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
 | `PAYDUNYA_MASTER_KEY`, `PAYDUNYA_PRIVATE_KEY`, `PAYDUNYA_TOKEN` | paiement | Clés API PayDunya |
-| `PAYDUNYA_TEST_EMAILS` | paiement | Facultatif, **mode test seulement** : adresses autorisées à commander, séparées par des virgules (voir plus bas) |
+| `PAYDUNYA_MODE`, `PAYDUNYA_TEST_PRIVATE_KEY`, `PAYDUNYA_TEST_TOKEN`, `PAYDUNYA_TEST_MASTER_KEY`, `PAYDUNYA_TEST_EMAILS` | paiement | Facultatif, **mode test seulement** : interrupteur, clés de test et adresses autorisées à commander (voir « Essayer le paiement sans argent ») |
 | `LICENSE_SECRET_KEY` | paiement | Sel de fabrication des nouvelles clés (en changer n'invalide aucune clé existante) |
 | `GMAIL_EMAIL`, `GMAIL_MDP` | paiement | Envoi par Gmail (mot de passe d'application) |
 | `BREVO_API_KEY`, `EMAIL_SENDER` | paiement | Envoi par Brevo (prioritaire sur Gmail si définie) ; `EMAIL_SENDER` = adresse d'expéditeur validée |
@@ -152,21 +152,28 @@ la cible). Liste de contrôle :
 ## Essayer le paiement sans argent (mode test PayDunya)
 
 PayDunya donne à chaque application des clés de **test** (`test_private_…`) qui ne fonctionnent que sur son API « bac à
-sable » : les paiements y sont fictifs. Le site la reconnaît tout seul :
+sable » : les paiements y sont fictifs. Un interrupteur permet de les essayer **sans toucher aux clés de production** :
 
-1. PayDunya > **Intégrer** > ton application > **Afficher les clés API** > « Clés API de Test ». La clé principale
-   (Master Key) est en général la même qu'en production (si la section de test en affiche une autre, la remplacer aussi) ;
-   la **clé privée** et le **token** changent.
-2. Dans Render (service **paiement**), remplacer `PAYDUNYA_PRIVATE_KEY` et `PAYDUNYA_TOKEN` par les valeurs de test, et
-   définir `PAYDUNYA_TEST_EMAILS` avec **ton** adresse. Attendre la fin du redéploiement.
-3. Le site passe alors en mode test : appels vers l'API bac à sable, bandeau « Mode test » sur la page de paiement, et
-   **toute autre adresse que celles de `PAYDUNYA_TEST_EMAILS` est refusée** (sinon un visiteur obtiendrait une vraie
-   licence avec un faux paiement). `/health` affiche `"paydunya":"test"`.
+1. PayDunya > **Intégrer** > ton application > **Afficher les clés API** > section « Clés API de Test ».
+2. Dans Render (service **paiement**) > Environment, **ajouter** ces variables (les clés de production ne bougent pas) :
+
+   | Variable | Valeur |
+   | --- | --- |
+   | `PAYDUNYA_TEST_PRIVATE_KEY` | la clé privée de test (`test_private_…`) |
+   | `PAYDUNYA_TEST_TOKEN` | le token de test |
+   | `PAYDUNYA_TEST_EMAILS` | **ton** adresse (plusieurs : séparées par des virgules) |
+   | `PAYDUNYA_TEST_MASTER_KEY` | seulement si la clé principale de test diffère de celle de production |
+   | `PAYDUNYA_MODE` | `test` (à ajouter en dernier : c'est l'interrupteur) |
+
+3. Après le redéploiement, le site est en mode test : appels vers l'API bac à sable, bandeau « Mode test » sur la page de
+   paiement, et **toute autre adresse que celles de `PAYDUNYA_TEST_EMAILS` est refusée** (sinon un visiteur obtiendrait
+   une vraie licence avec un faux paiement). `/health` affiche `"paydunya":"test"`.
 4. PayDunya > Intégrer > **Clients fictifs** : créer un client de test, puis commander sur le site avec ton adresse et payer
    avec ce client sur la page de paiement du bac à sable. Vérifier : page de confirmation avec la clé, e-mail reçu,
    connexion au site avec l'e-mail et la clé.
-5. **Remettre les clés de production**, supprimer `PAYDUNYA_TEST_EMAILS`, et vérifier que `/health` affiche
-   `"paydunya":"live"` (une surveillance par mot-clé sur `"paydunya":"live"` prévient si un oubli laisse le site en test).
+5. **Revenir en production : supprimer `PAYDUNYA_MODE`** (les clés de production n'ont jamais bougé) ; supprimer aussi les
+   variables de test si l'on ne compte plus s'en servir. Vérifier que `/health` affiche `"paydunya":"live"` : une
+   surveillance par mot-clé sur `"paydunya":"live"` (UptimeRobot) prévient si un oubli laisse le site en test.
 
 La licence obtenue pendant l'essai est une vraie licence pour ton adresse ; elle peut être désactivée avec
 `python generate_keys.py`.
