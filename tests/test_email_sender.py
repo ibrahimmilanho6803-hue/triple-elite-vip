@@ -45,6 +45,33 @@ def test_message_rappelle_l_acces_immediat_et_la_renonciation(renewed):
         assert f"{config.SITE_URL}/conditions" in content
 
 
+@pytest.mark.parametrize("renewed", [False, True])
+def test_message_d_acces_offert_sans_rappel_de_renonciation(renewed):
+    """Licence offerte ou rétablie à la main : pas d'achat, donc rien à rappeler sur la rétractation (les conditions
+    restent accessibles)."""
+    message = build_message("client@exemple.com", "a1b2c3d4e5f60718", "", EXPIRES, renewed=renewed, granted=True)
+    text, html = bodies(message)
+    for content in (text, html):
+        assert "rétractation" not in content and "Merci" not in content and "immédiatement" not in content
+        assert "a1b2c3d4e5f60718" in content and "client@exemple.com" in content and "05/11/2026" in content
+        assert f"{config.SITE_URL}/login" in content and f"{config.SITE_URL}/conditions" in content
+        assert "garantie de gain" in content
+    expected = "Ton abonnement est prolongé." if renewed else "Voici ton accès à Triple Elite VIP."
+    assert expected in text and expected in html
+    assert message["Subject"] == ("Ton abonnement Triple Elite VIP est prolongé" if renewed
+                                  else "Ta clé d’accès Triple Elite VIP")
+
+
+def test_envoi_d_un_acces_offert_utilise_le_message_sans_renonciation():
+    transport = ScriptedTransport()
+    assert envoyer_licence("client@exemple.com", "cle", "", EXPIRES, transport=transport, granted=True) is True
+    text = transport.sent[0].get_body(("plain",)).get_content()
+    assert "Voici ton accès" in text and "rétractation" not in text
+    purchase = ScriptedTransport()                                      # un achat, lui, garde le rappel
+    assert envoyer_licence("client@exemple.com", "cle", "Mensuel", EXPIRES, transport=purchase) is True
+    assert "rétractation" in purchase.sent[0].get_body(("plain",)).get_content()
+
+
 def test_message_renouvellement_garde_la_cle():
     message = build_message("client@exemple.com", "a1b2c3d4e5f60718", "Annuel", EXPIRES, renewed=True)
     text, html = bodies(message)

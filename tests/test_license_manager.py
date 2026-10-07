@@ -213,6 +213,31 @@ def test_init_db_idempotent(path):
     assert len(second.list_licenses()) == 1
 
 
+def test_description_non_secrete_de_la_base(lm):
+    assert lm.describe_db() == "base ?, 0 licence(s)"              # SQLite de test : pas de nom de base PostgreSQL
+    lm.issue_license("a@b.com", 1)
+    lm.issue_license("c@d.com", 1)
+    lm.db_url = "postgres://utilisateur:motdepasse-secret@dpg-abc123-a.frankfurt-postgres.render.com/triple_elite_db"
+    description = lm.describe_db()
+    assert description == "base triple_elite_db, 2 licence(s)"
+    assert "motdepasse" not in description and "dpg-abc123" not in description and "utilisateur" not in description
+
+
+def test_le_demarrage_journalise_la_base_utilisee(path, caplog):
+    sqlite_license_manager(path).issue_license("a@b.com", 1)
+    caplog.set_level("INFO", logger="license_manager")
+    sqlite_license_manager(path)                                   # un nouveau démarrage
+    assert "Base de données des licences initialisée (base ?, 1 licence(s))" in caplog.text
+
+
+def test_description_de_la_base_injoignable_ne_plante_pas():
+    def broken():
+        raise OSError("connexion refusée")
+
+    lm = LicenseManager(db_url="postgres://u:p@h/ma_base", connect=broken)
+    assert lm.describe_db() == "base ma_base, nombre de licences illisible"
+
+
 def test_normalize_email():
     assert normalize_email("  A@B.Com ") == "a@b.com" and normalize_email(None) == ""
 
@@ -244,3 +269,64 @@ def test_cle_recopiee_avec_des_espaces_ou_en_majuscules(lm):
     assert lm.check_login("a@b.com", grouped)["ok"] is True
     assert lm.check_login("a@b.com", f"\n {info['key']}\t")["ok"] is True
     assert lm.check_login("a@b.com", info["key"][:-1])["ok"] is False
+
+
+def test_check_login_donne_le_motif_exact_pour_les_journaux_seulement(lm):
+    info = lm.issue_license("a@b.com", 1)
+    unknown = lm.check_login("inconnu@b.com", info["key"])
+    short = lm.check_login("a@b.com", info["key"][:-1])
+    other = lm.check_login("a@b.com", "0000000000000000")
+    blank = lm.check_login("a@b.com", " ​ ")
+    assert unknown["detail"] == "e-mail inconnu" and blank["detail"] == "clé vide"
+    assert short["detail"] == "clé différente (15 caractères saisis, 16 attendus)"
+    assert other["detail"] == "clé différente (16 caractères saisis, 16 attendus)"
+    # Le visiteur lit toujours le même message, et le motif ne contient jamais la clé.
+    results = (unknown, short, other, blank)
+    assert {r["reason"] for r in results} == {"invalid"}
+    assert {r["message"] for r in results} == {"E-mail ou clé de licence incorrect."}
+    assert all(info["key"] not in r["detail"] for r in results)
+
+
+def test_cle_avec_caracteres_invisibles_acceptee(lm):
+    """Une copie depuis un e-mail ou une messagerie glisse parfois des caractères invisibles dans la clé."""
+    key = lm.issue_license("a@b.com", 1)["key"]
+    for typed in (f"{key[:8]}​{key[8:]}",               # espace de largeur nulle
+                  f"﻿{key}‎",                       # marque d'ordre des octets, marque de sens d'écriture
+                  f"{key[:8]} {key[8:]}",                # espace insécable
+                  f"{key[:4]}­{key[4:]}"):               # trait d'union conditionnel
+        assert lm.check_login("a@b.com", typed)["ok"] is True, repr(typed)
+
+
+def test_cle_avec_accents_ou_caracteres_exotiques_est_refusee_sans_planter(lm):
+    """hmac.compare_digest refuse les textes non ASCII : une clé accentuée donnait une erreur 500 au lieu d'un refus."""
+    lm.issue_license("a@b.com", 1)
+    for typed in ("clé-accentuée-é", "ÀÉÎÔÛ" * 4, "😀" * 8, "\ud800x", "\x00" * 16):
+        result = lm.check_login("a@b.com", typed)
+        assert result["ok"] is False and result["reason"] == "invalid", repr(typed)
+
+
+def test_cle_lue_avec_des_lettres_qui_ressemblent_a_des_chiffres(lm, path):
+    """La lettre O pour un zéro, I ou L pour un un : confusions courantes en recopiant une clé à la main."""
+    soon = str(license_manager._utcnow() + datetime.timedelta(days=5))
+    raw(path, "INSERT INTO licenses (email, key, created, expires, active) VALUES (?, ?, ?, ?, ?)",
+        ("a@b.com", "0a1b2c3d4e5f6071", "2026-01-01 00:00:00", soon, 1))
+    for typed in ("0a1b2c3d4e5f6071", "Oa1b2c3d4e5f6071", "0alb2c3d4e5f6O7I", "oa1b2c3d4e5f607L"):
+        assert lm.check_login("a@b.com", typed)["ok"] is True, typed
+    for typed in ("0a1b2c3d4e5f6072", "0a1b2c3d4e5f6O7x", "0a1b2c3d4e5f607"):
+        assert lm.check_login("a@b.com", typed)["ok"] is False, typed
+
+
+def test_lettres_ressemblantes_ignorees_pour_une_cle_ancienne_non_hexadecimale(lm, path):
+    soon = str(license_manager._utcnow() + datetime.timedelta(days=5))
+    raw(path, "INSERT INTO licenses (email, key, created, expires, active) VALUES (?, ?, ?, ?, ?)",
+        ("vieux@b.com", "Olive-Ancienne-Cle", "2026-01-01 00:00:00", soon, 1))
+    assert lm.check_login("vieux@b.com", " olive-ancienne-cle ")["ok"] is True
+    assert lm.check_login("vieux@b.com", "0live-ancienne-cle")["ok"] is False        # pas de lecture « magique » ici
+
+
+def test_cles_tolerantes_ne_rendent_pas_les_essais_gratuits(lm):
+    """Une clé presque juste (un caractère de trop ou de moins, un chiffre faux) reste refusée."""
+    key = lm.issue_license("a@b.com", 1)["key"]
+    wrong_digit = key[:-1] + ("0" if key[-1] != "0" else "2")
+    for typed in (key + "0", key[:-1], wrong_digit, key[::-1] if key[::-1] != key else key + "x"):
+        assert lm.check_login("a@b.com", typed)["ok"] is False, typed

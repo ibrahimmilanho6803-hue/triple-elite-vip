@@ -33,12 +33,19 @@ class FakeLicenses:
             return {"state": "expired", "expires": rec["expires"]}
         return {"state": "active", "expires": rec["expires"]}
 
+    @staticmethod
+    def _invalid(detail):
+        return {"ok": False, "reason": "invalid", "expires": None, "detail": detail,
+                "message": "E-mail ou clé de licence incorrect."}
+
     def check_login(self, email, key):
         if self.down:
             return {"ok": False, "reason": "unavailable", "expires": None, "message": "Service momentanément indisponible. Réessaie dans un instant."}
         rec = self._record(email)
-        if not rec or (key or "").strip().lower() != rec["key"]:
-            return {"ok": False, "reason": "invalid", "expires": None, "message": "E-mail ou clé de licence incorrect."}
+        if not rec:
+            return self._invalid("e-mail inconnu")
+        if (key or "").strip().lower() != rec["key"]:
+            return self._invalid("clé différente (essai)")
         if not rec["active"]:
             return {"ok": False, "reason": "inactive", "expires": rec["expires"], "message": "Licence désactivée. Contacte-nous : tripleelitevip@gmail.com"}
         if rec["expires"] < license_manager._utcnow():

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 from datetime import timedelta
@@ -141,6 +142,20 @@ def test_connexion_refusee_message_unique(env):
         assert "E-mail ou clé de licence incorrect." in response.get_data(as_text=True)
     assert env.client.get("/app").status_code == 302                    # toujours pas connecté
     assert login(env.client, email="", key="").status_code == 400
+
+
+def test_le_motif_du_refus_n_est_ecrit_que_dans_les_journaux(env, caplog):
+    """Pour comprendre une connexion refusée (e-mail inconnu ? clé différente ?), sans rien révéler au visiteur."""
+    caplog.set_level(logging.INFO, logger="dashboard")
+    wrong_key = login(env.client, key="0000000000000000")
+    unknown = login(env.client, email="inconnu@exemple.com")
+    assert "clé différente" in caplog.text and "e-mail inconnu" in caplog.text
+    assert "client@exemple.com" not in caplog.text and "inconnu@exemple.com" not in caplog.text      # adresses masquées
+    assert KEY not in caplog.text and "0000000000000000" not in caplog.text                          # jamais une clé
+    for response in (wrong_key, unknown):
+        page = response.get_data(as_text=True)
+        assert "E-mail ou clé de licence incorrect." in page
+        assert "clé différente" not in page and "e-mail inconnu" not in page
 
 
 def test_le_message_d_erreur_est_echappe(env):

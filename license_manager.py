@@ -9,8 +9,10 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 import time
+import unicodedata
 from contextlib import contextmanager
 
 import psycopg2
@@ -36,6 +38,29 @@ def duration_days(months):
     """Durée d'un abonnement en jours : 1 mois = 30 jours, 12 mois = 365 jours (une vraie année)."""
     months = max(0, int(months))
     return round(months * YEAR_DAYS / 12)
+
+
+# Une clé fabriquée ici ne contient que des chiffres et les lettres a à f. Recopiée à la main, elle se fait souvent
+# lire de travers : un zéro pris pour la lettre O, un un pour un I ou un L. Ces lettres ne peuvent pas faire partie
+# d'une vraie clé : on les lit comme les chiffres qu'elles imitent. Sans conséquence sur la sécurité : une clé garde
+# plus de 60 bits d'imprévisibilité et les essais sont comptés par e-mail.
+_HEX_KEY = re.compile(r"[0-9a-f]+")
+_LOOKALIKES = str.maketrans({"o": "0", "l": "1", "i": "1"})
+
+
+def clean_key(value):
+    """Clé telle que saisie, sans ce qu'une copie ou un clavier de téléphone y glisse : espaces (y compris
+    insécables), caractères invisibles (espace de largeur nulle, marques de sens d'écriture...) et majuscules."""
+    return "".join(c for c in str(value or "") if not c.isspace() and unicodedata.category(c) != "Cf").lower()
+
+
+def keys_match(stored, provided):
+    """La clé saisie est-elle celle de la licence ? Comparaison à temps constant, qui ne plante jamais
+    (hmac.compare_digest refuse les textes accentués : on compare des octets)."""
+    stored, provided = clean_key(stored), clean_key(provided)
+    if _HEX_KEY.fullmatch(stored):
+        provided = provided.translate(_LOOKALIKES)
+    return hmac.compare_digest(stored.encode("utf-8", "replace"), provided.encode("utf-8", "replace"))
 
 
 class LicenseManager:
@@ -97,9 +122,26 @@ class LicenseManager:
                         conn.commit()
                     except Exception:
                         conn.rollback()      # colonne déjà présente
-            log.info("Base de données des licences initialisée")
+            log.info("Base de données des licences initialisée (%s)", self.describe_db())
         except Exception as e:
             log.error("Base de données des licences indisponible : %s", e)
+
+    def describe_db(self):
+        """Repère NON secret de la base utilisée : son nom et le nombre de licences (jamais l'adresse ni le mot de
+        passe). Sert à vérifier d'un coup d'œil que le site client et le service de paiement lisent la même base :
+        s'ils en lisaient deux, un client aurait payé sans pouvoir se connecter."""
+        try:
+            name = psycopg2.extensions.parse_dsn(self.db_url or "").get("dbname") or "?"
+        except Exception:
+            name = "?"
+        try:
+            with self._db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM licenses")
+                count = cursor.fetchone()[0]
+        except Exception:
+            return f"base {name}, nombre de licences illisible"
+        return f"base {name}, {count} licence(s)"
 
     # ------------------------------------------------------------------
     # Licences
@@ -187,12 +229,21 @@ class LicenseManager:
             return {"state": "expired", "expires": expires_at}
         return {"state": "active", "expires": expires_at}
 
+    @staticmethod
+    def _invalid(detail):
+        return {"ok": False, "reason": "invalid", "expires": None, "detail": detail,
+                "message": "E-mail ou clé de licence incorrect."}
+
     def check_login(self, email, license_key):
         """Connexion. Renvoie {"ok": bool, "reason": ..., "message": str, "expires": datetime | None}.
 
-        reason : "ok" | "invalid" (e-mail inconnu OU mauvaise clé : on ne distingue pas)
+        reason : "ok" | "invalid" (e-mail inconnu OU mauvaise clé : le visiteur ne le sait pas)
         | "inactive" | "expired" (seulement quand la clé fournie est la bonne, pour ne rien
         révéler sur un compte) | "unavailable" (base de données injoignable).
+
+        Pour "invalid", "detail" donne le motif exact (e-mail inconnu, clé vide, clé différente) : il est
+        réservé aux journaux du serveur, jamais à afficher au visiteur (le message, lui, est toujours le même).
+        La clé tolère espaces, majuscules, caractères invisibles et lettres ressemblant à 0 ou 1 (voir keys_match).
         """
         try:
             row = self._fetch_license(email)
@@ -200,10 +251,13 @@ class LicenseManager:
             log.error("vérification de licence impossible : %s", e)
             return {"ok": False, "reason": "unavailable", "expires": None,
                     "message": "Service momentanément indisponible. Réessaie dans un instant."}
-        provided = "".join((license_key or "").split()).lower()      # tolère espaces et majuscules (clé recopiée)
-        if not row or not provided or not hmac.compare_digest(str(row[0]).strip().lower(), provided):
-            return {"ok": False, "reason": "invalid", "expires": None,
-                    "message": "E-mail ou clé de licence incorrect."}
+        if not row:
+            return self._invalid("e-mail inconnu")
+        provided = clean_key(license_key)
+        if not provided:
+            return self._invalid("clé vide")
+        if not keys_match(row[0], provided):
+            return self._invalid(f"clé différente ({len(provided)} caractères saisis, {len(clean_key(row[0]))} attendus)")
         _key, active, expires = row
         expires_at = self._parse_expires(expires)
         if not active:

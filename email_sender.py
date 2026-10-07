@@ -48,8 +48,10 @@ def _date_label(expires):
     return expires.strftime("%d/%m/%Y") if expires else None
 
 
-def build_message(destinataire, cle, plan, expires=None, renewed=False, expediteur=None):
-    """Message texte + HTML (UTF-8, accents compris). `renewed` : renouvellement d'une licence encore valide."""
+def build_message(destinataire, cle, plan, expires=None, renewed=False, expediteur=None, granted=False):
+    """Message texte + HTML (UTF-8, accents compris). `renewed` : renouvellement d'une licence encore valide.
+    `granted` : accès offert ou rétabli à la main (script de licences), sans achat : le rappel de la renonciation
+    à la rétractation n'a alors pas lieu d'être."""
     expediteur = expediteur or sender_address()
     until = _date_label(expires)
     login_url = f"{config.SITE_URL}/login"
@@ -58,30 +60,33 @@ def build_message(destinataire, cle, plan, expires=None, renewed=False, expedite
     until_label = typo("Abonnement actif jusqu'au" if renewed else "Valable jusqu'au")
     if renewed:
         subject = "Ton abonnement Triple Elite VIP est prolongé"
-        intro = "Merci ! Ton abonnement est prolongé."
+        intro = "Ton abonnement est prolongé." if granted else "Merci ! Ton abonnement est prolongé."
         key_note = typo("Ta clé de licence ne change pas : c'est celle que tu utilises déjà.")
     else:
         subject = typo("Ta clé d'accès Triple Elite VIP")
-        intro = f"Merci pour ton {plan_label} Triple Elite VIP !"
+        intro = "Voici ton accès à Triple Elite VIP." if granted else f"Merci pour ton {plan_label} Triple Elite VIP !"
         key_note = typo("Garde cet e-mail : tu en auras besoin pour te reconnecter.")
 
     # Rappel de l'accord donné à la case des conditions (accès immédiat, renonciation à la rétractation) :
-    # la loi demande qu'il soit confirmé sur un support durable, donc dans ce message.
+    # la loi demande qu'il soit confirmé sur un support durable, donc dans ce message. Pas pour un accès offert.
     conditions_url = f"{config.SITE_URL}/conditions"
     consent_note = typo("Conformément à ta demande, ton accès a été ouvert immédiatement : tu as reconnu qu'une fois "
                         "ta clé remise, tu renonces à ton droit de rétractation.")
+    legal_lines = [f"Conditions : {conditions_url}"] if granted else [consent_note, f"Conditions : {conditions_url}"]
 
     lines = ["Bonjour,", "", intro, "", f"E-mail : {destinataire}", f"Clé de licence : {cle}"]
     if until:
         lines.append(f"{until_label} : {until}")
     lines += ["", key_note, "", f"Pour te connecter : {login_url}", "",
-              consent_note, f"Conditions : {conditions_url}", "",
+              *legal_lines, "",
               "Rappel : nos pronostics sont des estimations statistiques, jamais une garantie de gain. "
               "Les paris sont réservés aux personnes majeures : ne mise que ce que tu peux te permettre de perdre.",
               "", f"Une question ? Réponds à cet e-mail ou écris à {config.SELLER_EMAIL}.", "", "Triple Elite VIP"]
     text = typo("\n".join(lines))
 
     e = escape
+    conditions_link = f'<a href="{e(conditions_url)}" style="color:#6a7298;">Voir les conditions</a>.'
+    legal_html = conditions_link if granted else f"{e(consent_note)} {conditions_link}"
     until_row = ""
     if until:
         until_row = (f'<p style="margin:14px 0 0;font-size:14px;color:#4a5278;">{e(until_label)} '
@@ -107,7 +112,7 @@ def build_message(destinataire, cle, plan, expires=None, renewed=False, expedite
       {until_row}
       <p style="margin:14px 0 24px;font-size:14px;line-height:1.5;color:#4a5278;">{e(key_note)}</p>
       <p style="margin:0 0 28px;"><a href="{e(login_url)}" style="display:inline-block;background:#e3b341;color:#0a0f2c;font-weight:bold;font-size:16px;text-decoration:none;padding:13px 26px;border-radius:4px;">Me connecter</a></p>
-      <p style="margin:0 0 12px;font-size:12px;line-height:1.5;color:#6a7298;">{e(consent_note)} <a href="{e(conditions_url)}" style="color:#6a7298;">Voir les conditions</a>.</p>
+      <p style="margin:0 0 12px;font-size:12px;line-height:1.5;color:#6a7298;">{legal_html}</p>
       <p style="margin:0;font-size:12px;line-height:1.5;color:#6a7298;">Nos pronostics sont des estimations statistiques, jamais une garantie de gain. Les paris sont réservés aux personnes majeures : ne mise que ce que tu peux te permettre de perdre.</p>
       <p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:#6a7298;">Une question ? Réponds à cet e-mail ou écris à <a href="mailto:{e(config.SELLER_EMAIL)}" style="color:#6a7298;">{e(config.SELLER_EMAIL)}</a>.</p>
     </td></tr>
@@ -214,8 +219,9 @@ def default_transport():
 # --------------------------------------------------------------------------
 
 def envoyer_licence(destinataire, cle, plan, expires=None, renewed=False, *, transport=None, attempts=None,
-                    sleep=time.sleep):
-    """Envoie la clé. Renvoie True si l'e-mail est parti, False sinon (toujours journalisé, jamais d'exception)."""
+                    sleep=time.sleep, granted=False):
+    """Envoie la clé. Renvoie True si l'e-mail est parti, False sinon (toujours journalisé, jamais d'exception).
+    `granted` : accès offert à la main, sans achat (voir build_message)."""
     transport = transport or default_transport()
     if transport is None:
         log.error("e-mail de licence NON envoyé à %s : ni GMAIL_MDP ni BREVO_API_KEY n'est défini",
@@ -223,7 +229,7 @@ def envoyer_licence(destinataire, cle, plan, expires=None, renewed=False, *, tra
         return False
     attempts = attempts or config.EMAIL_ATTEMPTS
     try:
-        message = build_message(destinataire, cle, plan, expires=expires, renewed=renewed)
+        message = build_message(destinataire, cle, plan, expires=expires, renewed=renewed, granted=granted)
     except Exception:
         log.exception("e-mail de licence : message invalide pour %s", mask_email(destinataire))
         return False

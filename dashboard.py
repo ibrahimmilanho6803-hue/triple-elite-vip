@@ -173,7 +173,9 @@ def create_app(lm=None, service=None, history_loader=None):
             return render_login(email=email, error=result["message"], status=503)
         if reason == "invalid":
             throttle.hit(email)
-            log.info("connexion refusée : %s", web.mask_email(email))
+            # Le motif exact (e-mail inconnu ou clé différente) reste dans les journaux : le visiteur, lui,
+            # voit toujours le même message, pour ne rien révéler sur les comptes existants.
+            log.info("connexion refusée : %s (%s)", web.mask_email(email), result.get("detail") or "motif non précisé")
             return render_login(email=email, error=result["message"], status=401)
         # Bonne clé, mais abonnement expiré ou désactivé : ce n'est pas une tentative d'intrusion.
         return render_login(email=email, error=result["message"], show_renew=(reason == "expired"), status=403)
