@@ -16,6 +16,9 @@ from site_fakes import EMAIL, KEY, FakeLicenses, make_pipeline, sample_history
 
 PAGES = ("/", "/login", "/conditions")          # pages publiques qui portent l'invitation et la déclaration de l'application
 THEME = re.compile(r'<meta name="theme-color" content="([^"]+)">')
+ASSET_LINKS = "/.well-known/assetlinks.json"
+FINGERPRINT = re.compile(r"[0-9A-F]{2}(:[0-9A-F]{2}){31}")      # SHA-256 : 32 octets en hexadécimal séparés par « : »
+ANDROID_PACKAGE = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")
 
 
 @pytest.fixture()
@@ -187,12 +190,13 @@ def test_la_page_hors_connexion_n_a_aucun_script_et_est_la_meme_pour_tout_le_mon
 
 
 def test_les_routes_de_l_application_ont_les_en_tetes_de_securite(env):
-    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne"):
+    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", ASSET_LINKS):
         headers = env.client.get(path).headers
         assert "script-src 'self'" in headers["Content-Security-Policy"] and "'unsafe-inline'" not in headers["Content-Security-Policy"]
         assert headers["X-Content-Type-Options"] == "nosniff", path
     assert env.client.get("/hors-ligne").headers["Cache-Control"] == "no-store"      # le navigateur ne la garde pas : le service worker, si
     assert env.client.get("/manifest.webmanifest").headers["Cache-Control"] == "public, max-age=3600"
+    assert env.client.get(ASSET_LINKS).headers["Cache-Control"] == "public, max-age=300"
 
 
 # --------------------------------------------------------------------------
@@ -234,5 +238,55 @@ def test_le_fichier_robots_ne_bloque_rien_de_ce_qu_il_faut_pour_installer_l_appl
     rules = [line.split(":", 1)[1].strip() for line in text(env.client.get("/robots.txt")).splitlines()
              if line.lower().startswith("disallow:")]
     assert rules                                                      # l'espace client et l'API restent bloqués
-    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/static/icons/icon-512.png"):
+    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/static/icons/icon-512.png", ASSET_LINKS):
         assert not any(path.startswith(rule) for rule in rules if rule), path
+
+
+# --------------------------------------------------------------------------
+# Application Android : fichier de liaison avec le site (Digital Asset Links)
+# --------------------------------------------------------------------------
+
+def asset_links(env):
+    response = env.client.get(ASSET_LINKS)
+    assert response.status_code == 200, "Android lit ce fichier sans redirection : il doit répondre 200 à cette adresse"
+    return json.loads(text(response))
+
+
+def test_le_fichier_de_liaison_android_declare_l_application_et_sa_cle(env):
+    response = env.client.get(ASSET_LINKS)
+    assert response.status_code == 200 and response.content_type == "application/json"
+    statements = asset_links(env)
+    assert len(statements) == 1
+    statement = statements[0]
+    assert statement["relation"] == ["delegate_permission/common.handle_all_urls"]
+    target = statement["target"]
+    assert target["namespace"] == "android_app" and target["package_name"] == config.ANDROID_PACKAGE
+    assert target["sha256_cert_fingerprints"] == list(config.ANDROID_CERT_FINGERPRINTS)
+    assert set(statement) == {"relation", "target"} and set(target) == {"namespace", "package_name", "sha256_cert_fingerprints"}
+
+
+def test_la_configuration_android_est_bien_formee(env):
+    # Une faute de frappe ici ne se verrait pas : Android ne reconnaîtrait pas l'application et afficherait une barre d'adresse.
+    assert ANDROID_PACKAGE.fullmatch(config.ANDROID_PACKAGE) and config.ANDROID_PACKAGE == "com.tripleelitevip.app"
+    assert config.ANDROID_CERT_FINGERPRINTS, "aucune empreinte : l'application s'ouvrirait avec une barre d'adresse"
+    assert len(set(config.ANDROID_CERT_FINGERPRINTS)) == len(config.ANDROID_CERT_FINGERPRINTS)
+    for fingerprint in config.ANDROID_CERT_FINGERPRINTS:
+        assert FINGERPRINT.fullmatch(fingerprint), fingerprint
+
+
+def test_le_fichier_de_liaison_range_les_empreintes_en_majuscules(env, monkeypatch):
+    monkeypatch.setattr(config, "ANDROID_CERT_FINGERPRINTS", ("9a:70:ff:f3:" + "01:" * 25 + "ac:b2:13", "AB:" * 31 + "CD"))
+    fingerprints = asset_links(env)[0]["target"]["sha256_cert_fingerprints"]
+    assert fingerprints == ["9A:70:FF:F3:" + "01:" * 25 + "AC:B2:13", "AB:" * 31 + "CD"]
+    assert all(FINGERPRINT.fullmatch(fingerprint) for fingerprint in fingerprints)
+
+
+def test_sans_empreinte_le_fichier_de_liaison_est_une_liste_vide_valide(env, monkeypatch):
+    monkeypatch.setattr(config, "ANDROID_CERT_FINGERPRINTS", ())
+    assert asset_links(env) == []                  # pas de déclaration : jamais une déclaration avec une clé vide
+
+
+def test_le_fichier_de_liaison_ne_depend_pas_du_visiteur(env):
+    anonymous = text(env.client.get(ASSET_LINKS))
+    assert text(member(env).get(ASSET_LINKS)) == anonymous
+    assert EMAIL not in anonymous and KEY not in anonymous

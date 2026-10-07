@@ -181,3 +181,14 @@ PRICE_YEARLY_FACTURE_FCFA = 39400    # ~60 EUR
 
 # --- Contact vendeur ---
 SELLER_EMAIL = "tripleelitevip@gmail.com"
+
+# --- Application Android (APK installé à la main, plus tard Google Play) ---
+# Le site publie ces informations dans /.well-known/assetlinks.json (voir pwa.py) : c'est ce fichier qui prouve à Android
+# que l'application et le site sont au même propriétaire, donc que l'application peut s'ouvrir sans barre d'adresse.
+# Une empreinte SHA-256 par clé de signature (la clé de l'APK distribué directement ; plus tard, celle de Google Play).
+# Une empreinte n'est pas un secret et ne permet de signer rien du tout : la clé elle-même (fichier .keystore) ne doit
+# jamais être dans ce dépôt.
+ANDROID_PACKAGE = "com.tripleelitevip.app"
+ANDROID_CERT_FINGERPRINTS = (
+    "9A:70:FF:F3:93:B9:30:85:6E:56:78:69:0D:1C:D6:DC:CF:37:B3:DC:28:62:CB:E2:96:3B:B5:F1:13:AC:B2:13",   # APK 1.0 (octobre 2026)
+)

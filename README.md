@@ -230,6 +230,39 @@ l'invitation à installer ; `static/icons/` contient les icônes. Le site de pai
 - Vérifier : Chrome > outils de développement > Application > Manifest (« Installability »), ou les tests navigateur
   (`TestApplication`), qui interrogent Chromium comme le fait Chrome avant de proposer l'installation.
 
+### Application Android (APK installé à la main, sans Play Store)
+
+L'APK est un habillage du site (Trusted Web Activity) : il affiche le site en ligne, en plein écran. Un changement de
+page, de texte ou de prix n'exige **aucun** nouvel APK ; seuls le nom, l'icône, les couleurs ou l'adresse de lancement
+en exigent un. Identifiant : `com.tripleelitevip.app`. Lancement : `/login`.
+
+- **Fabrication (octobre 2026)** : paquet généré sur pwabuilder.com (adresse du site, « Package for stores », « Other
+  Android »), qui livre un APK **non signé** (inutilisable tel quel) ; il a été signé avec `apksigner` (outil officiel d'Android)
+  et une clé créée avec `keytool`, valable jusqu'en 2054 (RSA 4096). La clé n'a transité ni par PWABuilder ni par une boutique.
+- **La clé de signature (fichier `.keystore`) et son mot de passe ne sont JAMAIS dans ce dépôt** : ils sont chez le
+  propriétaire, en deux exemplaires, hors de l'ordinateur de travail. Sans elle, il est impossible de publier une mise à jour
+  par-dessus l'application installée (les clients devraient la désinstaller puis la réinstaller) et de l'enregistrer
+  auprès de Google.
+- **Barre d'adresse** : l'application s'ouvre sans barre d'adresse si `/.well-known/assetlinks.json` (route de `pwa.py`)
+  contient l'empreinte SHA-256 de la clé. Elle est dans `config.ANDROID_CERT_FINGERPRINTS` (ce n'est pas un secret). Pour
+  une seconde clé (celle de Google Play, plus tard), **ajouter** son empreinte sans retirer l'ancienne. Google garde ce
+  fichier en mémoire : après une modification, la barre peut mettre de quelques minutes à quelques heures à disparaître.
+  Lire l'empreinte d'une clé : `keytool -list -v -keystore clé.keystore` (ligne SHA256).
+- **Refaire un APK** (autre icône, autre nom) : PWABuilder avec le même identifiant, « Version code » augmenté de 1, puis
+  `zipalign -c 4 fichier.apk` (doit répondre « Verification successful », sinon `zipalign -p 4 entrée sortie`) et
+  `apksigner sign --ks clé.keystore --ks-key-alias triple-elite-vip --out Triple-Elite-VIP.apk fichier.apk`,
+  puis `apksigner verify --verbose --print-certs Triple-Elite-VIP.apk` : l'empreinte affichée doit être celle de `config.py`.
+- **Installer sur un téléphone** : ouvrir le fichier `.apk` (reçu par le chat, WhatsApp, Telegram, câble USB, Drive), autoriser
+  « Installer des applications inconnues » pour l'application qui l'ouvre quand Android le demande. Play Protect peut
+  afficher un avertissement pour une application qui ne vient pas de Google Play : c'est normal ici.
+- **Paiement** : le paiement a lieu sur une autre adresse (site de paiement, puis PayDunya) : Android l'ouvre dans une fenêtre
+  Chrome par-dessus l'application, qu'on ferme pour revenir. Servir le paiement depuis le domaine principal supprimerait
+  cette étape (amélioration possible).
+- **Vérification des développeurs par Google** : l'installation directe d'APK n'est pas bloquée aujourd'hui. Google l'impose
+  depuis le 30 septembre 2026 dans quatre pays (Brésil, Indonésie, Singapour, Thaïlande) sur les appareils certifiés, et
+  prévoit le monde entier en 2027 : enregistrer alors l'application (identifiant + empreinte) dans la console Android
+  Developer (25 $, pièce d'identité) avant de distribuer l'APK à des clients. À revérifier : les règles évoluent.
+
 ### Version Google Play (pas encore faite)
 
 La version Play sera un habillage de ce site (Trusted Web Activity), construit avec PWABuilder ou Bubblewrap, pas une
@@ -237,8 +270,9 @@ seconde application à maintenir. À vérifier au moment de publier, les règles
 
 - Compte développeur Google Play (25 $ une fois, pièce d'identité). Un compte personnel doit d'abord faire un test fermé
   avec au moins 12 testeurs pendant 14 jours ; compter 3 à 4 semaines au total, examen compris.
-- `/.well-known/assetlinks.json` à ajouter au site, avec l'empreinte de la clé de signature fournie par Google Play, pour
-  que l'application s'ouvre sans barre d'adresse ; ainsi qu'une page de politique de confidentialité.
+- Ajouter à `config.ANDROID_CERT_FINGERPRINTS` l'empreinte de la clé de signature fournie par Google Play (« signature
+  d'application »), en gardant celle de l'APK direct, pour que l'application s'ouvre sans barre d'adresse ; ainsi qu'une page
+  de politique de confidentialité.
 - **Paiement** : une application qui vend des abonnements numériques doit passer par Google Play Billing et ne doit pas
   renvoyer vers un paiement extérieur. La version Play ne devra donc proposer ni « S'abonner » ni lien vers le site de
   paiement : seulement la connexion de clients qui ont déjà acheté sur le site.

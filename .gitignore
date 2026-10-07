@@ -4,6 +4,15 @@
 !.env.example
 config_secret.py
 
+# Clés de signature de l'application Android et paquets construits : jamais dans Git (voir README, « Application Android »)
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.apk
+*.aab
+signing-key-info.txt
+
 # Données locales : historique, cache, bases
 *.db
 results/

@@ -2,7 +2,8 @@
 
 Ce que cela apporte aux clients : une icône sur l'écran d'accueil, une ouverture en plein écran sans barre d'adresse,
 un bouton « Installer l'application » (Android) ou le geste à faire (iPhone), et une page claire quand le téléphone
-n'a plus de connexion. C'est aussi la base obligatoire d'une version Google Play (voir README).
+n'a plus de connexion. C'est aussi la base obligatoire de l'application Android (APK installé à la main, ou version
+Google Play) : voir README.
 
 Le service worker NE met en cache AUCUNE page de l'espace client ni aucune réponse de l'API (ce sont des données
 privées, et un téléphone peut être partagé) : seulement la page « hors connexion » et les fichiers dont elle a besoin.
@@ -61,12 +62,35 @@ def build_manifest():
     }
 
 
+def build_asset_links():
+    """Contenu de /.well-known/assetlinks.json (Digital Asset Links) : déclare que l'application Android du site, signée
+    par l'une des clés de config.ANDROID_CERT_FINGERPRINTS, peut ouvrir ses pages sans barre d'adresse. Liste vide tant
+    qu'aucune clé n'est enregistrée : l'application s'ouvre alors avec une barre d'adresse, sans rien casser."""
+    if not config.ANDROID_CERT_FINGERPRINTS:
+        return []
+    return [{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {
+            "namespace": "android_app",
+            "package_name": config.ANDROID_PACKAGE,
+            "sha256_cert_fingerprints": [fingerprint.upper() for fingerprint in config.ANDROID_CERT_FINGERPRINTS],
+        },
+    }]
+
+
 def install_pwa(app):
     @app.get("/manifest.webmanifest")
     def manifest():
         response = Response(json.dumps(build_manifest(), ensure_ascii=False, indent=2),
                             mimetype="application/manifest+json")
         response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
+
+    @app.get("/.well-known/assetlinks.json")
+    def asset_links():
+        # Google (et Chrome) lisent ce fichier à cette adresse exacte, sans redirection ; il ne contient rien de secret.
+        response = Response(json.dumps(build_asset_links(), indent=2), mimetype="application/json")
+        response.headers["Cache-Control"] = "public, max-age=300"
         return response
 
     @app.get("/sw.js")
