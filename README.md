@@ -116,7 +116,7 @@ Pour regarder le rendu : `python tests/e2e/harness.py captures` écrit des captu
 
 ```bash
 python main.py --save                        # génère les combinés sans passer par le site (--save : les ajoute à l'historique)
-python generate_keys.py                      # crée, prolonge ou désactive une licence à la main (cadeau, geste commercial)
+python generate_keys.py                      # crée, prolonge, désactive ou supprime une licence à la main (cadeau, geste commercial)
 python scripts/send_test_email.py moi@exemple.com   # vérifie que l'envoi d'e-mail fonctionne
 ```
 
@@ -124,6 +124,14 @@ python scripts/send_test_email.py moi@exemple.com   # vérifie que l'envoi d'e-m
 Après chaque création ou prolongation, `generate_keys.py` propose d'envoyer la clé par e-mail au client (réponse `o` pour
 accepter ; sans cela, rien ne part). Le message est celui d'un accès offert : il ne rappelle pas la renonciation à la
 rétractation d'un achat. À lancer dans le Shell du service de paiement, qui a `GMAIL_MDP`.
+
+Menu de `generate_keys.py` : `1` créer ou prolonger, `2` voir toutes les licences, `3` désactiver (la clé reste en base mais
+est refusée), `4` supprimer définitivement, `5` quitter. La suppression efface toutes les lignes d'un e-mail pour repartir de
+zéro (ensuite `1` recrée une licence neuve) : le script montre d'abord ce qui va disparaître et n'efface rien sans que le mot
+`supprimer` soit tapé en toutes lettres. Les commandes de paiement ne sont jamais touchées. Si deux lignes existent pour un
+même e-mail (reste d'anciennes versions, qui gardaient l'e-mail tel que saisi : `Client@…` et `client@…`), la liste (`2`) les
+marque `DOUBLON` et l'en-tête du menu l'indique (`2 licence(s) pour 1 e-mail(s) : DOUBLONS à supprimer`). La connexion au
+site n'en est plus gênée (la ligne dont la clé correspond décide), mais mieux vaut les nettoyer avec `4` puis `1`.
 
 ## Déploiement sur Render
 
@@ -178,7 +186,7 @@ sable » : les paiements y sont fictifs. Un interrupteur permet de les essayer *
    variables de test si l'on ne compte plus s'en servir. Vérifier que `/health` affiche `"paydunya":"live"` : une
    surveillance par mot-clé sur `"paydunya":"live"` (UptimeRobot) prévient si un oubli laisse le site en test.
 
-La licence obtenue pendant l'essai est une vraie licence pour ton adresse ; elle peut être désactivée avec
+La licence obtenue pendant l'essai est une vraie licence pour ton adresse ; elle peut être désactivée ou supprimée avec
 `python generate_keys.py`.
 
 ## Dépannage
@@ -192,7 +200,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | « Le paiement est momentanément indisponible » | Clés PayDunya absentes ou invalides, ou PayDunya en panne : logs du service de paiement (`facture PayDunya impossible`). `code '1001', 'The payin is not enabled'` : la case **Payin** de l'application est décochée chez PayDunya (Intégrer > ton application > Modifier > Services : cocher Payin ; Payout n'est pas utilisé) ; si elle est déjà cochée, le compte n'est peut-être pas encore validé : écrire au support PayDunya |
 | « Les paiements ne sont pas encore ouverts » | Le site est en mode test (clés de test) : remettre les clés de production, voir « Essayer le paiement sans argent » |
 | « Service momentanément indisponible » à la connexion | La base PostgreSQL est injoignable ou a expiré (offre gratuite) : Render > Postgres |
-| « E-mail ou clé de licence incorrect » alors que le client a bien sa clé | Le visiteur voit toujours ce même message ; le motif exact est dans les logs du service client : `connexion refusée : j***@… (motif)`. `e-mail inconnu` : aucune licence à cette adresse **dans la base de ce service** (faute de frappe dans l'adresse, ou les deux services ne pointent pas vers la même `DATABASE_URL` : au démarrage, chaque service écrit `Base de données des licences initialisée (base <nom>, N licence(s))`, et `python generate_keys.py` l'affiche en tête ; le nom doit être identique des deux côtés). `clé différente (N caractères saisis, 16 attendus)` : clé mal recopiée (le site accepte déjà espaces, majuscules, caractères invisibles, la lettre O pour 0 et I ou L pour 1). Vérifier avec `python generate_keys.py` puis `2` (liste des licences) depuis le Shell du service client, et renvoyer la clé par e-mail avec l'option proposée après `1` |
+| « E-mail ou clé de licence incorrect » alors que le client a bien sa clé | Le visiteur voit toujours ce même message ; le motif exact est dans les logs du service client : `connexion refusée : j***@… (motif)`. `e-mail inconnu` : aucune licence à cette adresse **dans la base de ce service** (faute de frappe dans l'adresse, ou les deux services ne pointent pas vers la même `DATABASE_URL` : au démarrage, chaque service écrit `Base de données des licences initialisée (base <nom>, N licence(s))`, et `python generate_keys.py` l'affiche en tête ; le nom doit être identique des deux côtés). `clé différente (N caractères saisis, 16 attendus)` : clé mal recopiée (le site accepte déjà espaces, majuscules, caractères invisibles, la lettre O pour 0 et I ou L pour 1). Vérifier avec `python generate_keys.py` puis `2` (liste des licences) depuis le Shell du service client, et renvoyer la clé par e-mail avec l'option proposée après `1`. `N lignes pour cet e-mail` à la fin du motif : doublons hérités (`Client@…` et `client@…`) ; la bonne clé fonctionne malgré tout, mais nettoyer avec `4` (supprimer) puis `1` (recréer) |
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
 | Pas assez de matchs à venir | Trêve internationale ou calendrier incomplet chez TheSportsDB ; les cinq championnats compensent en général. Réessayer plus tard |
 | Les cotes sont toutes précédées de « ≈ » | `ODDS_API_KEY` absente, ou quota de the-odds-api atteint : c'est normal, ce sont des cotes estimées |

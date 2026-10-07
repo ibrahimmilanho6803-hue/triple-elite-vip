@@ -1,11 +1,12 @@
 import datetime
+import logging
 import threading
 
 import pytest
 
 import config
 import license_manager
-from fakes import raw, sqlite_license_manager
+from fakes import insert_license, raw, sqlite_license_manager
 from license_manager import LicenseManager, normalize_email
 
 
@@ -133,6 +134,8 @@ def test_base_indisponible_ne_deconnecte_pas_et_ne_donne_pas_de_licence(path):
     with pytest.raises(OSError):
         lm.issue_license("a@b.com", 1)                                    # jamais de fausse licence
     assert lm.list_licenses() == [] and lm.deactivate_license("a@b.com") is False
+    with pytest.raises(OSError):
+        lm.delete_license("a@b.com")                                      # jamais « supprimé » sans réponse de la base
 
 
 # --------------------------------------------------------------------------
@@ -330,3 +333,158 @@ def test_cles_tolerantes_ne_rendent_pas_les_essais_gratuits(lm):
     wrong_digit = key[:-1] + ("0" if key[-1] != "0" else "2")
     for typed in (key + "0", key[:-1], wrong_digit, key[::-1] if key[::-1] != key else key + "x"):
         assert lm.check_login("a@b.com", typed)["ok"] is False, typed
+
+
+# --------------------------------------------------------------------------
+# Plusieurs lignes pour un même e-mail (casse différente) : doublons hérités d'anciennes versions
+# --------------------------------------------------------------------------
+
+STALE_EMAIL, STALE_KEY = "Client@Exemple.com", "f093e5942aa3a971"          # ligne désactivée, ancienne
+GOOD_EMAIL, GOOD_KEY = "client@exemple.com", "577a41809f7b6bdd"            # ligne active, la bonne
+
+
+def with_duplicates(path, stale_first):
+    """Les deux lignes, dans les deux ordres physiques possibles (la base ne garantit aucun ordre)."""
+    stale = (STALE_EMAIL, STALE_KEY, False)
+    good = (GOOD_EMAIL, GOOD_KEY, True)
+    for row in ((stale, good) if stale_first else (good, stale)):
+        insert_license(path, *row)
+
+
+@pytest.mark.parametrize("stale_first", [True, False])
+def test_doublon_la_ligne_desactivee_ne_bloque_pas_la_ligne_active(lm, path, stale_first):
+    with_duplicates(path, stale_first)
+    assert lm.check_login("client@exemple.com", GOOD_KEY)["ok"] is True
+    assert lm.check_login("  CLIENT@exemple.com ", GOOD_KEY.upper())["ok"] is True
+    assert lm.get_status("client@exemple.com")["state"] == "active"              # la session reste valable
+    assert lm.is_license_active("Client@Exemple.com") is True
+    assert lm.verify_license("client@exemple.com", GOOD_KEY) == (True, "Licence valide")
+
+
+@pytest.mark.parametrize("stale_first", [True, False])
+def test_doublon_l_ancienne_cle_reste_refusee_comme_desactivee(lm, path, stale_first):
+    with_duplicates(path, stale_first)
+    assert lm.check_login("client@exemple.com", STALE_KEY)["reason"] == "inactive"
+    wrong = lm.check_login("client@exemple.com", "0000000000000000")
+    assert wrong["reason"] == "invalid" and "2 lignes pour cet e-mail" in wrong["detail"]
+
+
+def test_doublon_la_meilleure_ligne_decide_de_l_etat(lm, path):
+    insert_license(path, STALE_EMAIL, STALE_KEY, False, days=500)           # désactivée
+    insert_license(path, GOOD_EMAIL, GOOD_KEY, True, days=-3)               # active mais expirée
+    assert lm.get_status("client@exemple.com")["state"] == "expired"        # plus parlant que « désactivée »
+    raw(path, "UPDATE licenses SET active = 0")
+    assert lm.get_status("client@exemple.com")["state"] == "inactive"
+    assert lm.is_license_active("client@exemple.com") is False
+
+
+def test_doublon_deux_lignes_actives_chaque_cle_ouvre_sa_ligne(lm, path):
+    insert_license(path, STALE_EMAIL, STALE_KEY, True, days=10)
+    insert_license(path, GOOD_EMAIL, GOOD_KEY, True, days=400)
+    assert lm.check_login("client@exemple.com", STALE_KEY)["ok"] is True
+    assert lm.check_login("client@exemple.com", GOOD_KEY)["ok"] is True
+    longest = lm.get_status("client@exemple.com")["expires"]
+    assert longest > license_manager._utcnow() + datetime.timedelta(days=399)       # la plus longue est retenue
+
+
+def test_doublon_une_cle_expiree_reste_refusee_meme_si_une_autre_ligne_est_active(lm, path):
+    insert_license(path, STALE_EMAIL, STALE_KEY, True, days=-4)
+    insert_license(path, GOOD_EMAIL, GOOD_KEY, True, days=300)
+    expired = lm.check_login("client@exemple.com", STALE_KEY)
+    assert expired["reason"] == "expired" and expired["ok"] is False
+    assert lm.check_login("client@exemple.com", GOOD_KEY)["ok"] is True
+
+
+@pytest.mark.parametrize("stale_first", [True, False])
+def test_doublon_le_renouvellement_prolonge_la_ligne_utilisable_et_garde_sa_cle(lm, path, stale_first):
+    with_duplicates(path, stale_first)
+    before = {r["key"]: r for r in lm.list_licenses()}
+    info = lm.issue_license("Client@Exemple.com", 1)
+    assert info["renewed"] is True and info["key"] == GOOD_KEY
+    after = {r["key"]: r for r in lm.list_licenses()}
+    assert after[GOOD_KEY]["expires"] != before[GOOD_KEY]["expires"]                 # prolongée de 30 jours
+    assert after[STALE_KEY] == before[STALE_KEY]                                     # l'autre ligne n'est pas touchée
+    assert lm.check_login("client@exemple.com", GOOD_KEY)["ok"] is True
+
+
+def test_doublon_sans_ligne_utilisable_la_plus_utile_recoit_la_nouvelle_cle(lm, path):
+    insert_license(path, STALE_EMAIL, STALE_KEY, False)                              # désactivée
+    insert_license(path, GOOD_EMAIL, GOOD_KEY, True, days=-5)                        # active mais expirée : c'est elle qu'on relance
+    info = lm.issue_license("client@exemple.com", 1)
+    assert info["renewed"] is False and info["key"] not in (STALE_KEY, GOOD_KEY)
+    assert lm.check_login("client@exemple.com", info["key"])["ok"] is True
+    assert lm.get_status("client@exemple.com")["state"] == "active"
+    assert lm.check_login("client@exemple.com", STALE_KEY)["reason"] == "inactive"   # l'ancienne clé désactivée reste refusée
+    assert lm.check_login("client@exemple.com", GOOD_KEY)["detail"].startswith("clé différente")    # remplacée
+    assert raw(path, "SELECT COUNT(*) FROM licenses WHERE active = 1")[0][0] == 1
+
+
+@pytest.mark.parametrize("stale_first", [True, False])
+def test_doublon_toutes_lignes_desactivees_une_seule_est_relancee(lm, path, stale_first):
+    rows = [(STALE_EMAIL, STALE_KEY), (GOOD_EMAIL, GOOD_KEY)]
+    for email, key in (rows if stale_first else rows[::-1]):
+        insert_license(path, email, key, False)
+    info = lm.issue_license("client@exemple.com", 1)
+    assert lm.check_login("client@exemple.com", info["key"])["ok"] is True
+    assert lm.get_status("client@exemple.com")["state"] == "active"
+    assert raw(path, "SELECT COUNT(*) FROM licenses WHERE active = 1")[0][0] == 1
+
+
+def test_suppression_efface_toutes_les_lignes_de_l_e_mail_et_seulement_elles(lm, path):
+    with_duplicates(path, True)
+    lm.issue_license("autre@exemple.com", 1)
+    assert lm.delete_license(" CLIENT@exemple.com ") == 2
+    assert [lic["email"] for lic in lm.list_licenses()] == ["autre@exemple.com"]
+    assert lm.check_login("client@exemple.com", GOOD_KEY)["detail"] == "e-mail inconnu"
+    assert lm.get_status("client@exemple.com")["state"] == "unknown"
+    assert lm.delete_license("client@exemple.com") == 0 and lm.delete_license("") == 0 and lm.delete_license(None) == 0
+    assert len(lm.list_licenses()) == 1                                              # l'autre client est intact
+    fresh = lm.issue_license("client@exemple.com", 1)                               # on repart de zéro
+    assert fresh["renewed"] is False and lm.check_login("client@exemple.com", fresh["key"])["ok"] is True
+    assert lm.check_login("client@exemple.com", STALE_KEY)["detail"].startswith("clé différente")
+
+
+def test_suppression_ne_touche_pas_aux_commandes_de_paiement(lm):
+    lm.create_pending_order("tok1", "client@exemple.com", "Mensuel", 1)
+    lm.issue_license("client@exemple.com", 1)
+    assert lm.delete_license("client@exemple.com") == 1
+    assert lm.get_pending_order("tok1")["email"] == "client@exemple.com"
+
+
+def test_suppression_signale_une_base_injoignable():
+    def broken():
+        raise OSError("connexion refusée")
+
+    lm = LicenseManager(db_url="x", connect=broken)
+    with pytest.raises(OSError):
+        lm.delete_license("a@b.com")                     # jamais « supprimé » quand la base ne répond pas
+
+
+def test_la_suppression_est_journalisee_sans_adresse_en_clair(lm, caplog):
+    lm.issue_license("client@exemple.com", 1)
+    caplog.set_level("INFO", logger="license_manager")
+    lm.delete_license("client@exemple.com")
+    assert "Licence supprimée pour c***@exemple.com (1 ligne(s))" in caplog.text
+    assert "client@exemple.com" not in caplog.text
+
+
+def test_les_doublons_sont_signales_a_la_description_et_au_demarrage(lm, path, caplog):
+    assert lm.duplicate_count() == 0
+    with_duplicates(path, True)
+    insert_license(path, "autre@exemple.com", "0123456789abcdef", True)
+    assert lm.duplicate_count() == 1
+    assert lm.describe_db() == "base ?, 3 licence(s) pour 2 e-mail(s) : DOUBLONS à supprimer"
+    caplog.set_level("INFO", logger="license_manager")
+    sqlite_license_manager(path)                                                     # redémarrage du service
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "1 ligne(s) de licence en double" in warnings[0].getMessage()
+    assert "generate_keys.py" in warnings[0].getMessage() and "exemple.com" not in caplog.text
+    lm.delete_license("client@exemple.com")
+    assert lm.duplicate_count() == 0 and lm.describe_db() == "base ?, 1 licence(s)"
+
+
+def test_le_renouvellement_previent_dans_les_journaux_quand_il_y_a_des_doublons(lm, path, caplog):
+    with_duplicates(path, True)
+    caplog.set_level("WARNING", logger="license_manager")
+    lm.issue_license("client@exemple.com", 1)
+    assert "2 lignes de licence pour c***@exemple.com" in caplog.text and "client@exemple.com" not in caplog.text

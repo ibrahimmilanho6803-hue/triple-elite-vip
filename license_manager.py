@@ -123,25 +123,47 @@ class LicenseManager:
                     except Exception:
                         conn.rollback()      # colonne déjà présente
             log.info("Base de données des licences initialisée (%s)", self.describe_db())
+            extra = self.duplicate_count()
+            if extra:
+                log.warning("%d ligne(s) de licence en double (même e-mail, majuscules différentes) : la connexion "
+                            "choisit la bonne ligne, mais mieux vaut supprimer les lignes en trop "
+                            "(python generate_keys.py, option 4).", extra)
         except Exception as e:
             log.error("Base de données des licences indisponible : %s", e)
+
+    def _license_counts(self):
+        """(nombre de lignes, nombre d'e-mails distincts à la casse près), ou None si la base est illisible."""
+        try:
+            with self._db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*), COUNT(DISTINCT LOWER(email)) FROM licenses")
+                rows, people = cursor.fetchone()
+            return int(rows), int(people)
+        except Exception:
+            return None
+
+    def duplicate_count(self):
+        """Nombre de lignes en trop : plusieurs lignes pour un même e-mail (à la casse près) ne devraient pas exister
+        (héritage d'anciennes versions, qui gardaient l'e-mail tel que saisi). 0 si tout est en ordre ou illisible."""
+        counts = self._license_counts()
+        return counts[0] - counts[1] if counts else 0
 
     def describe_db(self):
         """Repère NON secret de la base utilisée : son nom et le nombre de licences (jamais l'adresse ni le mot de
         passe). Sert à vérifier d'un coup d'œil que le site client et le service de paiement lisent la même base :
-        s'ils en lisaient deux, un client aurait payé sans pouvoir se connecter."""
+        s'ils en lisaient deux, un client aurait payé sans pouvoir se connecter. Signale aussi les doublons."""
         try:
             name = psycopg2.extensions.parse_dsn(self.db_url or "").get("dbname") or "?"
         except Exception:
             name = "?"
-        try:
-            with self._db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM licenses")
-                count = cursor.fetchone()[0]
-        except Exception:
+        counts = self._license_counts()
+        if counts is None:
             return f"base {name}, nombre de licences illisible"
-        return f"base {name}, {count} licence(s)"
+        rows, people = counts
+        text = f"base {name}, {rows} licence(s)"
+        if people < rows:
+            text += f" pour {people} e-mail(s) : DOUBLONS à supprimer"
+        return text
 
     # ------------------------------------------------------------------
     # Licences
@@ -162,6 +184,25 @@ class LicenseManager:
                 continue
         return datetime.datetime.min
 
+    @staticmethod
+    def _usable(row, now):
+        return bool(row["active"]) and row["expires"] >= now
+
+    def _rows_for(self, cursor, email):
+        """Les lignes d'un e-mail (à la casse près), la plus utile d'abord : licence utilisable, puis active mais
+        expirée, puis désactivée ; à égalité, celle qui court le plus longtemps.
+
+        Il ne devrait y en avoir qu'une. Des anciennes versions gardaient l'e-mail tel que saisi, d'où des lignes
+        « Ibrahim@… » et « ibrahim@… » côte à côte : lire « la » ligne au hasard donnait parfois la périmée, et la
+        bonne clé était refusée. Toute lecture passe donc par ce tri, jamais par un simple fetchone()."""
+        cursor.execute("SELECT email, key, expires, active FROM licenses WHERE LOWER(email) = %s",
+                       (normalize_email(email),))
+        now = _utcnow()
+        rows = [{"email": r[0], "key": r[1], "expires": self._parse_expires(r[2]), "active": bool(r[3])}
+                for r in cursor.fetchall()]
+        rows.sort(key=lambda r: (self._usable(r, now), r["active"], r["expires"], str(r["key"])), reverse=True)
+        return rows
+
     def issue_license(self, email, duration_months):
         """Crée ou renouvelle la licence d'un e-mail.
 
@@ -177,57 +218,53 @@ class LicenseManager:
         now = _utcnow()
         with self._db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT email, key, expires, active FROM licenses WHERE LOWER(email) = %s", (email,))
-            row = cursor.fetchone()
+            rows = self._rows_for(cursor, email)
+            best = rows[0] if rows else None                # la plus utile : c'est elle qu'on renouvelle
             renewed = False
             base, key = now, None
-            if row:
-                stored_email, stored_key, expires, active = row
-                current_end = self._parse_expires(expires)
-                if active and current_end > now:
-                    base, key, renewed = current_end, stored_key, True
+            if best and self._usable(best, now):
+                base, key, renewed = best["expires"], best["key"], True
             if key is None:
                 key = self._new_key(email)
             new_expiry = base + datetime.timedelta(days=duration_days(duration_months))
-            if row:
+            if best:
                 cursor.execute("UPDATE licenses SET key = %s, expires = %s, active = %s WHERE email = %s",
-                               (key, str(new_expiry), True, stored_email))
+                               (key, str(new_expiry), True, best["email"]))
             else:
                 cursor.execute("INSERT INTO licenses (email, key, created, expires, active) "
                                "VALUES (%s, %s, %s, %s, %s)", (email, key, str(now), str(new_expiry), True))
             conn.commit()
         log.info("Licence %s pour %s jusqu'au %s", "renouvelée" if renewed else "créée", mask_email(email), new_expiry)
+        if len(rows) > 1:
+            log.warning("%d lignes de licence pour %s : seule la plus utile a été mise à jour, supprime les autres "
+                        "(python generate_keys.py, option 4)", len(rows), mask_email(email))
         return {"key": key, "expires": new_expiry, "renewed": renewed}
 
     def generate_license(self, email, duration_months):
         """Comme issue_license(), en ne renvoyant que la clé (compatibilité)."""
         return self.issue_license(email, duration_months)["key"]
 
-    def _fetch_license(self, email):
+    def _fetch_licenses(self, email):
         with self._db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT key, active, expires FROM licenses WHERE LOWER(email) = %s",
-                           (normalize_email(email),))
-            return cursor.fetchone()
+            return self._rows_for(conn.cursor(), email)
 
     def get_status(self, email):
         """{"state": active | expired | inactive | unknown | error, "expires": datetime | None}."""
         if not normalize_email(email):
             return {"state": "unknown", "expires": None}
         try:
-            row = self._fetch_license(email)
+            rows = self._fetch_licenses(email)
         except Exception as e:
             log.error("vérification de licence impossible : %s", e)
             return {"state": "error", "expires": None}
-        if not row:
+        if not rows:
             return {"state": "unknown", "expires": None}
-        _key, active, expires = row
-        expires_at = self._parse_expires(expires)
-        if not active:
-            return {"state": "inactive", "expires": expires_at}
-        if expires_at < _utcnow():
-            return {"state": "expired", "expires": expires_at}
-        return {"state": "active", "expires": expires_at}
+        row = rows[0]
+        if not row["active"]:
+            return {"state": "inactive", "expires": row["expires"]}
+        if row["expires"] < _utcnow():
+            return {"state": "expired", "expires": row["expires"]}
+        return {"state": "active", "expires": row["expires"]}
 
     @staticmethod
     def _invalid(detail):
@@ -244,23 +281,30 @@ class LicenseManager:
         Pour "invalid", "detail" donne le motif exact (e-mail inconnu, clé vide, clé différente) : il est
         réservé aux journaux du serveur, jamais à afficher au visiteur (le message, lui, est toujours le même).
         La clé tolère espaces, majuscules, caractères invisibles et lettres ressemblant à 0 ou 1 (voir keys_match).
+
+        Si plusieurs lignes existent pour cet e-mail (doublons hérités), c'est la ligne dont la clé correspond qui
+        décide : une ligne périmée ou désactivée ne bloque jamais la bonne, et l'ancienne clé reste refusée.
         """
         try:
-            row = self._fetch_license(email)
+            rows = self._fetch_licenses(email)
         except Exception as e:
             log.error("vérification de licence impossible : %s", e)
             return {"ok": False, "reason": "unavailable", "expires": None,
                     "message": "Service momentanément indisponible. Réessaie dans un instant."}
-        if not row:
+        if not rows:
             return self._invalid("e-mail inconnu")
         provided = clean_key(license_key)
         if not provided:
             return self._invalid("clé vide")
-        if not keys_match(row[0], provided):
-            return self._invalid(f"clé différente ({len(provided)} caractères saisis, {len(clean_key(row[0]))} attendus)")
-        _key, active, expires = row
-        expires_at = self._parse_expires(expires)
-        if not active:
+        matching = [row for row in rows if keys_match(row["key"], provided)]      # toutes comparées, sans sortie anticipée
+        if not matching:
+            detail = f"clé différente ({len(provided)} caractères saisis, {len(clean_key(rows[0]['key']))} attendus)"
+            if len(rows) > 1:
+                detail += f", {len(rows)} lignes pour cet e-mail"
+            return self._invalid(detail)
+        row = matching[0]                                    # déjà triée : la plus utile parmi celles qui correspondent
+        expires_at = row["expires"]
+        if not row["active"]:
             return {"ok": False, "reason": "inactive", "expires": expires_at,
                     "message": f"Licence désactivée. Contacte-nous : {config.SELLER_EMAIL}"}
         if expires_at < _utcnow():
@@ -292,6 +336,21 @@ class LicenseManager:
         except Exception as e:
             log.error("désactivation impossible : %s", e)
             return False
+
+    def delete_license(self, email):
+        """Supprime DÉFINITIVEMENT les licences d'un e-mail : toutes les lignes, majuscules ou non. Renvoie le nombre
+        de lignes supprimées (0 : aucune trouvée). Les commandes de paiement, elles, sont conservées.
+        Lève une exception si la base est injoignable : l'appelant ne doit pas faire croire que c'est fait."""
+        email = normalize_email(email)
+        if not email:
+            return 0
+        with self._db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM licenses WHERE LOWER(email) = %s", (email,))
+            deleted = cursor.rowcount
+            conn.commit()
+        log.info("Licence supprimée pour %s (%d ligne(s))", mask_email(email), deleted)
+        return deleted
 
     def list_licenses(self):
         try:

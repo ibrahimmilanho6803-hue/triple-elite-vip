@@ -1,6 +1,8 @@
 """Base de licences de test : SQLite avec la même interface que psycopg2 (%s -> ?)."""
+import datetime
 import sqlite3
 
+import license_manager
 from license_manager import LicenseManager
 
 
@@ -52,3 +54,11 @@ def raw(path, sql, params=()):
         return rows
     finally:
         conn.close()
+
+
+def insert_license(path, email, key, active=True, days=1094):
+    """Ajoute une ligne de licence telle qu'une ancienne version ou un geste manuel aurait pu la laisser : sans passer
+    par LicenseManager, donc sans normaliser l'e-mail (« Client@… » à côté de « client@… » est un doublon réel)."""
+    expires = license_manager._utcnow() + datetime.timedelta(days=days)
+    raw(path, "INSERT INTO licenses (email, key, created, expires, active) VALUES (?, ?, ?, ?, ?)",
+        (email, key, "2026-10-07 10:00:00", str(expires), int(active)))
