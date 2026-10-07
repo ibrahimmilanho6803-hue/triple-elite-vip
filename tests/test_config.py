@@ -27,6 +27,13 @@ def test_fichier_env_absent(tmp_path):
     assert config.load_env_file(str(tmp_path / "inexistant.env")) == 0
 
 
+def test_moyens_de_paiement_annonces_sont_bien_formes():
+    countries = config.PAYMENT_COUNTRIES
+    assert isinstance(config.CARDS_ENABLED, bool)
+    assert countries and len(set(countries)) == len(countries)
+    assert all(name and name == name.strip() and "'" not in name for name in countries)    # apostrophe typographique
+
+
 def test_liste_d_adresses_de_test():
     assert config.parse_email_list(" A@x.com, b@y.com;C@Z.com  d@w.org ,, ") == {"a@x.com", "b@y.com", "c@z.com", "d@w.org"}
     assert config.parse_email_list("") == frozenset() and config.parse_email_list(None) == frozenset()

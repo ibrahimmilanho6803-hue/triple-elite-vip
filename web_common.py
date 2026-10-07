@@ -64,6 +64,14 @@ def format_fcfa(amount):
     return f"{int(amount):,}".replace(",", NBSP) + f"{NBSP}FCFA"
 
 
+def join_fr(items):
+    """Énumération à la française : « A », « A et B », « A, B et C »."""
+    items = [str(item) for item in items if item]
+    if len(items) < 2:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " et " + items[-1]
+
+
 def describe_remaining(expires, now=None):
     """('dans 23 jours', 23.4) : temps restant d'un abonnement, en français courant."""
     now = now or license_manager._utcnow()
@@ -305,6 +313,9 @@ def install_templating(app, *, home_url, login_url, conditions_url):
             "price_yearly_per_month": format_eur(round(per_month, 2)),
             "fcfa_monthly": format_fcfa(config.PRICE_MONTHLY_FACTURE_FCFA),
             "fcfa_yearly": format_fcfa(config.PRICE_YEARLY_FACTURE_FCFA),
+            # Moyens de paiement annoncés (voir config.py) : lus à chaque requête, donc faciles à tester.
+            "cards_enabled": bool(config.CARDS_ENABLED),
+            "payment_countries": join_fr(config.PAYMENT_COUNTRIES),
             "target_odds": f"{config.TARGET_ODDS:.2f}".replace(".", ","),
             "min_confidence": config.MIN_CONFIDENCE,
             "cache_minutes": config.CACHE_MINUTES,

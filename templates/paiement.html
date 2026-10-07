@@ -13,6 +13,11 @@
     <p class="lead">Paiement unique, sans renouvellement automatique. Ta clé de licence s’affiche dès que le paiement est confirmé, et t’est aussi envoyée par e-mail.</p>
   </div>
 
+  {% if not cards_enabled %}
+  <div class="notice notice--info pay__notice" id="pay-methods" role="note">
+    <p><strong>Pour le moment, paiement par Mobile Money uniquement</strong>, depuis&nbsp;: {{ payment_countries }}. Le paiement par carte bancaire n’est pas encore disponible. Tu es dans un autre pays&nbsp;? Écris-nous à <a href="mailto:{{ seller_email }}">{{ seller_email }}</a> en précisant ton pays&nbsp;: nous te préviendrons dès que le paiement y sera ouvert.</p>
+  </div>
+  {% endif %}
   {% if test_mode %}
   <div class="notice notice--test pay__notice" role="status"><p><strong>Mode test.</strong> Aucun vrai paiement n’est débité. Seules les adresses de test peuvent essayer.</p></div>
   {% endif %}
@@ -62,7 +67,7 @@
       </div>
 
       <div class="field">
-        <button class="btn btn--or btn--grand btn--bloc" type="submit" id="pay-btn">Payer avec Mobile Money ou carte</button>
+        <button class="btn btn--or btn--grand btn--bloc" type="submit" id="pay-btn">{% if cards_enabled %}Payer avec Mobile Money ou carte{% else %}Payer avec Mobile Money{% endif %}</button>
         <p class="hint">Tu es redirigé vers PayDunya, la plateforme de paiement sécurisée. Nous ne voyons ni ne gardons tes informations de paiement.</p>
       </div>
     </div>
@@ -81,7 +86,11 @@
         <li>Trois combinés de trois matchs, générés à la demande</li>
         <li>Cote, confiance et chance de réussite de chaque coupon</li>
         <li>Historique des résultats et bilan</li>
+        {% if cards_enabled %}
         <li>Orange Money, MTN, Moov, Wave et carte bancaire</li>
+        {% else %}
+        <li>Paiement par Mobile Money (Orange Money, MTN, Moov, Wave)</li>
+        {% endif %}
       </ul>
       <p class="small muted">Nos pronostics sont des estimations statistiques, jamais une garantie de gain. Voir les <a href="{{ conditions_url }}">conditions</a>.</p>
     </aside>

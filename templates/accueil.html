@@ -24,7 +24,11 @@
         <a class="btn btn--or btn--grand" href="{{ paiement_url }}">S’abonner</a>
         <a class="btn btn--ligne btn--grand" href="{{ login_url }}">J’ai déjà un accès</a>
       </div>
+      {% if cards_enabled %}
       <p class="hero__fine">À partir de {{ price_monthly }} par mois. Orange Money, MTN, Moov, Wave ou carte bancaire.</p>
+      {% else %}
+      <p class="hero__fine">À partir de {{ price_monthly }} par mois. Paiement par Mobile Money (Orange Money, MTN, Moov, Wave) depuis&nbsp;: {{ payment_countries }}.</p>
+      {% endif %}
     </div>
 
     <figure class="hero__slip">
@@ -188,7 +192,11 @@
       </details>
       <details>
         <summary>Quels moyens de paiement&nbsp;?</summary>
+        {% if cards_enabled %}
         <p>Orange Money, MTN, Moov, Wave et carte bancaire, via la plateforme sécurisée PayDunya. Nous ne voyons jamais tes informations de paiement.</p>
+        {% else %}
+        <p>Le Mobile Money (Orange Money, MTN, Moov, Wave selon ton pays), via la plateforme sécurisée PayDunya, depuis&nbsp;: {{ payment_countries }}. Le paiement par carte bancaire n’est pas encore disponible. Tu es dans un autre pays&nbsp;? Écris-nous à <a href="mailto:{{ seller_email }}">{{ seller_email }}</a> en précisant ton pays&nbsp;: nous te préviendrons dès que le paiement y sera ouvert. Nous ne voyons jamais tes informations de paiement.</p>
+        {% endif %}
       </details>
       <details>
         <summary>Pourquoi le paiement est-il en FCFA&nbsp;?</summary>

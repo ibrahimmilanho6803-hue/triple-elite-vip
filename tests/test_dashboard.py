@@ -76,6 +76,21 @@ def test_prix_et_textes_de_la_page_d_accueil(env):
     assert config.SELLER_EMAIL in env.client.get("/conditions").get_data(as_text=True)
 
 
+def test_l_accueil_n_annonce_que_les_moyens_de_paiement_reellement_disponibles(env):
+    page = env.client.get("/").get_data(as_text=True).replace("&nbsp;", " ")
+    for country in config.PAYMENT_COUNTRIES:
+        assert page.count(country) >= 2                              # sous le bouton « S'abonner » et dans la FAQ
+    assert "ou carte bancaire" not in page and "et carte bancaire" not in page
+    assert "carte bancaire n’est pas encore disponible" in page and "nous te préviendrons" in page
+
+
+def test_accueil_cartes_activees_les_mentions_de_carte_reviennent(env, monkeypatch):
+    monkeypatch.setattr(config, "CARDS_ENABLED", True)
+    page = env.client.get("/").get_data(as_text=True).replace("&nbsp;", " ")
+    assert "Wave ou carte bancaire." in page and "Wave et carte bancaire, via la plateforme" in page
+    assert "pas encore disponible" not in page and "nous te préviendrons" not in page
+
+
 def test_en_tetes_de_securite(env):
     for path in ("/", "/login", "/api/generate/status", "/nope"):
         headers = env.client.get(path).headers

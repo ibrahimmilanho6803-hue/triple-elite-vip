@@ -140,6 +140,15 @@ PAYDUNYA_TEST_EMAILS = parse_email_list(os.environ.get("PAYDUNYA_TEST_EMAILS"))
 SUCCESS_REFRESH_SECONDS = 4
 SUCCESS_REFRESH_MAX = 15
 
+# Moyens de paiement ANNONCÉS aux clients (accueil, FAQ, page de paiement). Ils doivent refléter ce que PayDunya propose
+# RÉELLEMENT à ce compte marchand, sinon un client arrive chez PayDunya et n'y trouve aucun moyen de payer.
+# Contrôlé sur la page de paiement PayDunya le 07/10/2026 : du Mobile Money dans ces six pays, aucune carte bancaire
+# (ni pour les pays « Autres »). Ajouter un pays ici seulement après l'avoir vu sur cette page.
+PAYMENT_COUNTRIES = ("Côte d’Ivoire", "Sénégal", "Bénin", "Togo", "Burkina Faso", "Cameroun")
+# Passer à True quand PayDunya a activé les cartes internationales sur le compte ET qu'une carte apparaît sur sa page de
+# paiement : les textes « carte bancaire » reviennent partout et l'avis « pas encore de carte » disparaît.
+CARDS_ENABLED = False
+
 # --- E-mail de licence ---
 # Gmail (SMTP) par défaut. ATTENTION : Render bloque les ports SMTP (25, 465, 587) sur les
 # services de l'offre gratuite ; voir README (BREVO_API_KEY propose une alternative par HTTPS).

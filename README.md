@@ -2,7 +2,8 @@
 
 Site d'abonnement qui analyse les cinq grands championnats de football (Premier League, La Liga, Bundesliga,
 Ligue 1, Serie A) avec l'IA Claude et compose **trois combinés de trois matchs**, de cote totale d'au moins 2,50.
-Les clients paient par Mobile Money ou carte (PayDunya), reçoivent une clé de licence, et se connectent à leur espace.
+Les clients paient par Mobile Money (PayDunya ; la carte bancaire viendra quand PayDunya l'aura activée sur le compte,
+voir « Moyens de paiement annoncés aux clients »), reçoivent une clé de licence, et se connectent à leur espace.
 
 - Site des clients : <https://triple-elite-vip.com> (service `dashboard`)
 - Paiement : <https://triple-elite-vip-paiement.onrender.com> (service `paiement`)
@@ -189,6 +190,21 @@ sable » : les paiements y sont fictifs. Un interrupteur permet de les essayer *
 La licence obtenue pendant l'essai est une vraie licence pour ton adresse ; elle peut être désactivée ou supprimée avec
 `python generate_keys.py`.
 
+## Moyens de paiement annoncés aux clients
+
+Les pages (accueil, FAQ, page de paiement) n'annoncent que ce que PayDunya propose **réellement** à ce compte marchand :
+`PAYMENT_COUNTRIES` et `CARDS_ENABLED` dans `config.py`. État contrôlé le 07/10/2026 sur la page de paiement PayDunya :
+du Mobile Money dans six pays (Côte d'Ivoire, Sénégal, Bénin, Togo, Burkina Faso, Cameroun), aucune carte bancaire, pays
+« Autres » compris. Les clients des autres pays voient un avis sur la page de paiement et sont invités à écrire pour être
+prévenus. Ce que PayDunya affiche dépend de la configuration du compte chez PayDunya (Intégrer > ton application) et
+de ses activations (cartes internationales, Wave Sénégal), pas du code du site.
+
+Quand PayDunya active les cartes internationales (ou un pays de plus) :
+
+1. Ouvrir une vraie page de paiement PayDunya (commencer un achat sur `/paiement`, sans le terminer) et vérifier que la
+   carte (ou le nouveau pays) apparaît, pays « Autres » compris.
+2. Passer `CARDS_ENABLED = True` (ou compléter `PAYMENT_COUNTRIES`) dans `config.py`, lancer les tests, envoyer sur `main`.
+
 ## Dépannage
 
 Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqués : `j***@gmail.com`).
@@ -198,6 +214,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | Un client a payé mais ne reçoit rien | Chercher son e-mail (masqué) dans les logs du service de paiement. `PAIEMENT CONFIRMÉ MAIS LICENCE NON DÉLIVRÉE` : la base était injoignable, le client peut réactualiser sa page de confirmation ; sinon créer sa licence à la main avec `python generate_keys.py` (même e-mail que l'achat). Si PayDunya montre le paiement `completed`, il est dû |
 | Aucun e-mail de licence n'arrive | Logs du service de paiement : `e-mail de licence NON envoyé` suivi de la cause (`connexion SMTP impossible` : port bloqué ; `Brevo` : réponse de l'API ; variables absentes). Sur l'offre gratuite de Render, Gmail est bloqué : définir `BREVO_API_KEY` ou rester sur une offre payante. `Gmail a refusé l'identifiant ou le mot de passe d'application` : le mot de passe d'application a été révoqué ou mal collé (les espaces que Google affiche entre les blocs de quatre lettres sont ignorées, inutile de les retirer). Le client voit sa clé sur la page de confirmation |
 | « Le paiement est momentanément indisponible » | Clés PayDunya absentes ou invalides, ou PayDunya en panne : logs du service de paiement (`facture PayDunya impossible`). `code '1001', 'The payin is not enabled'` : la case **Payin** de l'application est décochée chez PayDunya (Intégrer > ton application > Modifier > Services : cocher Payin ; Payout n'est pas utilisé) ; si elle est déjà cochée, le compte n'est peut-être pas encore validé : écrire au support PayDunya |
+| Un client dit qu'il ne trouve aucun moyen de payer chez PayDunya (son pays n'a pas de Mobile Money, pas de carte) | Ce n'est pas un défaut du site : PayDunya n'affiche que les moyens activés sur le compte marchand. Voir « Moyens de paiement annoncés aux clients » ; en attendant, la page de paiement le dit et invite à écrire |
 | « Les paiements ne sont pas encore ouverts » | Le site est en mode test (clés de test) : remettre les clés de production, voir « Essayer le paiement sans argent » |
 | « Service momentanément indisponible » à la connexion | La base PostgreSQL est injoignable ou a expiré (offre gratuite) : Render > Postgres |
 | « E-mail ou clé de licence incorrect » alors que le client a bien sa clé | Le visiteur voit toujours ce même message ; le motif exact est dans les logs du service client : `connexion refusée : j***@… (motif)`. `e-mail inconnu` : aucune licence à cette adresse **dans la base de ce service** (faute de frappe dans l'adresse, ou les deux services ne pointent pas vers la même `DATABASE_URL` : au démarrage, chaque service écrit `Base de données des licences initialisée (base <nom>, N licence(s))`, et `python generate_keys.py` l'affiche en tête ; le nom doit être identique des deux côtés). `clé différente (N caractères saisis, 16 attendus)` : clé mal recopiée (le site accepte déjà espaces, majuscules, caractères invisibles, la lettre O pour 0 et I ou L pour 1). Vérifier avec `python generate_keys.py` puis `2` (liste des licences) depuis le Shell du service client, et renvoyer la clé par e-mail avec l'option proposée après `1`. `N lignes pour cet e-mail` à la fin du motif : doublons hérités (`Client@…` et `client@…`) ; la bonne clé fonctionne malgré tout, mais nettoyer avec `4` (supprimer) puis `1` (recréer) |

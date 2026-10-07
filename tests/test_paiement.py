@@ -96,6 +96,37 @@ def test_annulation_chez_paydunya_est_expliquee(env):
     assert "Paiement annulé" not in text(env.client.get("/paiement"))
 
 
+def test_la_page_n_annonce_que_les_moyens_de_paiement_reellement_disponibles(env):
+    """Tant que PayDunya n'a pas activé les cartes, la page ne les promet pas, dit où l'on peut payer et à qui écrire."""
+    page = text(env.client.get("/paiement")).replace("&nbsp;", " ")
+    assert 'id="pay-methods"' in page and "Pour le moment, paiement par Mobile Money uniquement" in page
+    for country in config.PAYMENT_COUNTRIES:
+        assert country in page
+    assert "carte bancaire n’est pas encore disponible" in page
+    assert f'href="mailto:{config.SELLER_EMAIL}"' in page and "nous te préviendrons" in page
+    assert ">Payer avec Mobile Money<" in page and "ou carte" not in page                  # bouton sans carte
+    assert "et carte bancaire" not in page and "ou carte bancaire" not in page
+
+
+def test_cartes_activees_les_mentions_de_carte_reviennent_et_l_avis_disparait(env, monkeypatch):
+    monkeypatch.setattr(config, "CARDS_ENABLED", True)
+    page = text(env.client.get("/paiement")).replace("&nbsp;", " ")
+    assert ">Payer avec Mobile Money ou carte<" in page and "Orange Money, MTN, Moov, Wave et carte bancaire" in page
+    assert 'id="pay-methods"' not in page and "pas encore disponible" not in page
+
+
+def test_l_avis_de_paiement_reste_visible_avec_le_message_d_annulation_et_les_erreurs(env):
+    assert 'id="pay-methods"' in text(env.client.get("/paiement?annule=1&plan=monthly"))
+    response, _ = start(env, email="pas-un-mail")
+    assert response.status_code == 400 and 'id="pay-methods"' in text(response)
+
+
+def test_enumeration_a_la_francaise():
+    assert web_common.join_fr([]) == "" and web_common.join_fr(["A"]) == "A"
+    assert web_common.join_fr(["A", "B"]) == "A et B" and web_common.join_fr(["A", "B", "C"]) == "A, B et C"
+    assert web_common.join_fr(["A", "", None, "B"]) == "A et B"
+
+
 def test_en_tetes_de_securite_de_la_page_de_paiement(env):
     response = env.client.get("/paiement")
     assert response.headers["Content-Security-Policy"] == web_common.PAYMENT_CSP

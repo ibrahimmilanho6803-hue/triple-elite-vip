@@ -357,7 +357,8 @@ class TestPaiement:
 
     def test_retour_apres_annulation_chez_paydunya(self, page, pay_site):
         page.goto(pay_site.url + "/paiement?annule=1&plan=yearly")
-        expect(page.locator(".notice--info")).to_contain_text("Paiement annulé")
+        expect(page.get_by_role("status")).to_contain_text("Paiement annulé")     # l'avis sur les pays n'a pas ce rôle
+        expect(page.locator("#pay-methods")).to_be_visible()                       # il reste affiché à côté
         expect(page.locator("input[value=yearly]")).to_be_checked()
 
     def test_la_page_d_attente_se_met_a_jour_toute_seule(self, page, pay_site, monkeypatch):
@@ -371,7 +372,10 @@ class TestPaiement:
 
     def test_la_page_d_attente_se_met_a_jour_aussi_sans_javascript(self, browser, pay_site, monkeypatch):
         monkeypatch.setattr(config, "SUCCESS_REFRESH_SECONDS", 1)
-        context = browser.new_context(java_script_enabled=False, locale="fr-FR")
+        # « reduced_motion » coupe le défilement doux de la page (scroll-behavior: smooth). Constaté : sans JavaScript et
+        # dès qu'il doit défiler jusqu'à la case (fenêtre de 720 px), Playwright la juge « instable » et expire ; avec
+        # JavaScript, ou sans défilement doux, tout va bien. Ce n'est pas un défaut du site, seulement de l'automatisation.
+        context = browser.new_context(java_script_enabled=False, locale="fr-FR", reduced_motion="reduce")
         try:
             page = context.new_page()
             page.goto(pay_site.url + "/paiement")
