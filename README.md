@@ -38,7 +38,8 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
    licence (une seule fois, même si la page est rechargée), l'**affiche** et l'envoie par e-mail.
 4. Filet de sécurité : PayDunya appelle aussi `/ipn` ; la même logique y est appliquée, donc la licence est délivrée
    même si le client ferme son navigateur. Le contenu de cet appel n'est jamais cru : seul le jeton compte, et c'est
-   PayDunya qui est interrogé. Le rappel (`callback_url`) est envoyé avec chaque facture : rien à régler chez PayDunya.
+   PayDunya qui est interrogé. Le rappel (`callback_url`) est envoyé avec chaque facture : rien à régler chez PayDunya
+   (l'adresse `/ipn-paydunya`, enregistrée dans l'application PayDunya, répond aussi).
 5. Un client qui renouvelle **avant** la fin de son abonnement garde sa clé ; la durée achetée s'ajoute au temps restant.
    Après expiration, une nouvelle clé est délivrée. Un mois compte 30 jours, un an 365 jours.
 6. Il se connecte sur le site avec son e-mail et sa clé, puis génère ses combinés (un seul calcul en arrière-plan pour
@@ -78,6 +79,7 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `ODDS_API_KEY` | dashboard | Facultatif : vraies cotes (the-odds-api.com). Sans elle, cotes estimées |
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
 | `PAYDUNYA_MASTER_KEY`, `PAYDUNYA_PRIVATE_KEY`, `PAYDUNYA_TOKEN` | paiement | Clés API PayDunya |
+| `PAYDUNYA_TEST_EMAILS` | paiement | Facultatif, **mode test seulement** : adresses autorisées à commander, séparées par des virgules (voir plus bas) |
 | `LICENSE_SECRET_KEY` | paiement | Sel de fabrication des nouvelles clés (en changer n'invalide aucune clé existante) |
 | `GMAIL_EMAIL`, `GMAIL_MDP` | paiement | Envoi par Gmail (mot de passe d'application) |
 | `BREVO_API_KEY`, `EMAIL_SENDER` | paiement | Envoi par Brevo (prioritaire sur Gmail si définie) ; `EMAIL_SENDER` = adresse d'expéditeur validée |
@@ -147,6 +149,28 @@ la cible). Liste de contrôle :
 - **Secrets** : après toute fuite (clé collée dans une conversation, capture d'écran…), régénérer la clé chez son
   fournisseur (PayDunya, Anthropic, Google, TheSportsDB) puis la remplacer dans Render.
 
+## Essayer le paiement sans argent (mode test PayDunya)
+
+PayDunya donne à chaque application des clés de **test** (`test_private_…`) qui ne fonctionnent que sur son API « bac à
+sable » : les paiements y sont fictifs. Le site la reconnaît tout seul :
+
+1. PayDunya > **Intégrer** > ton application > **Afficher les clés API** > « Clés API de Test ». La clé principale
+   (Master Key) est en général la même qu'en production (si la section de test en affiche une autre, la remplacer aussi) ;
+   la **clé privée** et le **token** changent.
+2. Dans Render (service **paiement**), remplacer `PAYDUNYA_PRIVATE_KEY` et `PAYDUNYA_TOKEN` par les valeurs de test, et
+   définir `PAYDUNYA_TEST_EMAILS` avec **ton** adresse. Attendre la fin du redéploiement.
+3. Le site passe alors en mode test : appels vers l'API bac à sable, bandeau « Mode test » sur la page de paiement, et
+   **toute autre adresse que celles de `PAYDUNYA_TEST_EMAILS` est refusée** (sinon un visiteur obtiendrait une vraie
+   licence avec un faux paiement). `/health` affiche `"paydunya":"test"`.
+4. PayDunya > Intégrer > **Clients fictifs** : créer un client de test, puis commander sur le site avec ton adresse et payer
+   avec ce client sur la page de paiement du bac à sable. Vérifier : page de confirmation avec la clé, e-mail reçu,
+   connexion au site avec l'e-mail et la clé.
+5. **Remettre les clés de production**, supprimer `PAYDUNYA_TEST_EMAILS`, et vérifier que `/health` affiche
+   `"paydunya":"live"` (une surveillance par mot-clé sur `"paydunya":"live"` prévient si un oubli laisse le site en test).
+
+La licence obtenue pendant l'essai est une vraie licence pour ton adresse ; elle peut être désactivée avec
+`python generate_keys.py`.
+
 ## Dépannage
 
 Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqués : `j***@gmail.com`).
@@ -155,7 +179,8 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | --- | --- |
 | Un client a payé mais ne reçoit rien | Chercher son e-mail (masqué) dans les logs du service de paiement. `PAIEMENT CONFIRMÉ MAIS LICENCE NON DÉLIVRÉE` : la base était injoignable, le client peut réactualiser sa page de confirmation ; sinon créer sa licence à la main avec `python generate_keys.py` (même e-mail que l'achat). Si PayDunya montre le paiement `completed`, il est dû |
 | Aucun e-mail de licence n'arrive | Logs du service de paiement : `e-mail de licence NON envoyé` suivi de la cause (`connexion SMTP impossible` : port bloqué ; `Brevo` : réponse de l'API ; variables absentes). Sur l'offre gratuite de Render, Gmail est bloqué : définir `BREVO_API_KEY` ou rester sur une offre payante. `Gmail a refusé l'identifiant ou le mot de passe d'application` : le mot de passe d'application a été révoqué ou mal collé. Le client voit sa clé sur la page de confirmation |
-| « Le paiement est momentanément indisponible » | Clés PayDunya absentes ou invalides, ou PayDunya en panne : logs du service de paiement (`facture PayDunya impossible`) |
+| « Le paiement est momentanément indisponible » | Clés PayDunya absentes ou invalides, ou PayDunya en panne : logs du service de paiement (`facture PayDunya impossible`). `code '1001', 'The payin is not enabled'` : le compte PayDunya n'est pas encore validé (tableau de bord PayDunya : « compte en cours de validation ») ; rien à corriger sur le site, écrire au support PayDunya |
+| « Les paiements ne sont pas encore ouverts » | Le site est en mode test (clés de test) : remettre les clés de production, voir « Essayer le paiement sans argent » |
 | « Service momentanément indisponible » à la connexion | La base PostgreSQL est injoignable ou a expiré (offre gratuite) : Render > Postgres |
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
 | Pas assez de matchs à venir | Trêve internationale ou calendrier incomplet chez TheSportsDB ; les cinq championnats compensent en général. Réessayer plus tard |
@@ -172,8 +197,8 @@ dans les journaux ; messages d'erreur sans détail technique ; licence revérifi
 
 ## Limites connues
 
-- Le paiement réel (PayDunya en production, retour du client, appel `/ipn`) est couvert par des tests simulés, mais
-  doit être essayé une fois avec un vrai paiement de l'offre mensuelle.
+- Le paiement réel (PayDunya en production, retour du client, appel `/ipn`) est couvert par des tests simulés : il doit
+  être essayé en mode test (voir plus haut), puis une fois avec un vrai paiement de l'offre mensuelle.
 - La qualité des pronostics dépend des données de TheSportsDB (calendriers parfois incomplets) et de l'estimation de
   l'IA ; le site affiche donc des probabilités, pas des certitudes.
 - Les conditions du site (`/conditions`) décrivent le service tel qu'il est ; les conditions générales de vente, les

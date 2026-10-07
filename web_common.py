@@ -351,10 +351,18 @@ def register_error_pages(app):
         return error_response(500)
 
 
-def install_health_and_robots(app, *, robots_txt):
+def install_health_and_robots(app, *, robots_txt, health_extra=None):
+    """/health : sert à la surveillance (Render, UptimeRobot). health_extra : fonction qui renvoie des champs
+    en plus (ex. le mode PayDunya) ; si elle échoue, /health répond quand même."""
     @app.get("/health")
     def health():
-        response = jsonify({"status": "ok", "version": config.VERSION})
+        body = {"status": "ok", "version": config.VERSION}
+        if health_extra:
+            try:
+                body.update(health_extra())
+            except Exception:
+                log.exception("informations supplémentaires de /health indisponibles")
+        response = jsonify(body)
         response.headers["Cache-Control"] = "no-store"
         return response
 

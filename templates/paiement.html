@@ -13,6 +13,9 @@
     <p class="lead">Paiement unique, sans renouvellement automatique. Ta clé de licence s’affiche dès que le paiement est confirmé, et t’est aussi envoyée par e-mail.</p>
   </div>
 
+  {% if test_mode %}
+  <div class="notice notice--test pay__notice" role="status"><p><strong>Mode test.</strong> Aucun vrai paiement n’est débité. Seules les adresses de test peuvent essayer.</p></div>
+  {% endif %}
   {% if notice %}
   <div class="notice notice--info pay__notice" role="status"><p>{{ notice|typo }}</p></div>
   {% endif %}

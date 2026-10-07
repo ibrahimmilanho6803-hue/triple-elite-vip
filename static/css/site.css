@@ -291,6 +291,7 @@ button { cursor: pointer; }
 .notice--erreur { border-left-color: var(--rouge); }
 .notice--ok { border-left-color: var(--vert); }
 .notice--info { border-left-color: var(--craie); }
+.notice--test { border-left-color: var(--or); background: rgba(227, 179, 65, 0.1); }
 .notice strong { font-weight: 650; }
 
 .field + .field { margin-top: 18px; }

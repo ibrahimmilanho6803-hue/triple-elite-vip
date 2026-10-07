@@ -25,3 +25,9 @@ def test_chargement_du_fichier_env(tmp_path, monkeypatch):
 
 def test_fichier_env_absent(tmp_path):
     assert config.load_env_file(str(tmp_path / "inexistant.env")) == 0
+
+
+def test_liste_d_adresses_de_test():
+    assert config.parse_email_list(" A@x.com, b@y.com;C@Z.com  d@w.org ,, ") == {"a@x.com", "b@y.com", "c@z.com", "d@w.org"}
+    assert config.parse_email_list("") == frozenset() and config.parse_email_list(None) == frozenset()
+    assert config.PAYDUNYA_TEST_EMAILS == frozenset()               # rien dans l'environnement des tests

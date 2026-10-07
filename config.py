@@ -5,6 +5,12 @@
 # uniquement dans les variables d'environnement (voir .env.example et render.yaml).
 
 import os
+import re
+
+
+def parse_email_list(raw):
+    """Adresses séparées par des virgules, des points-virgules ou des espaces -> ensemble en minuscules."""
+    return frozenset(part.lower() for part in re.split(r"[,;\s]+", raw or "") if part)
 
 
 def load_env_file(path=".env"):
@@ -125,6 +131,10 @@ PAYMENT_MAX_PER_IP = 15
 PAYMENT_MAX_GLOBAL = 200
 PAYMENT_WINDOW_SECONDS = 600
 PAYDUNYA_TIMEOUT = 15              # secondes d'attente maximum d'une réponse PayDunya
+# Mode test : avec les clés de TEST de PayDunya (« test_private_… »), les paiements sont fictifs. Pour qu'un visiteur ne
+# puisse pas obtenir une vraie licence avec un faux paiement, seules ces adresses (variable PAYDUNYA_TEST_EMAILS, séparées
+# par des virgules) peuvent alors commander. Liste vide : personne, tout achat est refusé tant que le mode test dure.
+PAYDUNYA_TEST_EMAILS = parse_email_list(os.environ.get("PAYDUNYA_TEST_EMAILS"))
 # Page de confirmation : tant que PayDunya ne confirme pas, elle se recharge toute seule
 # (toutes les SUCCESS_REFRESH_SECONDS, au plus SUCCESS_REFRESH_MAX fois), puis invite à revenir.
 SUCCESS_REFRESH_SECONDS = 4

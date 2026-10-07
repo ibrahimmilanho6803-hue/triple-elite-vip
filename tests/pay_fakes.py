@@ -1,6 +1,9 @@
 """Faux PayDunya et faux envoi d'e-mails pour les tests du site de paiement."""
 from paydunya import PayDunyaError
 
+LIVE_URL_BASE = "https://paydunya.com/checkout/invoice"
+SANDBOX_URL_BASE = "https://paydunya.com/sandbox-checkout/invoice"
+
 
 class FakePayDunya:
     """Même interface que paydunya.PayDunya, sans réseau. Les paiements se simulent avec pay() / cancel()."""
@@ -14,15 +17,19 @@ class FakePayDunya:
         self.fail_create = None      # exception à lever à la création
         self.fail_confirm = None     # exception à lever à la vérification
         self.good_hash = "bon-hash"
-        self.url_base = "https://paydunya.com/sandbox-checkout/invoice"
+        self.test_mode = False       # True : clés de test (jetons « test_… », page de paiement du bac à sable)
+        self.token_prefix = None     # force le début des jetons (None : « test_ » en mode test, rien sinon)
+        self.url_base = None         # adresse de la page de paiement (None : celle du mode en cours)
 
     def create_invoice(self, **kwargs):
         if self.fail_create:
             raise self.fail_create
-        token = f"test_tok{len(self.created) + 1:07d}"
+        prefix = self.token_prefix if self.token_prefix is not None else ("test_" if self.test_mode else "")
+        token = f"{prefix}tok{len(self.created) + 1:07d}"
         self.created.append({"token": token, **kwargs})
         self.invoices[token] = {"status": "pending", "amount": kwargs["amount"]}
-        return {"token": token, "url": f"{self.url_base}/{token}"}
+        base = self.url_base or (SANDBOX_URL_BASE if self.test_mode else LIVE_URL_BASE)
+        return {"token": token, "url": f"{base}/{token}"}
 
     def confirm(self, token):
         self.confirm_calls.append(token)
@@ -31,7 +38,7 @@ class FakePayDunya:
         invoice = self.invoices.get(token)
         if invoice is None:
             raise PayDunyaError("facture inconnue", transient=True)
-        return {"status": invoice["status"], "amount": invoice["amount"], "mode": "test"}
+        return {"status": invoice["status"], "amount": invoice["amount"], "mode": "test" if self.test_mode else "live"}
 
     def hash_is_valid(self, digest):
         return digest == self.good_hash

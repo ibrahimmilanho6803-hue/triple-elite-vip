@@ -5,7 +5,7 @@ import pytest
 import requests
 
 import config
-from paydunya import PayDunya, PayDunyaError, clean_token, parse_notification
+from paydunya import PayDunya, PayDunyaError, clean_token, is_test_token, parse_notification
 
 KEYS = {"master_key": "MASTER", "private_key": "PRIVATE", "token": "TOKEN"}
 
@@ -173,3 +173,42 @@ def test_notification_illisible_ne_donne_aucun_jeton():
 def test_forme_du_jeton():
     assert clean_token(" abc123XYZ ") == "abc123XYZ" and clean_token("test_Ab-12_34") == "test_Ab-12_34"
     assert clean_token("court") is None and clean_token("a/b/c/d/e") is None and clean_token("é" * 10) is None
+
+
+# --------------------------------------------------------------------------
+# Mode test : les clés de test ne marchent que sur l'API « bac à sable » de PayDunya
+# --------------------------------------------------------------------------
+
+def test_les_cles_de_production_utilisent_l_api_normale():
+    pd, http = client(Reply({"response_code": "00", "response_text": "ok", "token": "abc123XYZ"}))
+    assert pd.test_mode is False and pd.api_base == "https://app.paydunya.com/api/v1"
+    pd.create_invoice(**INVOICE)
+    assert http.calls[0]["url"] == "https://app.paydunya.com/api/v1/checkout-invoice/create"
+
+
+def test_les_cles_de_test_utilisent_l_api_bac_a_sable():
+    pd, http = client(Reply({"response_code": "00", "response_text": "ok", "token": "test_abc123XYZ"}),
+                      private_key=" test_private_XYZ ")
+    assert pd.test_mode is True and pd.api_base == "https://app.paydunya.com/sandbox-api/v1"
+    invoice = pd.create_invoice(**INVOICE)
+    assert http.calls[0]["url"] == "https://app.paydunya.com/sandbox-api/v1/checkout-invoice/create"
+    assert http.calls[0]["headers"]["PAYDUNYA-PRIVATE-KEY"] == " test_private_XYZ "      # les clés partent telles quelles
+    assert invoice == {"token": "test_abc123XYZ", "url": "https://paydunya.com/sandbox-checkout/invoice/test_abc123XYZ"}
+
+
+def test_la_verification_d_une_facture_de_test_interroge_aussi_le_bac_a_sable():
+    pd, http = client(Reply({"response_code": "00", "status": "completed", "mode": "test",
+                             "invoice": {"total_amount": "19700"}}), private_key="test_private_XYZ")
+    assert pd.confirm("test_abc123XYZ") == {"status": "completed", "amount": 19700, "mode": "test"}
+    assert http.calls[0]["url"] == "https://app.paydunya.com/sandbox-api/v1/checkout-invoice/confirm/test_abc123XYZ"
+
+
+@pytest.mark.parametrize("key", ["", None, "live_private_x", "private_test_x", "PRIVATE"])
+def test_sans_le_prefixe_test_c_est_la_production(key):
+    pd, _ = client(Reply({}), private_key=key)
+    assert pd.test_mode is False and pd.api_base.endswith("/api/v1")
+
+
+def test_jeton_de_test():
+    assert is_test_token("test_abc123XYZ") and not is_test_token("abc123XYZ") and not is_test_token(None)
+    assert not is_test_token("TEST_abc123") and not is_test_token("")

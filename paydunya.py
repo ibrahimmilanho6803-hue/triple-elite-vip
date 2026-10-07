@@ -21,6 +21,8 @@ import config
 log = logging.getLogger(__name__)
 
 API_BASE = "https://app.paydunya.com/api/v1"
+# Les clés de TEST (« test_private_… ») ne fonctionnent que sur l'API « bac à sable », où les paiements sont fictifs.
+SANDBOX_API_BASE = "https://app.paydunya.com/sandbox-api/v1"
 
 # Forme d'un jeton de facture PayDunya (lettres, chiffres, tiret, soulignement).
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{6,80}$")
@@ -44,6 +46,11 @@ def clean_token(value):
     return value if TOKEN_RE.match(value) else None
 
 
+def is_test_token(token):
+    """Une facture créée avec des clés de test porte un jeton qui commence par « test_ » : son paiement est fictif."""
+    return str(token or "").startswith("test_")
+
+
 def _is_paydunya_url(url):
     parsed = urlparse(url or "")
     host = (parsed.hostname or "").lower()
@@ -62,6 +69,15 @@ class PayDunya:
     @property
     def configured(self):
         return bool(self.master_key and self.private_key and self.token)
+
+    @property
+    def test_mode(self):
+        """Vrai avec les clés de test de PayDunya : les paiements sont alors fictifs."""
+        return (self.private_key or "").strip().startswith("test_")
+
+    @property
+    def api_base(self):
+        return SANDBOX_API_BASE if self.test_mode else API_BASE
 
     def _headers(self):
         return {
@@ -105,7 +121,7 @@ class PayDunya:
         }
         if custom_data:
             payload["custom_data"] = custom_data
-        data = self._call("POST", f"{API_BASE}/checkout-invoice/create", json=payload)
+        data = self._call("POST", f"{self.api_base}/checkout-invoice/create", json=payload)
         if data.get("response_code") != "00" or not data.get("token"):
             raise PayDunyaError(f"facture refusée : code {data.get('response_code')!r}, {data.get('response_text')!r}")
         token = str(data["token"])
@@ -121,7 +137,7 @@ class PayDunya:
             if isinstance(candidate, str) and _is_paydunya_url(candidate):
                 return candidate
         log.warning("adresse de paiement absente de la réponse PayDunya : adresse reconstruite")
-        area = "sandbox-checkout" if token.startswith("test_") else "checkout"
+        area = "sandbox-checkout" if is_test_token(token) else "checkout"
         return f"https://paydunya.com/{area}/invoice/{token}"
 
     def confirm(self, token):
@@ -129,7 +145,7 @@ class PayDunya:
         token = clean_token(token)
         if not token:
             raise PayDunyaError("jeton de facture invalide")
-        data = self._call("GET", f"{API_BASE}/checkout-invoice/confirm/{token}")
+        data = self._call("GET", f"{self.api_base}/checkout-invoice/confirm/{token}")
         status = data.get("status")
         if data.get("response_code") != "00" or not isinstance(status, str):
             raise PayDunyaError(f"état de la facture indisponible : code {data.get('response_code')!r}, "

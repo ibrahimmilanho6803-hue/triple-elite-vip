@@ -23,11 +23,12 @@ import license_manager
 import web_common as web
 from email_sender import envoyer_licence_async
 from license_manager import LicenseManager, normalize_email
-from paydunya import PayDunya, PayDunyaError, clean_token, parse_notification
+from paydunya import PayDunya, PayDunyaError, clean_token, is_test_token, parse_notification
 
 log = logging.getLogger("paiement")
 
-ROBOTS_TXT = "User-agent: *\nAllow: /paiement\nDisallow: /payer\nDisallow: /succes\nDisallow: /ipn\n"
+ROBOTS_TXT = ("User-agent: *\nAllow: /paiement\nDisallow: /payer\nDisallow: /succes\nDisallow: /ipn\n"
+              "Disallow: /ipn-paydunya\n")
 
 EMAIL_RE = re.compile(r"^[^@\s,;<>()\[\]\\\"]+@[^@\s,;<>()\[\]\\\"]+\.[^@\s,;<>()\[\]\\\"]{2,}$")
 
@@ -37,6 +38,8 @@ MSG_ACCEPT = ("Coche la case pour confirmer que tu as lu les conditions et que t
               "à ton abonnement.")
 MSG_UNAVAILABLE = ("Le paiement est momentanément indisponible. Réessaie dans quelques minutes, "
                    f"ou écris-nous : {config.SELLER_EMAIL}")
+MSG_TEST_ONLY = ("Les paiements ne sont pas encore ouverts : le site est en phase de test. "
+                 f"Réessaie bientôt, ou écris-nous : {config.SELLER_EMAIL}")
 
 
 def _build_plans():
@@ -60,16 +63,19 @@ DEFAULT_PLAN = "monthly"
 
 
 def short(token):
-    """Début d'un jeton de facture, pour les journaux."""
-    return f"{token[:10]}…"
+    """Début d'un jeton de facture, pour les journaux : jamais le jeton entier, qui ouvre la page de la commande
+    (donc la clé de licence)."""
+    keep = max(1, min(6, len(token) // 2))
+    return f"{token[:keep]}…"
 
 
 def valid_email(email):
     return bool(email) and len(email) <= 254 and bool(EMAIL_RE.match(email))
 
 
-def create_app(lm=None, paydunya=None, send_license=None):
-    """Fabrique de l'application. Les paramètres servent aux tests (faux services)."""
+def create_app(lm=None, paydunya=None, send_license=None, test_emails=None):
+    """Fabrique de l'application. Les paramètres servent aux tests (faux services).
+    test_emails : adresses autorisées à commander en mode test (par défaut PAYDUNYA_TEST_EMAILS)."""
     web.configure_logging()
     app = Flask(__name__)
 
@@ -78,15 +84,27 @@ def create_app(lm=None, paydunya=None, send_license=None):
     # Referrer-Policy « same-origin » et surtout pas « no-referrer » : l'adresse de /succes contient le jeton
     # de la commande et ne doit jamais partir vers un autre site, mais avec « no-referrer » les navigateurs
     # envoient « Origin: null » sur nos propres formulaires, que le contrôle anti-CSRF refuse à juste titre.
-    web.install_security(app, csp=web.PAYMENT_CSP, referrer_policy="same-origin", origin_exempt=("/ipn",))
+    web.install_security(app, csp=web.PAYMENT_CSP, referrer_policy="same-origin",
+                         origin_exempt=("/ipn", "/ipn-paydunya"))
     web.install_templating(app, home_url=config.SITE_URL, login_url=f"{config.SITE_URL}/login",
                            conditions_url=f"{config.SITE_URL}/conditions")
     web.register_error_pages(app)
-    web.install_health_and_robots(app, robots_txt=ROBOTS_TXT)
 
     lm = lm or LicenseManager()
     paydunya = paydunya or PayDunya()
     send_license = send_license or envoyer_licence_async
+    if test_emails is None:
+        allowed_test_emails = config.PAYDUNYA_TEST_EMAILS
+    else:
+        allowed_test_emails = frozenset(e for e in (normalize_email(x) for x in test_emails) if e)
+
+    def paydunya_state():
+        """live | test | absent : visible dans /health pour que la surveillance voie un mode inattendu."""
+        if not paydunya.configured:
+            return "absent"
+        return "test" if paydunya.test_mode else "live"
+
+    web.install_health_and_robots(app, robots_txt=ROBOTS_TXT, health_extra=lambda: {"paydunya": paydunya_state()})
 
     limits = {
         "email": web.RateLimiter(config.PAYMENT_MAX_PER_EMAIL, config.PAYMENT_WINDOW_SECONDS),
@@ -98,6 +116,9 @@ def create_app(lm=None, paydunya=None, send_license=None):
     if not paydunya.configured:
         log.error("clés PayDunya absentes (PAYDUNYA_MASTER_KEY, PAYDUNYA_PRIVATE_KEY, PAYDUNYA_TOKEN) : "
                   "aucun paiement ne sera possible")
+    elif paydunya.test_mode:
+        log.warning("MODE TEST PayDunya : paiements fictifs, réservés à %d adresse(s) de test (PAYDUNYA_TEST_EMAILS)",
+                    len(allowed_test_emails))
     log.info("Triple Elite VIP %s : site de paiement, retour %s", config.VERSION, config.PAIEMENT_URL)
 
     # ------------------------------------------------------------------
@@ -107,7 +128,7 @@ def create_app(lm=None, paydunya=None, send_license=None):
     def render_pay(selected=DEFAULT_PLAN, email="", error=None, notice=None, status=200, accepted=False):
         page = render_template("paiement.html", plans=list(PLANS.values()), selected=selected,
                                selected_plan=PLANS[selected], email=email, error=error, notice=notice,
-                               accepted=accepted)
+                               accepted=accepted, test_mode=paydunya.configured and paydunya.test_mode)
         return page, status
 
     def render_result(state, status=200, **context):
@@ -152,6 +173,11 @@ def create_app(lm=None, paydunya=None, send_license=None):
         if not paydunya.configured:
             log.error("paiement impossible : clés PayDunya absentes")
             return render_pay(selected, email, error=MSG_UNAVAILABLE, accepted=True, status=503)
+        # Clés de test : le paiement est fictif. Seules les adresses de test peuvent commander, sinon n'importe
+        # quel visiteur obtiendrait une vraie licence sans rien payer.
+        if paydunya.test_mode and email not in allowed_test_emails:
+            log.warning("mode test : adresse non autorisée, aucune facture (%s)", web.mask_email(email))
+            return render_pay(selected, email, error=MSG_TEST_ONLY, accepted=True, status=503)
 
         ip = request.remote_addr or "?"
         wait = wait_time(email, ip)
@@ -178,6 +204,13 @@ def create_app(lm=None, paydunya=None, send_license=None):
         except PayDunyaError as exc:
             log.error("facture PayDunya impossible (%s) : %s", web.mask_email(email), exc)
             return render_pay(selected, email, error=MSG_UNAVAILABLE, accepted=True, status=503)
+
+        # Même règle si PayDunya répond par une facture de test alors que le site ne se croyait pas en mode test :
+        # on n'enregistre pas la commande et on n'envoie personne « payer » pour de faux.
+        if is_test_token(invoice["token"]) and email not in allowed_test_emails:
+            log.error("facture de TEST pour une adresse non autorisée (%s) : refusée, vérifie les clés PayDunya",
+                      web.mask_email(email))
+            return render_pay(selected, email, error=MSG_TEST_ONLY, accepted=True, status=503)
 
         # La commande est enregistrée AVANT d'envoyer le client payer : sans elle, un paiement
         # ne pourrait pas être rattaché à un e-mail. Si l'enregistrement échoue, on s'arrête là.
@@ -302,7 +335,10 @@ def create_app(lm=None, paydunya=None, send_license=None):
         status = 503 if state == "unavailable" else 200
         return render_result(state, status=status, **context)
 
+    # « /ipn-paydunya » : l'adresse enregistrée dans l'application PayDunya (celle de /ipn est envoyée avec
+    # chaque facture et prime, mais les deux marchent).
     @app.post("/ipn")
+    @app.post("/ipn-paydunya")
     def ipn():
         """Notification de PayDunya à chaque paiement. Son contenu n'est jamais cru : on en extrait
         seulement le jeton de la facture, puis on interroge PayDunya (settle)."""

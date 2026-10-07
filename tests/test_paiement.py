@@ -4,6 +4,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from flask import Flask
 
 import config
 import license_manager
@@ -14,16 +15,29 @@ from paiement import PLANS, create_app
 from paydunya import PayDunyaError
 
 EMAIL = "client@exemple.com"
+OWNER = "proprietaire@exemple.com"
+
+
+def build_env(tmp_path, *, test_mode=False, test_emails=None):
+    path = str(tmp_path / "licences.db")
+    lm = sqlite_license_manager(path)
+    pd, mailer = FakePayDunya(), FakeMailer()
+    pd.test_mode = test_mode
+    # Liste de test explicite (jamais celle de l'environnement) : les tests ne dépendent pas de la machine.
+    app = create_app(lm=lm, paydunya=pd, send_license=mailer, test_emails=test_emails or [])
+    app.testing = True
+    return SimpleNamespace(app=app, client=app.test_client(), lm=lm, pd=pd, mailer=mailer, path=path)
 
 
 @pytest.fixture()
 def env(tmp_path):
-    path = str(tmp_path / "licences.db")
-    lm = sqlite_license_manager(path)
-    pd, mailer = FakePayDunya(), FakeMailer()
-    app = create_app(lm=lm, paydunya=pd, send_license=mailer)
-    app.testing = True
-    return SimpleNamespace(app=app, client=app.test_client(), lm=lm, pd=pd, mailer=mailer, path=path)
+    return build_env(tmp_path)
+
+
+@pytest.fixture()
+def env_test(tmp_path):
+    """Site en mode test PayDunya (clés de test) : seule l'adresse du propriétaire peut commander."""
+    return build_env(tmp_path, test_mode=True, test_emails=[f"  {OWNER.upper()} ", ""])
 
 
 def order_row(env, token):
@@ -107,7 +121,7 @@ def test_accueil_robots_et_sante(env):
 
 def test_achat_mensuel_redirige_vers_paydunya_et_enregistre_la_commande(env):
     response, token = start(env, email="  Client@Exemple.com ")
-    assert response.status_code == 303 and response.headers["Location"] == f"https://paydunya.com/sandbox-checkout/invoice/{token}"
+    assert response.status_code == 303 and response.headers["Location"] == f"https://paydunya.com/checkout/invoice/{token}"
     sent = env.pd.created[0]
     assert sent["amount"] == config.PRICE_MONTHLY_FACTURE_FCFA == 19700
     assert sent["return_url"] == f"{config.PAIEMENT_URL}/succes" and sent["callback_url"] == f"{config.PAIEMENT_URL}/ipn"
@@ -479,3 +493,85 @@ def test_journaux_sans_e_mail_en_clair(env, caplog):
     env.client.get(f"/succes?token={token}")
     assert "c***@exemple.com" in caplog.text and EMAIL not in caplog.text
     assert token not in caplog.text                                # seul le début du jeton est journalisé
+
+
+# --------------------------------------------------------------------------
+# Adresse de notification enregistrée chez PayDunya
+# --------------------------------------------------------------------------
+
+def test_l_adresse_enregistree_chez_paydunya_fonctionne_comme_ipn(env):
+    _, token = start(env)
+    env.pd.pay(token)
+    response = env.client.post("/ipn-paydunya", data={"data[invoice][token]": token},
+                               headers={"Origin": "https://app.paydunya.com"})
+    assert response.status_code == 200 and len(env.mailer.sent) == 1 and len(env.lm.list_licenses()) == 1
+    assert "Disallow: /ipn-paydunya" in text(env.client.get("/robots.txt"))
+
+
+# --------------------------------------------------------------------------
+# Mode test PayDunya : clés de test, paiements fictifs, réservés aux adresses de test
+# --------------------------------------------------------------------------
+
+def test_le_bandeau_mode_test_n_apparait_qu_en_mode_test(env, env_test):
+    assert "Mode test" not in text(env.client.get("/paiement"))
+    page = text(env_test.client.get("/paiement"))
+    assert "Mode test" in page and "Aucun vrai paiement" in page
+
+
+def test_en_mode_test_un_client_ne_peut_pas_commander(env_test, caplog):
+    with caplog.at_level("WARNING", logger="paiement"):
+        response, token = start(env_test, email=EMAIL)
+    assert response.status_code == 503 and token is None
+    assert "ne sont pas encore ouverts" in text(response) and "Mode test" in text(response)
+    assert env_test.pd.created == [] and raw(env_test.path, "SELECT * FROM pending_orders") == []
+    assert "mode test : adresse non autorisée" in caplog.text and EMAIL not in caplog.text
+
+
+def test_en_mode_test_le_proprietaire_va_jusqu_a_la_licence(env_test):
+    response, token = start(env_test, email=OWNER.upper())            # casse et espaces ignorés des deux côtés
+    assert response.status_code == 303 and token.startswith("test_")
+    assert response.headers["Location"] == f"https://paydunya.com/sandbox-checkout/invoice/{token}"
+    env_test.pd.pay(token)
+    assert "Paiement confirmé" in text(env_test.client.get(f"/succes?token={token}"))
+    assert [mail["to"] for mail in env_test.mailer.sent] == [OWNER]
+    assert env_test.lm.get_status(OWNER)["state"] == "active"
+
+
+def test_en_mode_test_sans_adresse_autorisee_tout_est_refuse(tmp_path):
+    site = build_env(tmp_path, test_mode=True, test_emails=[])
+    response, token = start(site, email=OWNER)
+    assert response.status_code == 503 and token is None and site.pd.created == []
+
+
+def test_une_facture_de_test_inattendue_n_est_ni_enregistree_ni_payee(env, caplog):
+    env.pd.token_prefix = "test_"          # PayDunya répond par une facture de test alors que le site se croit en production
+    with caplog.at_level("ERROR", logger="paiement"):
+        response, token = start(env)
+    assert response.status_code == 503 and token is None and "ne sont pas encore ouverts" in text(response)
+    assert raw(env.path, "SELECT * FROM pending_orders") == [] and env.mailer.sent == []
+    assert "facture de TEST pour une adresse non autorisée" in caplog.text
+    assert start(env, email=OWNER)[0].status_code == 503                      # même sans liste de test : refusé
+
+
+def test_la_sante_indique_le_mode_paydunya(env, env_test):
+    assert env.client.get("/health").get_json() == {"status": "ok", "version": config.VERSION, "paydunya": "live"}
+    assert env_test.client.get("/health").get_json()["paydunya"] == "test"
+    env.pd.configured = False
+    assert env.client.get("/health").get_json()["paydunya"] == "absent"
+
+
+def test_la_sante_repond_meme_si_le_complement_echoue():
+    def broken():
+        raise RuntimeError("panne")
+
+    probe = Flask("sante")
+    web_common.install_health_and_robots(probe, robots_txt="", health_extra=broken)
+    response = probe.test_client().get("/health")
+    assert response.status_code == 200 and response.get_json() == {"status": "ok", "version": config.VERSION}
+
+
+def test_les_journaux_ne_montrent_jamais_un_jeton_entier():
+    from paiement import short
+    for token in ("abcdef", "abcdefghij", "test_AbCdEf1234", "x" * 80):
+        shown = short(token).rstrip("…")
+        assert token.startswith(shown) and len(shown) < len(token) and len(shown) <= 6
