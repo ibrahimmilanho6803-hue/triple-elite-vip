@@ -152,7 +152,7 @@ def test_le_site_de_paiement_n_est_pas_une_application_installable(env):
     page = text(env.client.get("/paiement"))
     for marker in ('rel="manifest"', "apple-touch-icon", "pwa.js", "data-install", "apple-mobile-web-app"):
         assert marker not in page, marker
-    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/.well-known/assetlinks.json"):
+    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/.well-known/assetlinks.json", "/debut"):
         assert env.client.get(path).status_code == 404, path
 
 

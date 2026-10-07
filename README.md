@@ -228,8 +228,12 @@ l'invitation à installer ; `static/icons/` contient les icônes. Le site de pai
 - **Sans connexion** : le téléphone affiche « Pas de connexion » avec un bouton « Réessayer ». Le service worker ne garde
   **que** cette page et ses fichiers (style, polices, icône) : jamais une page de l'espace client ni une réponse de
   l'API (données privées, téléphone parfois prêté). Tout le reste passe par le réseau, comme sans service worker.
-- Le lancement de l'application ouvre `/login` : un client connecté est redirigé vers son espace, les autres voient la
-  connexion. Si un fichier gardé change (style, icône), le nom du cache change : l'ancien est supprimé à l'activation.
+- Le lancement de l'application ouvre `/debut` (`pwa.START_URL`, route `lancement` de `dashboard.py`), qui n'affiche rien :
+  un client connecté arrive dans son espace, un visiteur sur l'accueil (offres, fonctionnement), pas sur un formulaire de
+  connexion qu'il ne peut pas remplir. Un abonnement expiré est traité par l'espace, qui renvoie vers la connexion avec son
+  message et le lien « Renouveler ». **Cette adresse est écrite dans l'APK Android** : ne pas la changer sans refaire l'APK ;
+  ce qu'elle fait ensuite se règle côté serveur. Si un fichier gardé change (style, icône), le nom du cache change : l'ancien
+  est supprimé à l'activation.
 - Les icônes sont générées à partir du logo par `python scripts/make_icons.py` (Playwright) et versionnées dans Git ;
   à relancer seulement si le logo change.
 - Vérifier : Chrome > outils de développement > Application > Manifest (« Installability »), ou les tests navigateur
@@ -239,11 +243,16 @@ l'invitation à installer ; `static/icons/` contient les icônes. Le site de pai
 
 L'APK est un habillage du site (Trusted Web Activity) : il affiche le site en ligne, en plein écran. Un changement de
 page, de texte ou de prix n'exige **aucun** nouvel APK ; seuls le nom, l'icône, les couleurs ou l'adresse de lancement
-en exigent un. Identifiant : `com.tripleelitevip.app`. Lancement : `/login`.
+en exigent un. Identifiant : `com.tripleelitevip.app`. Lancement : `/debut`.
 
 - **Fabrication (octobre 2026)** : paquet généré sur pwabuilder.com (adresse du site, « Package for stores », « Other
   Android »), qui livre un APK **non signé** (inutilisable tel quel) ; il a été signé avec `apksigner` (outil officiel d'Android)
   et une clé créée avec `keytool`, valable jusqu'en 2054 (RSA 4096). La clé n'a transité ni par PWABuilder ni par une boutique.
+- **Versions** : la 1.0 (« version code » 1) s'ouvrait sur `/login` ; la **1.1 (« version code » 2)** s'ouvre sur `/debut` :
+  accueil pour un visiteur, espace direct pour un client connecté. La 1.1 est le paquet non signé de la 1.0 dont seuls
+  l'adresse de lancement (ressource `launchUrl` et copie du manifeste web) et les numéros de version ont été changés, par des
+  chaînes de même longueur donc sans rien décaler d'autre ; elle a été re-signée avec la même clé et s'installe par-dessus la
+  1.0. Une reconstruction par PWABuilder donne le même résultat, puisqu'il lit l'adresse de lancement dans le manifeste du site.
 - **La clé de signature (fichier `.keystore`) et son mot de passe ne sont JAMAIS dans ce dépôt** : ils sont chez le
   propriétaire, en deux exemplaires, hors de l'ordinateur de travail. Sans elle, il est impossible de publier une mise à jour
   par-dessus l'application installée (les clients devraient la désinstaller puis la réinstaller) et de l'enregistrer
@@ -253,7 +262,8 @@ en exigent un. Identifiant : `com.tripleelitevip.app`. Lancement : `/login`.
   une seconde clé (celle de Google Play, plus tard), **ajouter** son empreinte sans retirer l'ancienne. Google garde ce
   fichier en mémoire : après une modification, la barre peut mettre de quelques minutes à quelques heures à disparaître.
   Lire l'empreinte d'une clé : `keytool -list -v -keystore clé.keystore` (ligne SHA256).
-- **Refaire un APK** (autre icône, autre nom) : PWABuilder avec le même identifiant, « Version code » augmenté de 1, puis
+- **Refaire un APK** (autre icône, autre nom) : PWABuilder avec le même identifiant, « Version code » augmenté de 1 (le
+  dernier est le 2), puis
   `zipalign -c 4 fichier.apk` (doit répondre « Verification successful », sinon `zipalign -p 4 entrée sortie`) et
   `apksigner sign --ks clé.keystore --ks-key-alias triple-elite-vip --out Triple-Elite-VIP.apk fichier.apk`,
   puis `apksigner verify --verbose --print-certs Triple-Elite-VIP.apk` : l'empreinte affichée doit être celle de `config.py`.
@@ -280,7 +290,9 @@ seconde application à maintenir. À vérifier au moment de publier, les règles
   de politique de confidentialité.
 - **Paiement** : une application qui vend des abonnements numériques doit passer par Google Play Billing et ne doit pas
   renvoyer vers un paiement extérieur. La version Play ne devra donc proposer ni « S'abonner » ni lien vers le site de
-  paiement : seulement la connexion de clients qui ont déjà acheté sur le site.
+  paiement : seulement la connexion de clients qui ont déjà acheté sur le site. Elle ne pourra donc pas s'ouvrir sur
+  l'accueil du site (qui propose « S'abonner »), comme l'APK direct : prévoir pour elle une adresse de lancement et des
+  pages à part.
 - **Jeux d'argent** : les pronostics ne sont pas nommés dans la politique de Google, mais ce qui « facilite » les paris est
   encadré. Zone grise : risque de refus, voire de suspension du compte. Poser la question au support de la politique Play
   avant d'investir du temps.

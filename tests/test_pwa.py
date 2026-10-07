@@ -4,12 +4,15 @@ dans tests/e2e/test_ui.py, classe TestApplication."""
 import json
 import re
 import struct
+from datetime import timedelta
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 import pytest
 
 import config
 import dashboard
+import license_manager
 import pwa
 from generation_service import GenerationService
 from site_fakes import EMAIL, KEY, FakeLicenses, make_pipeline, sample_history
@@ -73,16 +76,47 @@ def test_le_manifeste_decrit_une_application_installable(env):
     assert data["short_name"] == "Triple Elite" and len(data["short_name"]) <= 12      # sous l'icône : Android coupe au-delà
     assert data["display"] == "standalone"                                              # plein écran, sans barre d'adresse
     assert data["scope"] == "/" and data["id"] == "/"
-    assert data["start_url"] == "/login" and data["start_url"].startswith(data["scope"])
+    assert data["start_url"] == pwa.START_URL == "/debut" and data["start_url"].startswith(data["scope"])
     assert data["description"] and data["categories"] == ["sports"]
-    # Le lancement ne mène jamais à une page protégée : le client connecté est redirigé vers son espace par /login,
-    # un autre voit la connexion (et non « Ta session a expiré »).
-    assert env.client.get(data["start_url"]).status_code == 200
+
+
+def destination(response):
+    """Chemin vers lequel une réponse redirige (302)."""
+    assert response.status_code == 302, response.status_code
+    return urlparse(response.headers["Location"]).path
+
+
+# L'adresse de lancement est écrite dans l'APK Android : elle ne doit plus bouger (un autre lancement = un autre APK).
+# Ce qu'elle fait ensuite se règle côté serveur, et c'est ce que ces tests figent.
+
+def test_le_lancement_de_l_application_mene_a_l_accueil_quand_on_n_est_pas_connecte(env):
+    # Un visiteur qui vient d'installer l'application voit les offres, pas un formulaire qu'il ne peut pas remplir ;
+    # et jamais « Ta session a expiré », que montrerait /app à un nouvel installateur.
+    start = env.client.get(manifest(env)["start_url"])
+    assert destination(start) == "/"
+    assert env.client.get("/").status_code == 200                      # l'accueil répond : pas de redirection en boucle
 
 
 def test_le_lancement_de_l_application_mene_a_l_espace_client_quand_on_est_connecte(env):
     start = member(env).get(manifest(env)["start_url"])
     assert start.status_code == 302 and start.headers["Location"].endswith("/app")
+
+
+def test_au_lancement_un_abonnement_expire_est_traite_par_l_espace_client(env):
+    client = member(env)
+    env.licenses.records[EMAIL]["expires"] = license_manager._utcnow() - timedelta(minutes=1)
+    env.app.extensions["tev"].gate.forget(EMAIL)                        # (le verdict de licence n'est gardé que 30 s)
+    assert destination(client.get(pwa.START_URL)) == "/app"            # le lancement ne juge pas la licence...
+    refused = client.get("/app")                                        # ...l'espace le fait, et explique pourquoi
+    assert refused.status_code == 302 and refused.headers["Location"].endswith("/login?raison=expire")
+    page = text(client.get("/login?raison=expire"))
+    assert "Ton abonnement a expiré" in page and "Renouveler mon abonnement" in page
+
+
+def test_l_adresse_de_lancement_ne_se_garde_pas_en_memoire(env):
+    # La destination dépend de la personne qui ouvre l'application : ni le navigateur ni un intermédiaire ne la retient.
+    assert env.client.get(pwa.START_URL).headers["Cache-Control"] == "no-store"
+    assert member(env).get(pwa.START_URL).headers["Cache-Control"] == "no-store"
 
 
 def test_les_couleurs_du_manifeste_sont_celles_du_site(env):
@@ -131,7 +165,7 @@ def test_le_service_worker_ne_met_en_cache_que_la_page_hors_connexion_et_ses_fic
     assert all(path.startswith("/static/") for path in files[1:]), files
     for path in files:
         # Pas de page de l'espace client, pas d'API, pas de formulaire : des données privées sur un téléphone partagé.
-        assert not path.startswith(("/app", "/api/", "/login", "/logout")), path
+        assert not path.startswith(("/app", "/api/", "/login", "/logout", pwa.START_URL)), path
         # cache.addAll échoue en bloc si UN fichier ne répond pas 200 : le service worker ne s'installerait jamais.
         response = env.client.get(path)
         assert response.status_code == 200, path
@@ -238,7 +272,8 @@ def test_le_fichier_robots_ne_bloque_rien_de_ce_qu_il_faut_pour_installer_l_appl
     rules = [line.split(":", 1)[1].strip() for line in text(env.client.get("/robots.txt")).splitlines()
              if line.lower().startswith("disallow:")]
     assert rules                                                      # l'espace client et l'API restent bloqués
-    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/static/icons/icon-512.png", ASSET_LINKS):
+    for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/static/icons/icon-512.png", ASSET_LINKS,
+                 pwa.START_URL):
         assert not any(path.startswith(rule) for rule in rules if rule), path
 
 

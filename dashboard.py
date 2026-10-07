@@ -124,6 +124,15 @@ def create_app(lm=None, service=None, history_loader=None):
     def conditions():
         return render_template("conditions.html")
 
+    @app.get(pwa.START_URL)
+    def lancement():
+        """Ouverture de l'application installée (manifeste, APK Android). Un client connecté arrive dans son espace,
+        un visiteur sur l'accueil. Un abonnement expiré ou désactivé n'est pas jugé ici : l'espace le fait et renvoie
+        vers la connexion avec son message et le lien « Renouveler »."""
+        if session.get("authenticated") and session.get("email"):
+            return redirect(url_for("espace"))
+        return redirect(url_for("accueil"))
+
     # ------------------------------------------------------------------
     # Connexion / déconnexion
     # ------------------------------------------------------------------

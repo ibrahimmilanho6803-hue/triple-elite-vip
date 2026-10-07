@@ -16,9 +16,12 @@ from flask import Response, current_app, render_template, url_for
 import config
 
 OFFLINE_PATH = "/hors-ligne"
-# Page ouverte au lancement de l'application : un client connecté est redirigé vers son espace, les autres arrivent
-# sur le formulaire de connexion (et non sur « Ta session a expiré », que verrait un nouvel installateur sur /app).
-START_URL = "/login"
+# Adresse ouverte au lancement de l'application. Elle n'affiche rien elle-même (route « lancement » de dashboard.py) :
+# un client connecté est envoyé dans son espace, un visiteur sur l'accueil (offres, fonctionnement) plutôt que sur un
+# formulaire de connexion qu'il ne peut pas remplir, et jamais sur « Ta session a expiré » (ce que verrait un nouvel
+# installateur sur /app). Cette adresse est aussi écrite dans l'APK Android à sa fabrication et n'en est jamais relue :
+# la changer exige un nouvel APK (README). Ce qu'elle fait ensuite se règle côté serveur, sans toucher à l'APK.
+START_URL = "/debut"
 THEME_COLOR = "#0A0F2C"            # même couleur que <meta name="theme-color"> (base.html) et que le fond du site
 SHORT_NAME = "Triple Elite"
 
