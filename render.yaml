@@ -41,7 +41,7 @@ services:
       - key: SITE_URL
         value: https://triple-elite-vip.com
       - key: PAIEMENT_BASE_URL
-        value: https://triple-elite-vip-paiement.onrender.com
+        value: https://paiement.triple-elite-vip.com
 
   # --- Site de paiement : abonnement, PayDunya, envoi des clés ------------------------------------
   - type: web
@@ -73,4 +73,4 @@ services:
       - key: SITE_URL
         value: https://triple-elite-vip.com
       - key: PAIEMENT_BASE_URL
-        value: https://triple-elite-vip-paiement.onrender.com
+        value: https://paiement.triple-elite-vip.com

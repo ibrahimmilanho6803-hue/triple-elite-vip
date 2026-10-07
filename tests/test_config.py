@@ -1,5 +1,8 @@
-"""Lecture du fichier .env (développement local)."""
+"""Lecture du fichier .env (développement local) et adresses publiques par défaut."""
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 import config
 
@@ -38,3 +41,23 @@ def test_liste_d_adresses_de_test():
     assert config.parse_email_list(" A@x.com, b@y.com;C@Z.com  d@w.org ,, ") == {"a@x.com", "b@y.com", "c@z.com", "d@w.org"}
     assert config.parse_email_list("") == frozenset() and config.parse_email_list(None) == frozenset()
     assert config.PAYDUNYA_TEST_EMAILS == frozenset()               # rien dans l'environnement des tests
+
+
+def default_urls(**environment):
+    """(SITE_URL, PAIEMENT_URL) lus par un Python neuf : config lit l'environnement au chargement."""
+    env = {k: v for k, v in os.environ.items() if k not in ("SITE_URL", "PAIEMENT_BASE_URL")}
+    env.update(TEV_NO_DOTENV="1", **environment)
+    code = "import sys; sys.path.insert(0, '.'); import config; print(config.SITE_URL, config.PAIEMENT_URL)"
+    result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parent.parent, env=env,
+                            capture_output=True, text=True, check=True)
+    return tuple(result.stdout.split())
+
+
+def test_les_deux_sites_ont_une_adresse_du_domaine_de_la_marque_par_defaut():
+    # Le client voit « paiement.triple-elite-vip.com », pas l'adresse technique du service chez Render.
+    assert default_urls() == ("https://triple-elite-vip.com", "https://paiement.triple-elite-vip.com")
+
+
+def test_les_adresses_publiques_peuvent_etre_changees_par_variable_d_environnement():
+    urls = default_urls(PAIEMENT_BASE_URL="https://autre.exemple.org/", SITE_URL="https://site.exemple.org//")
+    assert urls == ("https://site.exemple.org", "https://autre.exemple.org")        # sans « / » final

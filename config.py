@@ -159,8 +159,10 @@ EMAIL_TIMEOUT = 20                 # secondes par tentative d'envoi
 EMAIL_ATTEMPTS = 3                 # tentatives avant d'abandonner (attente croissante entre deux)
 
 # --- Adresses publiques (modifiables par variables d'environnement) ---
+# Le site de paiement est un service Render à part, mais il porte une adresse du domaine de la marque (CNAME Namecheap
+# vers triple-elite-vip-paiement.onrender.com). L'ancienne adresse onrender.com répond toujours, comme secours.
 SITE_URL = (os.environ.get("SITE_URL") or "https://triple-elite-vip.com").rstrip("/")
-PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://triple-elite-vip-paiement.onrender.com").rstrip("/")
+PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-elite-vip.com").rstrip("/")
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"

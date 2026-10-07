@@ -6,7 +6,7 @@ Les clients paient par Mobile Money (PayDunya ; la carte bancaire viendra quand 
 voir « Moyens de paiement annoncés aux clients »), reçoivent une clé de licence, et se connectent à leur espace.
 
 - Site des clients : <https://triple-elite-vip.com> (service `dashboard`)
-- Paiement : <https://triple-elite-vip-paiement.onrender.com> (service `paiement`)
+- Paiement : <https://paiement.triple-elite-vip.com> (service `paiement`, adresse de secours : <https://triple-elite-vip-paiement.onrender.com>)
 - Hébergement : Render. Chaque envoi sur la branche `main` de GitHub redéploie les deux services.
 
 ## Ce que le site promet, et ce qu'il ne promet pas
@@ -86,7 +86,7 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `LICENSE_SECRET_KEY` | paiement | Sel de fabrication des nouvelles clés (en changer n'invalide aucune clé existante) |
 | `GMAIL_EMAIL`, `GMAIL_MDP` | paiement | Envoi par Gmail (mot de passe d'application) |
 | `BREVO_API_KEY`, `EMAIL_SENDER` | paiement | Envoi par Brevo (prioritaire sur Gmail si définie) ; `EMAIL_SENDER` = adresse d'expéditeur validée |
-| `SITE_URL`, `PAIEMENT_BASE_URL` | les deux | Adresses publiques (valeurs par défaut correctes) |
+| `SITE_URL`, `PAIEMENT_BASE_URL` | les deux | Adresses publiques (valeurs par défaut correctes ; si `PAIEMENT_BASE_URL` est définie sur Render, elle l'emporte sur le code) |
 | `ODDS_CACHE_MINUTES`, `WEB_CONCURRENCY`, `GUNICORN_THREADS` | facultatif | Durée de conservation des cotes (360 min), nombre de processus (1) et de fils (4) |
 
 ## Lancer en local
@@ -147,6 +147,11 @@ la cible). Liste de contrôle :
   `gunicorn paiement:app --bind 0.0.0.0:10000` (chaque service a son propre port chez Render). `gunicorn.conf.py` ajoute
   des fils d'exécution (pages réactives pendant une génération) sans rien changer côté Render.
 - **Health Check Path** : `/health` sur les deux services.
+- **Adresses** : le site des clients est `triple-elite-vip.com` (Custom Domain du service dashboard). Le site de paiement
+  est `paiement.triple-elite-vip.com` : Custom Domain du service paiement (Settings > Custom Domains) **et** un
+  enregistrement DNS chez Namecheap (Advanced DNS) de type CNAME, hôte `paiement`, valeur
+  `triple-elite-vip-paiement.onrender.com`. L'adresse `…onrender.com` répond toujours : la garder (secours, anciens liens et
+  anciennes factures PayDunya). Si `PAIEMENT_BASE_URL` est définie sur Render, elle prime sur la valeur du code.
 - **Python** : `.python-version` fixe la version (3.13). Une variable `PYTHON_VERSION` sur Render prime sur ce fichier.
 - **Disque persistant** (dashboard) monté sur `/var/data`, avec `DATA_DIR=/var/data`. Sans lui, l'historique des matchs et
   des combinés est perdu à chaque déploiement.
@@ -255,9 +260,9 @@ en exigent un. Identifiant : `com.tripleelitevip.app`. Lancement : `/login`.
 - **Installer sur un téléphone** : ouvrir le fichier `.apk` (reçu par le chat, WhatsApp, Telegram, câble USB, Drive), autoriser
   « Installer des applications inconnues » pour l'application qui l'ouvre quand Android le demande. Play Protect peut
   afficher un avertissement pour une application qui ne vient pas de Google Play : c'est normal ici.
-- **Paiement** : le paiement a lieu sur une autre adresse (site de paiement, puis PayDunya) : Android l'ouvre dans une fenêtre
-  Chrome par-dessus l'application, qu'on ferme pour revenir. Servir le paiement depuis le domaine principal supprimerait
-  cette étape (amélioration possible).
+- **Paiement** : le paiement a lieu sur une autre adresse (`paiement.triple-elite-vip.com`, puis PayDunya) : Android l'ouvre
+  dans une fenêtre Chrome par-dessus l'application, avec l'adresse et le cadenas visibles, qu'on ferme pour revenir. C'est
+  voulu : pour un paiement, le client doit voir où il paie (et PayDunya renvoie de toute façon vers d'autres sites).
 - **Vérification des développeurs par Google** : l'installation directe d'APK n'est pas bloquée aujourd'hui. Google l'impose
   depuis le 30 septembre 2026 dans quatre pays (Brésil, Indonésie, Singapour, Thaïlande) sur les appareils certifiés, et
   prévoit le monde entier en 2027 : enregistrer alors l'application (identifiant + empreinte) dans la console Android
