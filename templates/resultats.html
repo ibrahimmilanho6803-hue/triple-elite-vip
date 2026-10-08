@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% from "_coupon.html" import slip %}
+{% from "_meta.html" import social with context %}
+
+{% block title %}Résultats réels de nos pronostics de football : gagnés et perdus – Triple Elite VIP{% endblock %}
+{% block description %}Tous nos combinés de football déjà joués, gagnés comme perdus, avec le score de chaque match. Le bilan se met à jour tout seul.{% endblock %}
+{% block robots %}<meta name="robots" content="index, follow">{% endblock %}
+{% block head %}
+  <link rel="canonical" href="{{ site_url }}/resultats">
+  {{ social("Résultats réels de nos pronostics de football", "Tous nos combinés déjà joués, gagnés comme perdus, avec le score de chaque match. Rien n’est trié.", "/resultats") }}
+{% endblock %}
+
+{% block nav %}{% include "_nav_public.html" %}{% endblock %}
+
+{% block main %}
+<div class="container">
+  <header class="pagehead">
+    <h1 class="pagehead__title">Nos résultats, gagnés et perdus</h1>
+    <p class="lead">Chaque combiné généré est enregistré, puis comparé au score réel une fois les matchs joués. Rien n’est trié&nbsp;: tu vois les victoires comme les défaites.</p>
+  </header>
+
+  <div class="public">
+    {% if r.combos_settled %}
+    <dl class="bilan">
+      <div>
+        <dt>Combinés gagnés</dt>
+        <dd>
+          <span class="bilan__n bilan__n--or">{{ r.won }}&nbsp;/&nbsp;{{ r.combos_settled }}</span>
+          <p class="bilan__sub">{% if r.combo_win_rate is not none %}soit {{ r.combo_win_rate }}&nbsp;% des combinés joués{% else %}pourcentage affiché dès {{ r.min_combos }} combinés joués{% endif %}</p>
+        </dd>
+      </div>
+      <div>
+        <dt>Pronostics gagnés</dt>
+        <dd>
+          <span class="bilan__n">{{ r.legs_won }}&nbsp;/&nbsp;{{ r.legs_settled }}</span>
+          <p class="bilan__sub">{% if r.leg_win_rate is not none %}soit {{ r.leg_win_rate }}&nbsp;% des pronostics joués{% else %}pourcentage affiché dès {{ r.min_legs }} pronostics joués{% endif %}</p>
+        </dd>
+      </div>
+      <div>
+        <dt>En attente</dt>
+        <dd>
+          <span class="bilan__n">{{ r.pending }}</span>
+          <p class="bilan__sub">combinés dont les matchs ne sont pas tous joués</p>
+        </dd>
+      </div>
+    </dl>
+
+    <div class="bilan__note">
+      {% if r.since %}
+      <p>Bilan depuis le {{ r.since|fr_date }}, mis à jour automatiquement.</p>
+      {% endif %}
+      {% if r.avg_chance is not none and r.combo_win_rate is not none %}
+      <p><strong>Annoncé et constaté.</strong> Chance moyenne annoncée sur les coupons&nbsp;: {{ r.avg_chance }}&nbsp;%. Réussite constatée&nbsp;: {{ r.combo_win_rate }}&nbsp;%. Plus ces deux chiffres sont proches, plus les chances annoncées sont réalistes.</p>
+      {% endif %}
+      <p>Un combiné est gagné quand tous ses pronostics le sont, et perdu dès qu’un seul échoue. Un pronostic présent dans plusieurs combinés n’est compté qu’une fois. Les matchs reportés ou annulés ne sont pas comptés.</p>
+      {% if r.lost_unfinished %}
+      <p>{{ r.lost_unfinished }} combiné{{ 's' if r.lost_unfinished > 1 }} déjà perdu{{ 's' if r.lost_unfinished > 1 }} {{ 'comptent' if r.lost_unfinished > 1 else 'compte' }} dans le bilan&nbsp;; {{ 'ils s’afficheront' if r.lost_unfinished > 1 else 'il s’affichera' }} ci-dessous quand tous {{ 'leurs' if r.lost_unfinished > 1 else 'ses' }} matchs seront joués.</p>
+      {% endif %}
+      <p>Les cotes précédées de «&nbsp;≈&nbsp;» sont estimées par notre modèle, pas celles d’un bookmaker. Ce bilan compte des pronostics gagnés ou perdus, jamais des gains en argent.</p>
+    </div>
+
+    {% if r.recent %}
+    <h2 class="h2 public__title">Les derniers combinés joués</h2>
+    {% if r.recent_total > r.recent|length %}
+    <p class="muted public__sub">Les {{ r.recent|length }} plus récents sur {{ r.recent_total }}.</p>
+    {% endif %}
+    <div class="history__grid">
+      {% for combo in r.recent %}
+      {{ slip(combo, 'Combiné du ' ~ (combo.generated_at|fr_day_month), combo.status) }}
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="empty">
+      <p class="empty__title">Les premiers résultats arrivent</p>
+      <p>Dès que les matchs des premiers combinés seront joués, le bilan et le détail de chaque combiné s’afficheront ici, gagnés ou perdus.</p>
+      {% if free_pick_enabled %}
+      <a class="btn btn--or" href="{{ free_url }}">Voir le combiné gratuit du jour</a>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <section class="panel cta">
+      <h2 class="h2">Reçois les prochains combinés</h2>
+      <p>Génère tes trois combinés quand tu veux, avec la cote, la confiance de chaque pronostic et la chance de réussite estimée. À partir de {{ price_monthly }} par mois.</p>
+      <div class="cta__actions">
+        <a class="btn btn--or" href="{{ paiement_url }}">S’abonner</a>
+        {% if free_pick_enabled %}
+        <a class="btn btn--ligne" href="{{ free_url }}">Voir le combiné gratuit du jour</a>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ asset('js/public.js') }}" defer></script>
+{% endblock %}

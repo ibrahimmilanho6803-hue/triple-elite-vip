@@ -3,10 +3,7 @@
 {% block title %}Conditions et avertissement – Triple Elite VIP{% endblock %}
 {% block robots %}<meta name="robots" content="index, follow">{% endblock %}
 
-{% block nav %}
-  <a class="btn btn--ligne btn--petit nav-secondary" href="{{ login_url }}">Connexion</a>
-  <a class="btn btn--or btn--petit" href="{{ paiement_url }}">S’abonner</a>
-{% endblock %}
+{% block nav %}{% include "_nav_public.html" %}{% endblock %}
 
 {% block main %}
 <div class="container">

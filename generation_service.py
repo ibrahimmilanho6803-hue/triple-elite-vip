@@ -118,6 +118,12 @@ class GenerationService:
                         continue
         return entry, fresh
 
+    def latest(self):
+        """Dernière génération réussie, même ancienne : {"generated_ts", "generated_at", "combos", "meta"}, ou None.
+        Ne démarre jamais rien (lecture seule) : c'est ce qu'utilisent les pages publiques."""
+        entry, _fresh = self._cached()
+        return entry
+
     def _save_history(self, combos):
         try:
             os.makedirs(self.results_dir, exist_ok=True)

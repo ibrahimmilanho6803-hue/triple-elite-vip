@@ -146,6 +146,18 @@ def test_accueil_robots_et_sante(env):
     assert env.client.get("/introuvable").status_code == 404
 
 
+def test_le_pied_de_page_renvoie_vers_les_pages_publiques_du_site_client(env, monkeypatch):
+    """Le paiement vit sur une autre adresse que le site client : ses liens vers les résultats et le combiné gratuit
+    sont des adresses complètes, et ces pages n'existent pas ici."""
+    page = text(env.client.get("/paiement"))
+    assert f'href="{config.SITE_URL}/resultats"' in page and f'href="{config.SITE_URL}/gratuit"' in page
+    for path in ("/resultats", "/gratuit", "/sitemap.xml"):
+        assert env.client.get(path).status_code == 404, path
+    monkeypatch.setattr(config, "FREE_PICK_ENABLED", False)
+    page = text(env.client.get("/paiement"))
+    assert f"{config.SITE_URL}/gratuit" not in page and f'href="{config.SITE_URL}/resultats"' in page
+
+
 def test_le_site_de_paiement_n_est_pas_une_application_installable(env):
     """Seul le site client est installable (pwa.py) : la page de paiement s'ouvre dans le navigateur, sans manifeste
     ni service worker (qui, sur cette adresse, n'aurait aucune raison de s'occuper des paiements)."""

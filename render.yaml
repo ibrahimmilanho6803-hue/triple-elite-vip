@@ -42,6 +42,9 @@ services:
         value: https://triple-elite-vip.com
       - key: PAIEMENT_BASE_URL
         value: https://paiement.triple-elite-vip.com
+      # Facultatifs, absents par défaut (voir README, « Pages publiques ») :
+      #   FREE_PICK_ENABLED=0     retire le combiné gratuit (/gratuit et ses liens) ; activé si la variable n'existe pas
+      #   AUTO_GENERATE_HOUR=6    génération automatique chaque jour dès 6 h UTC ; APPEL PAYANT à l'IA, désactivée si absente
 
   # --- Site de paiement : abonnement, PayDunya, envoi des clés ------------------------------------
   - type: web

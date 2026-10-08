@@ -1,18 +1,14 @@
 {% extends "base.html" %}
+{% from "_meta.html" import social with context %}
 
 {% block title %}Triple Elite VIP : 3 combinés de football, cote 2,50 minimum{% endblock %}
-{% block robots %}<meta name="robots" content="index, follow">
+{% block robots %}<meta name="robots" content="index, follow">{% endblock %}
+{% block head %}
   <link rel="canonical" href="{{ site_url }}/">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="Triple Elite VIP : 3 combinés de football, cote 2,50 minimum">
-  <meta property="og:description" content="Cinq championnats analysés par IA, trois combinés de trois matchs, la chance de réussite estimée affichée pour chacun.">
-  <meta property="og:url" content="{{ site_url }}/">
+  {{ social("Triple Elite VIP : 3 combinés de football, cote 2,50 minimum", "Cinq championnats analysés par IA, trois combinés de trois matchs, la chance de réussite estimée affichée pour chacun. Résultats réels publics.", "/") }}
 {% endblock %}
 
-{% block nav %}
-  <a class="btn btn--ligne btn--petit nav-secondary" href="{{ login_url }}">Connexion</a>
-  <a class="btn btn--or btn--petit" href="{{ paiement_url }}">S’abonner</a>
-{% endblock %}
+{% block nav %}{% include "_nav_public.html" %}{% endblock %}
 
 {% block main %}
 <section class="hero">
@@ -28,6 +24,11 @@
       <p class="hero__fine">À partir de {{ price_monthly }} par mois. Orange Money, MTN, Moov, Wave ou carte bancaire.</p>
       {% else %}
       <p class="hero__fine">À partir de {{ price_monthly }} par mois. Paiement par Mobile Money (Orange Money, MTN, Moov, Wave) depuis&nbsp;: {{ payment_countries }}.</p>
+      {% endif %}
+      {% if free_pick_enabled %}
+      <p class="hero__links">Pas encore décidé&nbsp;? <a href="{{ free_url }}">Vois le combiné gratuit du jour</a> ou <a href="{{ results_url }}">nos résultats réels</a>.</p>
+      {% else %}
+      <p class="hero__links">Pas encore décidé&nbsp;? <a href="{{ results_url }}">Consulte nos résultats réels</a>.</p>
       {% endif %}
     </div>
 
@@ -142,6 +143,56 @@
       <h2 class="h2">On te dit franchement ce que tu achètes</h2>
       <p>Un combiné n’est gagné que si ses trois pronostics le sont. Même avec des paris jugés fiables à 70&nbsp;% chacun, le combiné réussit environ une fois sur trois. Aucun service sérieux ne peut te garantir 80 ou 90&nbsp;%.</p>
       <p>Chez nous, la chance estimée de chaque combiné est affichée sur le coupon, et tout l’historique reste visible dans ton espace&nbsp;: combinés gagnés et perdus, match par match, avec le score réel.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--ligne" id="resultats">
+  <div class="container">
+    <div class="section__head">
+      <h2 class="h2">Nos résultats sont publics</h2>
+      <p class="lead">Chaque combiné généré est enregistré, puis comparé au score réel. Tu vois les gagnés comme les perdus, avec le score de chaque match, sans avoir à t’abonner.</p>
+    </div>
+    {% if proof and proof.enough %}
+    <dl class="bilan">
+      <div>
+        <dt>Combinés gagnés</dt>
+        <dd>
+          <span class="bilan__n bilan__n--or">{{ proof.won }}&nbsp;/&nbsp;{{ proof.combos_settled }}</span>
+          <p class="bilan__sub">soit {{ proof.combo_win_rate }}&nbsp;% des combinés joués</p>
+        </dd>
+      </div>
+      <div>
+        <dt>Pronostics gagnés</dt>
+        <dd>
+          <span class="bilan__n">{{ proof.legs_won }}&nbsp;/&nbsp;{{ proof.legs_settled }}</span>
+          <p class="bilan__sub">{% if proof.leg_win_rate is not none %}soit {{ proof.leg_win_rate }}&nbsp;% des pronostics joués{% else %}pronostics joués, un par un{% endif %}</p>
+        </dd>
+      </div>
+      {% if proof.avg_chance is not none %}
+      <div>
+        <dt>Chance annoncée</dt>
+        <dd>
+          <span class="bilan__n">{{ proof.avg_chance }}&nbsp;%</span>
+          <p class="bilan__sub">en moyenne sur les coupons, à comparer à la réussite constatée</p>
+        </dd>
+      </div>
+      {% else %}
+      <div>
+        <dt>En attente</dt>
+        <dd>
+          <span class="bilan__n">{{ proof.pending }}</span>
+          <p class="bilan__sub">combinés dont les matchs ne sont pas tous joués</p>
+        </dd>
+      </div>
+      {% endif %}
+    </dl>
+    {% endif %}
+    <div class="proof__actions">
+      <a class="btn btn--ligne" href="{{ results_url }}">Voir tous les résultats</a>
+      {% if free_pick_enabled %}
+      <a class="btn btn--or" href="{{ free_url }}">Voir le combiné gratuit du jour</a>
+      {% endif %}
     </div>
   </div>
 </section>

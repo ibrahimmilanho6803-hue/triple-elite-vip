@@ -548,6 +548,50 @@ button { cursor: pointer; }
 .doc ul { list-style: disc; padding-left: 22px; }
 .doc li + li { margin-top: 6px; }
 
+/* ------------------------------------------------------------------ pages publiques : résultats, combiné gratuit */
+.nav-link { color: var(--craie); text-decoration: none; font-weight: 600; font-size: 0.9375rem; padding: 8px 10px; }
+.nav-link:hover { color: var(--texte); }
+
+.pagehead { padding: 48px 0 8px; }
+.pagehead__title {
+  font-family: var(--font-display); font-weight: 800; text-transform: uppercase;
+  font-size: 2.6rem; font-size: clamp(2.4rem, 7vw, 4rem); line-height: 0.95; letter-spacing: 0.005em;
+}
+.pagehead .lead { margin-top: 16px; }
+.public { padding: 28px 0 80px; }
+.public__title { margin: 56px 0 8px; }
+.public__sub { margin: 0 0 24px; }
+.public .bilan__note p + p { margin-top: 8px; }
+.public .bilan__note strong { color: var(--texte); font-weight: 650; }
+.public .history__grid { margin-top: 24px; }
+
+.hero__links { margin-top: 18px; color: var(--craie); font-size: 0.9375rem; }
+.proof__actions { display: flex; flex-wrap: wrap; margin-top: 28px; }
+.proof__actions .btn { margin: 0 12px 12px 0; }
+
+/* page « combiné gratuit » : le coupon d'un côté, le partage et l'invitation à s'abonner de l'autre */
+.free { display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 1fr); grid-column-gap: 56px; align-items: start; }
+.free__deadline { margin-bottom: 22px; font-weight: 600; }
+.free__note { margin-top: 24px; color: var(--craie); font-size: 0.9375rem; max-width: 60ch; }
+.free__note p + p { margin-top: 8px; }
+.free__note strong { color: var(--texte); font-weight: 650; }
+
+.share__title { font-family: var(--font-display); font-weight: 750; font-size: 1.5rem; line-height: 1.1; }
+.share__row { display: flex; flex-wrap: wrap; margin-top: 12px; }
+.share__row .btn { margin: 0 12px 12px 0; }
+.share__status { min-height: 1.4em; color: var(--vert); font-size: 0.9rem; }
+.btn--whatsapp { background: #25d366; color: var(--encre); }
+.btn--whatsapp:hover { background: #3be07a; color: var(--encre); }
+.btn--telegram { background: #2aabee; color: var(--encre); }
+.btn--telegram:hover { background: #4cbcf5; color: var(--encre); }
+
+.cta { margin-top: 56px; max-width: 760px; }
+.free .cta { margin-top: 28px; max-width: none; }
+.cta__title { font-family: var(--font-display); font-weight: 750; font-size: 1.7rem; line-height: 1.1; }
+.cta p { margin-top: 10px; color: var(--craie); max-width: 62ch; }
+.cta__actions { display: flex; flex-wrap: wrap; margin-top: 18px; }
+.cta__actions .btn { margin: 0 12px 12px 0; }
+
 /* ------------------------------------------------------------------ écrans moyens et petits */
 @media (max-width: 960px) {
   .hero__grid, .honest, .pay { grid-template-columns: minmax(0, 1fr); }
@@ -555,6 +599,8 @@ button { cursor: pointer; }
   .honest__fig { margin-bottom: 18px; }
   .pay__summary { position: static; margin-top: 28px; }
   .results__grid, .history__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .free { grid-template-columns: minmax(0, 1fr); }
+  .free__side { margin-top: 32px; }
   .leagues { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .leagues li:nth-child(4) { border-left: 0; }
   .leagues li:nth-child(n + 4) { border-top: 1px solid var(--ligne); }
@@ -580,6 +626,11 @@ button { cursor: pointer; }
   .brand__mark { width: 28px; height: 28px; margin-right: 8px; }
   .topbar__nav .btn { padding: 0 12px; white-space: nowrap; }
   .hero__cta .btn { flex: 1 1 100%; margin-right: 0; }
+  .nav-wide { display: none; }
+  .pagehead { padding-top: 32px; }
+  .public { padding-bottom: 56px; }
+  .public__title { margin-top: 40px; }
+  .share__row .btn { flex: 1 1 100%; margin-right: 0; }
   .bilan { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bilan > div { padding: 16px; }
   .bilan > div:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--ligne); }

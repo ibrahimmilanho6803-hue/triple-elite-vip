@@ -9,8 +9,9 @@ un bouton qui ne réagit pas, une erreur JavaScript.
 """
 import re
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -21,7 +22,7 @@ import config  # noqa: E402
 import license_manager  # noqa: E402
 from paydunya import PayDunyaError  # noqa: E402
 from pipeline import GenerationError  # noqa: E402
-from site_fakes import EMAIL, KEY, make_pipeline  # noqa: E402
+from site_fakes import EMAIL, KEY, history_with, make_pipeline  # noqa: E402
 
 def norm(text):
     """Texte sur une seule ligne, insécables compris (le site en met avant « % », « € », « : »...)."""
@@ -52,6 +53,12 @@ def log_in_and_generate(page, site):
 def no_horizontal_overflow(page):
     """Aucun élément ne dépasse de l'écran : pas de défilement horizontal de la page."""
     return page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+
+
+def make_free_pick(site):
+    """Un abonné vient de générer les combinés : le combiné gratuit du jour existe (sans cela, /gratuit est vide)."""
+    site.service.request_generation()
+    site.service._thread.join(15)
 
 
 # ======================================================================================================
@@ -232,7 +239,8 @@ class TestPagesPubliques:
         assert "34 %" in text                                         # l'avertissement honnête sur les combinés
         assert page.locator("a[href$='/paiement?plan=yearly']").count() >= 1
 
-    @pytest.mark.parametrize("path, status", [("/conditions", 200), ("/login", 200), ("/n-existe-pas", 404)])
+    @pytest.mark.parametrize("path, status", [("/conditions", 200), ("/login", 200), ("/resultats", 200),
+                                              ("/gratuit", 200), ("/n-existe-pas", 404)])
     def test_pages_sans_erreur_de_navigateur(self, page, site, path, status):
         response = page.goto(site.url + path)
         assert response.status == status
@@ -253,10 +261,160 @@ class TestPagesPubliques:
         page.problems.clear()                                         # la violation est le comportement voulu
 
 
-@pytest.mark.parametrize("path", ["/", "/login", "/conditions"])
+class TestResultatsEtCombineGratuit:
+    """Pages publiques « Résultats » et « Combiné gratuit du jour » : vrai JavaScript (heures locales, copie du lien)."""
+
+    def test_resultats_affiche_le_bilan_et_les_coupons_joues(self, page, start_site):
+        site = start_site(history=history_with(won=8, lost=5, unfinished=1, pending=2))
+        response = page.goto(site.url + "/resultats")
+        assert response.status == 200
+        expect(page.locator("h1")).to_have_text("Nos résultats, gagnés et perdus")
+        text = norm(page.locator("main").inner_text())
+        assert "8 / 14" in text and "soit 57 % des combinés joués" in text
+        expect(page.locator(".history__grid .slip")).to_have_count(12)
+        expect(page.locator(".stamp--won").first).to_be_visible()
+        expect(page.locator(".stamp--lost").first).to_be_visible()
+        expect(page.locator(".leg__result--lost").first).to_contain_text("Perdu, score")
+        assert no_horizontal_overflow(page)
+
+    def test_resultats_sans_historique_joue(self, page, start_site):
+        site = start_site(history=history_with(pending=2))
+        page.goto(site.url + "/resultats")
+        expect(page.locator(".empty__title")).to_have_text("Les premiers résultats arrivent")
+        expect(page.locator(".bilan")).to_have_count(0)
+
+    @pytest.mark.parametrize("zone", ["Europe/Paris", "Africa/Lagos", "America/New_York"])
+    def test_les_heures_sont_celles_de_l_appareil(self, make_page, site, zone):
+        make_free_pick(site)
+        page = make_page(timezone_id=zone)
+        page.goto(site.url + "/gratuit")
+        times = page.locator("time.local")
+        assert times.count() >= 4                                           # la limite et l'heure de chaque match
+        for index in range(times.count()):
+            element = times.nth(index)
+            local = datetime.fromisoformat(element.get_attribute("datetime")).astimezone(ZoneInfo(zone))
+            shown = norm(element.inner_text())
+            assert "UTC" not in shown, shown
+            assert shown.endswith(f"à {local.hour:02d} h {local.minute:02d}"), (shown, local)
+            assert re.search(rf"\b{local.day}\b", shown), (shown, local)
+
+    def test_le_combine_gratuit_est_affiche_en_entier(self, page, site):
+        make_free_pick(site)
+        page.goto(site.url + "/gratuit")
+        expect(page.locator("h1")).to_have_text("Le combiné gratuit du jour")
+        expect(page.locator(".free .slip .leg")).to_have_count(3)
+        text = norm(page.locator(".free").inner_text())
+        assert "Cote totale 2,55" in text.replace("COTE TOTALE", "Cote totale") and "31 %" in text
+        for other in ("Bayern", "Lille", "Chelsea", "Napoli"):
+            assert other not in text and other not in page.content()         # les autres combinés restent payants
+        assert no_horizontal_overflow(page)
+
+    def test_copier_le_lien(self, page, site):
+        make_free_pick(site)
+        page.goto(site.url + "/gratuit")
+        button = page.get_by_role("button", name="Copier le lien")
+        expect(button).to_be_visible()                                      # caché dans le HTML, montré par le script
+        button.click()
+        expect(page.locator("[data-copy-status]")).to_have_text("Lien copié.")
+        assert page.evaluate("navigator.clipboard.readText()") == f"{config.SITE_URL}/gratuit"
+
+    @pytest.mark.parametrize("clipboard, copied, message", [
+        ("absent", True, "Lien copié."),
+        ("refuse", True, "Lien copié."),
+        ("absent", False, "Copie impossible : copie l’adresse dans la barre de ton navigateur."),
+    ])
+    def test_copier_le_lien_sans_presse_papiers_moderne(self, make_page, site, clipboard, copied, message):
+        make_free_pick(site)
+        page = make_page()
+        page.add_init_script("""(() => {
+            %s
+            document.execCommand = command => {
+                const field = document.activeElement;
+                window.__copie = { command, text: field && field.value ? field.value.substring(field.selectionStart, field.selectionEnd) : null };
+                return %s;
+            };
+        })()""" % ("Object.defineProperty(navigator, 'clipboard', { value: undefined });" if clipboard == "absent"
+                   else "Object.defineProperty(navigator.clipboard, 'writeText', { value: () => Promise.reject(new Error('refusé')) });",
+                   "true" if copied else "false"))
+        page.goto(site.url + "/gratuit")
+        page.get_by_role("button", name="Copier le lien").click()
+        expect(page.locator("[data-copy-status]")).to_have_text(message)
+        assert page.evaluate("window.__copie") == {"command": "copy", "text": f"{config.SITE_URL}/gratuit"}
+
+    def test_les_boutons_de_partage_sont_de_vrais_liens(self, page, site):
+        make_free_pick(site)
+        page.goto(site.url + "/gratuit")
+        for name, host in (("WhatsApp", "https://wa.me/"), ("Telegram", "https://t.me/")):
+            link = page.get_by_role("link", name=name)
+            expect(link).to_be_visible()
+            assert link.get_attribute("href").startswith(host)
+            assert link.get_attribute("target") == "_blank" and "noopener" in link.get_attribute("rel")
+
+    def test_sans_javascript_le_partage_marche_et_les_heures_restent_en_utc(self, make_page, site):
+        make_free_pick(site)
+        page = make_page(java_script_enabled=False)
+        page.goto(site.url + "/gratuit")
+        expect(page.get_by_role("link", name="WhatsApp")).to_be_visible()
+        expect(page.get_by_role("link", name="Telegram")).to_be_visible()
+        expect(page.get_by_role("button", name="Copier le lien")).to_be_hidden()      # il a besoin du script
+        assert "UTC" in norm(page.locator(".free").inner_text())
+
+    def test_sans_generation_la_page_gratuite_est_vide_et_renvoie_vers_les_resultats(self, page, site):
+        page.goto(site.url + "/gratuit")
+        expect(page.locator(".empty__title")).to_have_text("Le combiné gratuit n’est pas encore prêt")
+        expect(page.get_by_role("link", name="WhatsApp")).to_have_count(0)
+        page.locator(".empty").get_by_role("link", name="Voir les résultats").click()
+        expect(page).to_have_url(re.compile(r"/resultats$"))
+        expect(page.locator("h1")).to_have_text("Nos résultats, gagnés et perdus")
+
+    def test_visiter_ces_pages_ne_lance_aucune_generation(self, page, site):
+        for path in ("/", "/resultats", "/gratuit"):
+            page.goto(site.url + path)
+        assert site.pipeline.state["calls"] == 0 and site.service.generations_today() == 0
+
+    def test_depuis_l_accueil_on_arrive_aux_resultats_et_au_combine_gratuit(self, page, start_site):
+        site = start_site(history=history_with(won=8, lost=5, unfinished=1, pending=2))
+        make_free_pick(site)
+        page.goto(site.url + "/")
+        section = page.locator("#resultats")
+        expect(section).to_contain_text("8 / 14")
+        expect(section).to_contain_text("57 %")
+        section.get_by_role("link", name="Voir tous les résultats").click()
+        expect(page).to_have_url(re.compile(r"/resultats$"))
+        page.go_back()
+        page.locator("#resultats").get_by_role("link", name="Voir le combiné gratuit du jour").click()
+        expect(page).to_have_url(re.compile(r"/gratuit$"))
+        expect(page.locator(".free .slip")).to_be_visible()
+
+    def test_menu_complet_sur_ordinateur_liens_du_pied_de_page_sur_telephone(self, page, phone_page, site):
+        page.goto(site.url + "/")
+        expect(page.locator("header .nav-link", has_text="Résultats")).to_be_visible()
+        expect(page.locator("header .nav-link", has_text="Combiné gratuit")).to_be_visible()
+        phone_page.goto(site.url + "/")
+        expect(phone_page.locator("header .nav-link", has_text="Résultats")).to_be_hidden()    # la place va à « S’abonner »
+        expect(phone_page.locator("header").get_by_role("link", name="S’abonner")).to_be_visible()
+        footer = phone_page.locator("footer")
+        expect(footer.get_by_role("link", name="Résultats")).to_be_visible()
+        expect(footer.get_by_role("link", name="Combiné gratuit du jour")).to_be_visible()
+        assert no_horizontal_overflow(phone_page)
+
+
+@pytest.mark.parametrize("path", ["/", "/login", "/conditions", "/resultats", "/gratuit"])
 def test_pages_publiques_sans_debordement_sur_telephone(phone_page, site, path):
     phone_page.goto(site.url + path)
     assert no_horizontal_overflow(phone_page)
+
+
+@pytest.mark.parametrize("path", ["/", "/resultats", "/gratuit"])
+def test_pages_publiques_pleines_sans_debordement_sur_telephone(phone_page, start_site, path):
+    """Avec un historique fourni et un combiné gratuit : les coupons (cotes, scores, tampons) tiennent dans l'écran."""
+    site = start_site(history=history_with(won=8, lost=5, unfinished=1, pending=2, void=1))
+    make_free_pick(site)
+    phone_page.goto(site.url + path)
+    assert no_horizontal_overflow(phone_page)
+    for box in phone_page.locator(".slip").evaluate_all(
+            "slips => slips.map(s => { const r = s.getBoundingClientRect(); return [r.left, r.right]; })"):
+        assert box[0] >= 0 and box[1] <= 390 + 0.5, box
 
 
 def test_espace_client_sans_debordement_sur_telephone(phone_page, site):

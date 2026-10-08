@@ -61,3 +61,36 @@ def test_les_deux_sites_ont_une_adresse_du_domaine_de_la_marque_par_defaut():
 def test_les_adresses_publiques_peuvent_etre_changees_par_variable_d_environnement():
     urls = default_urls(PAIEMENT_BASE_URL="https://autre.exemple.org/", SITE_URL="https://site.exemple.org//")
     assert urls == ("https://site.exemple.org", "https://autre.exemple.org")        # sans « / » final
+
+
+def read_config(expression, **environment):
+    """Valeur d'une expression de config lue par un Python neuf (config lit l'environnement au chargement)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("FREE_PICK_ENABLED", "AUTO_GENERATE_HOUR")}
+    env.update(TEV_NO_DOTENV="1", **environment)
+    code = f"import sys; sys.path.insert(0, '.'); import config; print(repr({expression}))"
+    result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parent.parent, env=env,
+                            capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+def test_heure_de_generation_automatique_lue_dans_un_texte():
+    for raw, expected in ((None, None), ("", None), ("  ", None), ("abc", None), ("-1", None), ("24", None),
+                          ("6.5", None), ("0", 0), ("6", 6), (" 7 ", 7), ("23", 23)):
+        assert config.parse_hour(raw) == expected, raw
+
+
+def test_la_generation_automatique_est_desactivee_par_defaut():
+    # Chaque génération est un appel payant à l'IA : elle ne part jamais sans que le propriétaire l'ait demandé.
+    assert config.AUTO_GENERATE_HOUR is None
+    assert read_config("config.AUTO_GENERATE_HOUR") == "None"
+    assert read_config("config.AUTO_GENERATE_HOUR", AUTO_GENERATE_HOUR="6") == "6"
+    assert read_config("config.AUTO_GENERATE_HOUR", AUTO_GENERATE_HOUR="plus tard") == "None"
+    assert 1 <= config.AUTO_GENERATE_MAX_ATTEMPTS <= 5
+
+
+def test_le_combine_gratuit_est_actif_par_defaut_et_se_coupe_par_variable_d_environnement():
+    assert read_config("config.FREE_PICK_ENABLED") == "True"
+    for off in ("0", "false", "NON", "Off", "no"):
+        assert read_config("config.FREE_PICK_ENABLED", FREE_PICK_ENABLED=off) == "False", off
+    for on in ("1", "oui", "true"):
+        assert read_config("config.FREE_PICK_ENABLED", FREE_PICK_ENABLED=on) == "True", on

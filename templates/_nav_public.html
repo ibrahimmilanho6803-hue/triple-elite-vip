@@ -1,0 +1,8 @@
+{# Menu des pages publiques (accueil, résultats, combiné gratuit, conditions). Sur téléphone, seul « S’abonner » reste dans
+   la barre (place) : les autres liens sont dans le pied de page et dans le corps des pages. #}
+  {% if free_pick_enabled %}
+  <a class="nav-link nav-wide" href="{{ free_url }}">Combiné gratuit</a>
+  {% endif %}
+  <a class="nav-link nav-wide" href="{{ results_url }}">Résultats</a>
+  <a class="btn btn--ligne btn--petit nav-secondary" href="{{ login_url }}">Connexion</a>
+  <a class="btn btn--or btn--petit" href="{{ paiement_url }}">S’abonner</a>

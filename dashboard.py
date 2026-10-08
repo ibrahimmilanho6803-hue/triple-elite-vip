@@ -8,19 +8,27 @@ import secrets
 from functools import wraps
 from types import SimpleNamespace
 from urllib.parse import quote
+from xml.sax.saxutils import escape
 
-from flask import Flask, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, session, url_for
 
 import combo_history
 import config
 import pwa
 import web_common as web
+from daily_generation import DailyGeneration
 from generation_service import GenerationService
 from license_manager import LicenseManager, normalize_email
+from showcase import Showcase, share_links
 
 log = logging.getLogger("dashboard")
 
-ROBOTS_TXT = "User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /api/\nDisallow: /login\n"
+
+def build_robots():
+    """Tout est public sauf l'espace client, l'API et la connexion ; le plan du site aide les moteurs de recherche."""
+    return ("User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /api/\nDisallow: /login\n"
+            f"Sitemap: {config.SITE_URL}/sitemap.xml\n")
+
 
 # Raisons de retour à la page de connexion (?raison=...) : message affiché, lien de renouvellement.
 LOGIN_REASONS = {
@@ -31,6 +39,7 @@ LOGIN_REASONS = {
 }
 
 MSG_UNAVAILABLE = "Service momentanément indisponible. Réessaie dans un instant."
+MSG_RESULTS_UNAVAILABLE = "Les résultats sont momentanément indisponibles. Réessaie dans quelques minutes."
 MSG_HISTORY_ERROR = "Impossible de charger l'historique pour le moment. Réessaie dans un instant."
 
 
@@ -41,8 +50,10 @@ def renew_link(email=None):
     return f"{url}?email={quote(email, safe='')}" if email else url
 
 
-def create_app(lm=None, service=None, history_loader=None):
-    """Fabrique de l'application. Les paramètres servent aux tests (faux services)."""
+def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=None):
+    """Fabrique de l'application. Les paramètres servent aux tests (faux services). `showcase` : pages publiques
+    (showcase.py) ; sans lui, elles lisent le même historique que history_loader. `daily` : génération automatique
+    quotidienne (daily_generation.py), créée seulement si AUTO_GENERATE_HOUR est définie."""
     web.configure_logging()
     app = Flask(__name__)
 
@@ -54,7 +65,7 @@ def create_app(lm=None, service=None, history_loader=None):
     web.install_security(app, csp=web.DASHBOARD_CSP)
     web.install_templating(app, home_url="/", login_url="/login", conditions_url="/conditions", pwa=True)
     web.register_error_pages(app)
-    web.install_health_and_robots(app, robots_txt=ROBOTS_TXT)
+    web.install_health_and_robots(app, robots_txt=build_robots())
     pwa.install_pwa(app)
 
     lm = lm or LicenseManager()
@@ -62,7 +73,14 @@ def create_app(lm=None, service=None, history_loader=None):
     service = service or GenerationService()
     load_history = history_loader or (lambda: combo_history.load_history(config.RESULTS_DIR))
     throttle = web.RateLimiter(config.LOGIN_MAX_ATTEMPTS, config.LOGIN_WINDOW_SECONDS)
-    app.extensions["tev"] = SimpleNamespace(lm=lm, gate=gate, service=service, throttle=throttle)
+    if showcase is None:
+        showcase = Showcase(service, loader=(lambda refresh: history_loader()) if history_loader else None)
+    if daily is None and config.AUTO_GENERATE_HOUR is not None:
+        daily = DailyGeneration(service, config.AUTO_GENERATE_HOUR)
+    if daily is not None:
+        daily.start()
+    app.extensions["tev"] = SimpleNamespace(lm=lm, gate=gate, service=service, throttle=throttle, showcase=showcase,
+                                            daily=daily)
 
     log.info("Triple Elite VIP %s : données dans %s, IA %s, clé Anthropic %s, clé cotes %s",
              config.VERSION, os.path.abspath(config.DATA_DIR), config.IA_MODEL,
@@ -116,9 +134,46 @@ def create_app(lm=None, service=None, history_loader=None):
     # Pages publiques
     # ------------------------------------------------------------------
 
+    def public_results():
+        """Bilan public, ou None s'il est indisponible : une panne de l'historique ne doit jamais casser les pages publiques."""
+        try:
+            return showcase.results()
+        except Exception:
+            log.exception("résultats publics indisponibles")
+            return None
+
     @app.get("/")
     def accueil():
-        return render_template("accueil.html")
+        return render_template("accueil.html", proof=public_results())
+
+    @app.get("/resultats")
+    def resultats():
+        results = public_results()
+        if results is None:
+            response = app.make_response(web.error_response(503, message=MSG_RESULTS_UNAVAILABLE))
+            response.headers["Retry-After"] = "300"
+            return response
+        return render_template("resultats.html", r=results)
+
+    @app.get("/gratuit")
+    def gratuit():
+        if not config.FREE_PICK_ENABLED:
+            abort(404)
+        try:
+            pick = showcase.free_pick()
+        except Exception:
+            log.exception("combiné gratuit indisponible")
+            pick = None
+        links = share_links(pick, f"{config.SITE_URL}/gratuit") if pick else None
+        return render_template("gratuit.html", pick=pick, share=links)
+
+    @app.get("/sitemap.xml")
+    def sitemap():
+        paths = ["/", "/resultats"] + (["/gratuit"] if config.FREE_PICK_ENABLED else []) + ["/conditions"]
+        urls = "".join(f"<url><loc>{escape(config.SITE_URL + path)}</loc></url>" for path in paths)
+        body = ('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f"{urls}</urlset>\n")
+        return Response(body, mimetype="application/xml")
 
     @app.get("/conditions")
     def conditions():

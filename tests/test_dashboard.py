@@ -54,13 +54,13 @@ def wait_for_job(env):
 # --------------------------------------------------------------------------
 
 def test_pages_publiques(env):
-    for path in ("/", "/login", "/conditions"):
+    for path in ("/", "/login", "/conditions", "/resultats", "/gratuit"):
         response = env.client.get(path)
         assert response.status_code == 200 and "text/html" in response.content_type, path
     health = env.client.get("/health")
     assert health.status_code == 200 and health.get_json()["status"] == "ok"
     robots = env.client.get("/robots.txt").get_data(as_text=True)
-    assert "Disallow: /app" in robots and "Disallow: /api/" in robots
+    assert "Disallow: /app" in robots and "Disallow: /api/" in robots and "Sitemap: " in robots
     favicon = env.client.get("/favicon.ico")
     assert favicon.status_code == 301 and favicon.headers["Location"].endswith("/static/favicon.svg")
     assert env.client.head("/").status_code == 200            # sonde de disponibilité (UptimeRobot)
@@ -92,7 +92,7 @@ def test_accueil_cartes_activees_les_mentions_de_carte_reviennent(env, monkeypat
 
 
 def test_en_tetes_de_securite(env):
-    for path in ("/", "/login", "/api/generate/status", "/nope"):
+    for path in ("/", "/login", "/resultats", "/gratuit", "/api/generate/status", "/nope"):
         headers = env.client.get(path).headers
         csp = headers["Content-Security-Policy"]
         assert "script-src 'self'" in csp and "style-src 'self'" in csp and "'unsafe-inline'" not in csp
@@ -115,7 +115,7 @@ def test_https_derriere_le_proxy_active_hsts(env):
 def test_aucun_script_ni_style_en_ligne_dans_les_pages(env):
     login(env.client)
     pages = {path: env.client.get(path).get_data(as_text=True)
-             for path in ("/", "/login", "/conditions", "/app", "/hors-ligne", "/nope")}
+             for path in ("/", "/login", "/conditions", "/resultats", "/gratuit", "/app", "/hors-ligne", "/nope")}
     for path, html in pages.items():
         assert "<style" not in html, path
         assert not re.search(r"<script(?![^>]*\bsrc=)", html), path

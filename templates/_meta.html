@@ -1,0 +1,16 @@
+{# Aperçu de partage (WhatsApp, Telegram, Facebook, X...) : titre, description et image de la page. L'image est la même
+   partout (static/images/partage.png, fabriquée par scripts/make_share_image.py). À importer « with context » (adresse du site).
+   Appel : {{ social(titre, description, chemin) }}, par exemple social("Résultats", "…", "/resultats"). #}
+{% macro social(title, description, path) %}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Triple Elite VIP">
+  <meta property="og:locale" content="fr_FR">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ description }}">
+  <meta property="og:url" content="{{ site_url }}{{ path }}">
+  <meta property="og:image" content="{{ site_url }}{{ asset('images/partage.png') }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Triple Elite VIP : pronostics de football, trois combinés avec la chance de réussite affichée">
+  <meta name="twitter:card" content="summary_large_image">
+{% endmacro %}

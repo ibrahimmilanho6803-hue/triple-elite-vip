@@ -152,3 +152,60 @@ def make_pipeline(delay=0.25, combos=None, error=None):
 
     pipeline.state = state
     return pipeline
+
+
+# --------------------------------------------------------------------------
+# Historique à volonté (pages publiques : bilan, pourcentages, seuils)
+# --------------------------------------------------------------------------
+
+_MATCHES = (
+    ("Arsenal", "Brighton", "Premier League", "1X"), ("Inter", "Torino", "Serie A", "TOTAL_1.5+"),
+    ("Real Sociedad", "Getafe", "La Liga", "EQ1_0.5+"), ("Bayern Munich", "Mainz", "Bundesliga", "TOTAL_2.5+"),
+    ("Lille", "Nantes", "Ligue 1", "1X"), ("Chelsea", "Burnley", "Premier League", "V1"),
+    ("Atlético Madrid", "Osasuna", "La Liga", "V1_ET_1.5+"), ("Napoli", "Hellas Vérone", "Serie A", "BTTS_NON"),
+    ("Borussia Dortmund", "Union Berlin", "Bundesliga", "TOTAL_3.5-"), ("Lyon", "Monaco", "Ligue 1", "1X"),
+    ("Roma", "Lazio", "Serie A", "TOTAL_1.5+"), ("Betis", "Valence", "La Liga", "2X"),
+)
+
+
+def played_combo(index, status, now, chance=31.0, home_suffix=""):
+    """Combiné de l'historique `index` jours avant `now`, tel que le rend combo_history.load_history.
+    status : « won » (3 pronostics gagnés), « lost » (le premier perdu, deux gagnés), « lost_unfinished » (le premier perdu,
+    les deux autres pas encore joués), « pending » (rien de joué), « void » (un match reporté, deux gagnés).
+    Chaque combiné a ses propres équipes (suffixe « index ») : aucun pronostic n'est compté deux fois."""
+    generated = now - timedelta(days=index + 1)
+    kickoff = generated + timedelta(hours=20)
+    future = now + timedelta(days=2)
+    legs = []
+    for n in range(3):
+        home, away, league, code = _MATCHES[(index * 3 + n) % len(_MATCHES)]
+        home, away = f"{home}{home_suffix} {index}", f"{away} {index}"
+        when = kickoff + timedelta(hours=n)
+        item = leg(home, away, league, code, 1.35 + 0.05 * n, 66 + n, when, "bookmakers" if n == 2 else "estimee")
+        for key in ("match_id", "category", "probability", "type"):
+            item.pop(key)
+        outcome, score = "won", "2 - 1"
+        if status in ("lost", "lost_unfinished") and n == 0:
+            outcome, score = "lost", "0 - 1"
+        elif status == "lost_unfinished":
+            outcome, score = None, None
+            item["kickoff"] = _iso(future + timedelta(hours=n))
+        elif status == "pending":
+            outcome, score = None, None
+            item["kickoff"] = _iso(future + timedelta(hours=n))
+        elif status == "void" and n == 0:
+            outcome, score = "void", None
+        item.update({"score": score, "outcome": outcome})
+        legs.append(item)
+    return {"generated_at": _iso(generated), "total_odds": round(1.35 * 1.4 * 1.45, 2), "avg_confidence": 67.0,
+            "success_probability": chance, "status": "lost" if status == "lost_unfinished" else status, "predictions": legs}
+
+
+def history_with(won=0, lost=0, pending=0, unfinished=0, void=0, now=None, chance=31.0):
+    """{"combos", "summary"} d'un historique de `won` combinés gagnés, `lost` perdus, `unfinished` perdus mais pas encore
+    entièrement joués (en plus des `lost`), `pending` en attente et `void` annulés ; le plus récent d'abord."""
+    now = now or datetime.now(timezone.utc)
+    kinds = ["pending"] * pending + ["lost_unfinished"] * unfinished + ["won"] * won + ["lost"] * lost + ["void"] * void
+    combos = [played_combo(index, kind, now, chance) for index, kind in enumerate(kinds)]
+    from combo_history import summarize
+    return {"combos": combos, "summary": summarize(combos)}

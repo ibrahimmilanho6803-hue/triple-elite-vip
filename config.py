@@ -93,6 +93,30 @@ MAX_GENERATIONS_PAR_JOUR = 10
 # (redémarrage du serveur...) et peut être relancée.
 JOB_MAX_SECONDS = 300
 
+
+def parse_hour(raw):
+    """Heure entière 0-23 lue dans une variable d'environnement ; None si absente ou invalide."""
+    try:
+        hour = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return hour if 0 <= hour <= 23 else None
+
+
+# --- Pages publiques : résultats réels (/resultats) et combiné gratuit du jour (/gratuit) ---
+# Le combiné gratuit est UN SEUL des combinés de la dernière génération (celui dont la chance estimée est la plus élevée).
+# Les autres restent le produit payant : jamais montrés. FREE_PICK_ENABLED=0 (Render > Environment) retire la page
+# /gratuit et ses liens sans nouveau déploiement.
+FREE_PICK_ENABLED = os.environ.get("FREE_PICK_ENABLED", "1").strip().lower() not in ("0", "false", "non", "no", "off")
+FREE_PICK_MAX_AGE_HOURS = 24      # une génération plus ancienne ne fournit plus de combiné gratuit
+FREE_PICK_MARGIN_MINUTES = 15     # ni un combiné dont un match commence dans moins de ce délai
+
+# Génération automatique quotidienne (daily_generation.py), pour que le combiné gratuit et l'historique soient alimentés
+# même les jours où aucun abonné ne clique. DÉSACTIVÉE par défaut : chaque génération est un appel payant à l'IA.
+# AUTO_GENERATE_HOUR = heure UTC (0 à 23) à partir de laquelle la génération du jour peut partir ; absente = désactivée.
+AUTO_GENERATE_HOUR = parse_hour(os.environ.get("AUTO_GENERATE_HOUR"))
+AUTO_GENERATE_MAX_ATTEMPTS = 3    # tentatives par jour (une panne de l'IA ne doit pas multiplier les appels payants)
+
 # --- Cotes ---
 # Quand aucune vraie cote n'est disponible (ODDS_API_KEY absente, ou pari non coté
 # par the-odds-api), la cote est ESTIMÉE à partir de la probabilité : (1 - marge) / p.

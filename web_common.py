@@ -5,15 +5,17 @@ limitation des essais, cache court des vérifications de licence, pages d'erreur
 """
 import hashlib
 import logging
+import math
 import os
 import re
 import sys
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from flask import jsonify, redirect, render_template, request, url_for
+from jinja2 import Undefined
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -70,6 +72,76 @@ def join_fr(items):
     if len(items) < 2:
         return "".join(items)
     return ", ".join(items[:-1]) + " et " + items[-1]
+
+
+# Formats des pages publiques écrites côté serveur (static/js/dashboard.js fait la même chose dans le navigateur, avec Intl).
+_JOURS = ("lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim.")
+_MOIS = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
+
+
+def parse_iso(value):
+    """Date ISO 8601 -> datetime en UTC ; None si absente ou illisible. Une date sans fuseau est lue comme UTC."""
+    if not value or isinstance(value, Undefined):
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def as_number(value):
+    """Nombre fini, ou None (absent, texte, booléen, NaN, valeur indéfinie d'un gabarit)."""
+    if isinstance(value, (bool, Undefined)) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def fr_odds(value):
+    """1.356 -> « 1,36 » ; « – » si la cote est absente."""
+    number = as_number(value)
+    return "–" if number is None else f"{number:.2f}".replace(".", ",")
+
+
+def fr_pct(value):
+    """70.4 -> « 70 % » (espace insécable) ; chaîne vide si la valeur est absente. Arrondi à l'entier le plus proche,
+    la moitié vers le haut (comme Math.round du navigateur)."""
+    number = as_number(value)
+    return "" if number is None else f"{math.floor(number + 0.5)}{NBSP}%"
+
+
+def _fr_day_number(moment):
+    return "1er" if moment.day == 1 else str(moment.day)
+
+
+def fr_day(value):
+    """« sam. 11 oct. » (jour en UTC) ; chaîne vide si la date est illisible."""
+    moment = parse_iso(value)
+    return "" if moment is None else f"{_JOURS[moment.weekday()]} {_fr_day_number(moment)} {_MOIS[moment.month - 1]}"
+
+
+def fr_day_month(value):
+    """« 11 oct. » (« 1er oct. » le premier du mois)"""
+    moment = parse_iso(value)
+    return "" if moment is None else f"{_fr_day_number(moment)} {_MOIS[moment.month - 1]}"
+
+
+def fr_date(value):
+    """« 11 oct. 2026 »"""
+    moment = parse_iso(value)
+    return "" if moment is None else f"{_fr_day_number(moment)} {_MOIS[moment.month - 1]} {moment.year}"
+
+
+def fr_hour(value):
+    """« 20 h 45 » (heure UTC, avec espaces insécables)."""
+    moment = parse_iso(value)
+    return "" if moment is None else f"{moment.hour:02d}{NBSP}h{NBSP}{moment.minute:02d}"
 
 
 def describe_remaining(expires, now=None):
@@ -293,10 +365,14 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
 
     app.jinja_env.globals["asset"] = asset
     app.jinja_env.filters["typo"] = typo
+    for name, function in (("fr_odds", fr_odds), ("fr_pct", fr_pct), ("fr_day", fr_day), ("fr_day_month", fr_day_month),
+                           ("fr_date", fr_date), ("fr_hour", fr_hour)):
+        app.jinja_env.filters[name] = function
     app.jinja_env.trim_blocks = True
     app.jinja_env.lstrip_blocks = True
 
     per_month = config.PRICE_YEARLY / 12
+    base = home_url.rstrip("/")             # « » sur le site client (adresses relatives), son adresse complète ailleurs
 
     @app.context_processor
     def _shared_context():
@@ -304,6 +380,10 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
             "home_url": home_url,
             "login_url": login_url,
             "conditions_url": conditions_url,
+            # Pages publiques du site client (voir showcase.py), liées depuis les deux sites.
+            "results_url": f"{base}/resultats",
+            "free_url": f"{base}/gratuit",
+            "free_pick_enabled": bool(config.FREE_PICK_ENABLED),
             "pwa": pwa,
             "site_url": config.SITE_URL,
             "paiement_url": config.PAIEMENT_URL,

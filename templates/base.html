@@ -58,6 +58,10 @@
         </div>
         <nav aria-label="Liens utiles">
           <a href="{{ home_url }}">Accueil</a>
+          {% if free_pick_enabled %}
+          <a href="{{ free_url }}">Combiné gratuit du jour</a>
+          {% endif %}
+          <a href="{{ results_url }}">Résultats</a>
           <a href="{{ login_url }}">Connexion</a>
           <a href="{{ paiement_url }}">S’abonner</a>
           <a href="{{ conditions_url }}">Conditions et avertissement</a>

@@ -33,6 +33,8 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
 
 ## Parcours d'un client
 
+Avant d'acheter, un visiteur peut consulter les résultats réels et un combiné gratuit (voir « Pages publiques »).
+
 1. Il choisit une offre sur `/paiement` (30 € par mois, 60 € par an, débités en FCFA : 19 700 et 39 400 FCFA).
 2. `/payer` crée la facture PayDunya et mémorise la commande **avant** la redirection.
 3. Après paiement, PayDunya le renvoie sur `/succes?token=…`. Le site demande à PayDunya de confirmer, délivre la
@@ -47,11 +49,72 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
    tous les clients, réutilisé pendant 3 heures) et consulte l'historique avec le score de chaque match.
 7. Il peut installer le site sur son téléphone comme une application (voir « Application installable »).
 
+## Pages publiques : résultats et combiné gratuit
+
+Deux pages ouvertes à tous (et aux moteurs de recherche) montrent le produit tel qu'il est, sans maquillage, avant tout
+paiement. L'accueil (section « Nos résultats sont publics »), le menu et le pied de page y mènent.
+
+- `/resultats` : le bilan réel (combinés gagnés sur joués, pronostics gagnés sur joués, chance annoncée en moyenne face à la
+  réussite constatée) et le détail des 12 derniers combinés **entièrement joués**, gagnés comme perdus, avec le score de chaque
+  match. Il se met à jour tout seul à mesure que les scores arrivent.
+- `/gratuit` : **un seul** combiné offert (celui de plus haute chance estimée dans la dernière génération), avec cote, confiance de
+  chaque pronostic et chance estimée, et des boutons WhatsApp, Telegram et « Copier le lien ».
+
+Règles qui commandent le code (`showcase.py` ; vérifiées par `tests/test_showcase.py`, `tests/test_public_pages.py` et les tests
+navigateur `TestResultatsEtCombineGratuit`) :
+
+1. **Jamais un combiné à venir en public, sauf le combiné gratuit.** Les deux autres combinés d'une génération sont le produit
+   payant. `/resultats` ne détaille que des combinés dont tous les matchs sont joués. Un combiné déjà perdu mais dont des matchs
+   restent à jouer compte tout de suite dans le bilan (une défaite connue ne se cache pas), et ne s'affiche qu'à la fin. Chaque
+   dictionnaire envoyé aux pages est construit champ par champ (liste blanche) : un champ ajouté plus tard aux combinés enregistrés
+   ne devient pas public par accident.
+2. **Un visiteur ne coûte rien.** Une page publique ne lance jamais de génération (appel payant à l'IA : elle lit seulement la
+   dernière, `GenerationService.latest`) et ne fait aucun appel réseau pendant la requête. Les scores manquants sont récupérés en
+   arrière-plan, au plus tous les quarts d'heure (`combo_history` borne en plus chaque série d'appels à TheSportsDB). Une panne de
+   l'historique ne casse ni l'accueil ni le combiné gratuit : `/resultats` répond alors « momentanément indisponibles » (503).
+3. **Aucun chiffre trompeur.** Un pourcentage n'apparaît qu'à partir de 10 combinés joués (30 pronostics pour celui des pronostics) ;
+   en dessous, seuls les nombres bruts s'affichent, et l'accueil n'affiche pas de chiffres du tout. Le bilan compte des pronostics
+   gagnés ou perdus, jamais des gains en argent (les cotes sont souvent estimées : un « bénéfice » serait inventé). Un pronostic
+   présent dans plusieurs combinés compte une fois ; les matchs reportés ou annulés ne comptent pas. Le pied de page garde
+   l'avertissement sur les paris et l'interdiction aux moins de 18 ans.
+4. **Le combiné gratuit est stable.** Il est choisi une fois par génération et enregistré (`free_pick.json`, dossier de cache) : si
+   une autre génération sort dans la journée, le lien partagé le matin montre toujours le même coupon le soir. Il disparaît 15
+   minutes avant le premier match, ou 24 heures après avoir été choisi. Il faut alors une **nouvelle génération** pour en avoir un
+   autre : les deux autres combinés de l'ancienne ne prennent pas sa place.
+
+**La page « Combiné gratuit » est vide** quand aucune génération récente n'existe (personne n'a cliqué sur « Générer » depuis 24
+heures, ou tous les matchs ont commencé) : elle l'explique au visiteur et renvoie vers les résultats. Pour qu'elle soit alimentée
+même les jours calmes, activer la génération automatique.
+
+**Génération automatique quotidienne (désactivée par défaut)** : `AUTO_GENERATE_HOUR=6` (Render > service dashboard > Environment ;
+heure **UTC**, de 0 à 23) lance chaque jour, à partir de cette heure, une génération s'il n'y en a pas déjà eu une ce jour-là
+(`daily_generation.py`). C'est un appel payant à l'IA (de l'ordre de 0,2 $ l'unité, à vérifier sur la console Anthropic : environ 6 $
+par mois à raison d'une par jour). Elle passe par les mêmes garde-fous que le bouton « Générer » (un travail à la fois, combinés
+encore frais réutilisés, plafond de 10 par jour, pause après un échec) et s'arrête après 3 tentatives dans la journée. Supprimer la
+variable la désactive.
+
+**Couper le combiné gratuit** : `FREE_PICK_ENABLED=0` (Render > Environment ; Render redémarre le service quand une variable change)
+retire `/gratuit` (erreur 404), ses liens et son entrée du plan du site. Valeur par défaut : activé.
+
+**Partage** : les boutons WhatsApp et Telegram sont de simples liens (ils marchent sans JavaScript) ; « Copier le lien » apparaît
+grâce à `static/js/public.js`, qui convertit aussi les heures de match en heure de l'appareil (sans JavaScript elles restent en
+UTC, écrites comme telles). L'aperçu que WhatsApp, Telegram, Facebook ou X affichent quand on colle l'adresse d'une page vient des
+balises `og:` de `templates/_meta.html` et de l'image `static/images/partage.png` (1200 x 630 px, sans aucun chiffre, pour ne jamais
+se démentir). Elle est fabriquée par `python scripts/make_share_image.py` (Playwright) et versionnée dans Git ; à relancer seulement si
+son texte ou son style changent. Les messageries gardent un aperçu en mémoire : le nom du fichier porte une empreinte, donc
+l'adresse de l'image change seule quand l'image change. Pour contrôler un aperçu : coller l'adresse d'une page dans une conversation
+avec soi-même. `/sitemap.xml` liste les pages publiques et `robots.txt` l'annonce ; pour être indexé plus vite, déclarer ce plan
+du site dans la Search Console de Google (facultatif).
+
+**Quand on modifie les coupons de l'espace client** (`static/js/dashboard.js`), reporter le changement dans
+`templates/_coupon.html`, leur copie côté serveur pour les pages publiques : la feuille de style est commune.
+
 ## Les fichiers
 
 | Fichier | Rôle |
 | --- | --- |
-| `dashboard.py` | Site des clients : accueil, conditions, connexion, espace client, API de génération et d'historique |
+| `dashboard.py` | Site des clients : accueil, résultats, combiné gratuit, plan du site, conditions, connexion, espace client, API de génération et d'historique |
+| `showcase.py`, `daily_generation.py` | Pages publiques : bilan et combiné gratuit (ce qui a le droit d'être montré) ; génération automatique quotidienne, facultative |
 | `paiement.py`, `paydunya.py` | Site de paiement et client de l'API PayDunya |
 | `license_manager.py` | Licences et commandes dans PostgreSQL (délivrance atomique, renouvellements cumulés) |
 | `email_sender.py` | Envoi de la clé : Brevo (HTTPS) ou Gmail (SMTP), avec nouvelles tentatives |
@@ -61,9 +124,10 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
 | `combo_history.py` | Historique : résultats réels des matchs joués, bilan |
 | `web_common.py`, `privacy.py` | Sécurité commune (en-têtes, anti-CSRF, limitation d'essais), gabarits, e-mails masqués dans les journaux |
 | `config.py` | Réglages non secrets ; lit aussi un fichier `.env` en local |
-| `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site |
+| `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site ; `templates/_coupon.html` (coupons des pages publiques), `_meta.html` (aperçu de partage), `static/js/public.js`, `static/images/partage.png` |
 | `pwa.py`, `templates/sw.js`, `static/js/pwa.js`, `static/icons/` | Application installable : manifeste, service worker, page « hors connexion », bouton d'installation, icônes |
 | `main.py`, `generate_keys.py`, `scripts/send_test_email.py` | Outils en ligne de commande (voir plus bas) |
+| `scripts/make_icons.py`, `scripts/make_share_image.py` | Fabrication des icônes de l'application et de l'image d'aperçu de partage (Playwright) |
 | `render.yaml`, `gunicorn.conf.py`, `.python-version` | Déploiement |
 | `tests/` | Tests automatiques (Flask et navigateur) |
 
@@ -81,6 +145,8 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `SPORTSDB_API_KEY` | dashboard | Ta clé TheSportsDB. Sans elle, la clé de test partagée `3` est utilisée (limitée) |
 | `ODDS_API_KEY` | dashboard | Facultatif : vraies cotes (the-odds-api.com). Sans elle, cotes estimées |
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
+| `FREE_PICK_ENABLED` | dashboard | Facultatif. `0` (ou `non`, `false`, `off`) retire le combiné gratuit : `/gratuit` et ses liens disparaissent. Par défaut : activé |
+| `AUTO_GENERATE_HOUR` | dashboard | Facultatif. Heure UTC (0 à 23) à partir de laquelle une génération automatique part chaque jour s'il n'y en a pas eu. **Appel payant à l'IA** ; absente = désactivée (voir « Pages publiques ») |
 | `PAYDUNYA_MASTER_KEY`, `PAYDUNYA_PRIVATE_KEY`, `PAYDUNYA_TOKEN` | paiement | Clés API PayDunya |
 | `PAYDUNYA_MODE`, `PAYDUNYA_TEST_PRIVATE_KEY`, `PAYDUNYA_TEST_TOKEN`, `PAYDUNYA_TEST_MASTER_KEY`, `PAYDUNYA_TEST_EMAILS` | paiement | Facultatif, **mode test seulement** : interrupteur, clés de test et adresses autorisées à commander (voir « Essayer le paiement sans argent ») |
 | `LICENSE_SECRET_KEY` | paiement | Sel de fabrication des nouvelles clés (en changer n'invalide aucune clé existante) |
@@ -108,7 +174,7 @@ avec de fausses données.
 ```bash
 python -m pytest tests -q                 # tests de la logique et des deux sites (sans réseau, sans clé)
 python -m playwright install chromium     # une seule fois, pour les tests de navigateur
-python -m pytest tests/e2e -q             # parcours réels dans Chromium : connexion, génération, historique, paiement, application installable
+python -m pytest tests/e2e -q             # parcours réels dans Chromium : connexion, génération, historique, pages publiques, paiement, application installable
 ```
 
 Les tests ne contactent jamais TheSportsDB, PayDunya, Anthropic ni un serveur d'e-mail : tout est simulé. Les tests
@@ -315,6 +381,10 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
 | Pas assez de matchs à venir | Trêve internationale ou calendrier incomplet chez TheSportsDB ; les cinq championnats compensent en général. Réessayer plus tard |
 | Les cotes sont toutes précédées de « ≈ » | `ODDS_API_KEY` absente, ou quota de the-odds-api atteint : c'est normal, ce sont des cotes estimées |
+| La page « Combiné gratuit » est vide | Normal tant qu'aucune génération récente n'existe (voir « Pages publiques ») : générer depuis l'espace client, ou activer `AUTO_GENERATE_HOUR`. Si une génération récente existe et que la page reste vide : tous ses combinés ont un match qui commence dans moins de 15 minutes, ou `FREE_PICK_ENABLED=0` |
+| `/resultats` répond « momentanément indisponibles » | Les fichiers d'historique sont illisibles (disque `DATA_DIR`) : logs du service client, ligne `vitrine : bilan public impossible à calculer`. La page revient seule dès que l'historique est lisible ; un bilan déjà calculé reste affiché malgré une panne |
+| Les résultats n'avancent pas | Les scores sont récupérés chez TheSportsDB en arrière-plan, au plus tous les quarts d'heure et 12 matchs à la fois ; un match dont le score n'est pas encore publié est revérifié toutes les 30 minutes. Tant que le score manque, le combiné reste « en attente » et n'est pas détaillé. Cherche `vitrine : récupération des scores impossible` dans les logs |
+| L'aperçu d'un lien collé dans WhatsApp est vieux ou absent | Les messageries gardent l'aperçu en mémoire un moment. L'image `og:image` doit répondre 200 (`/static/images/partage.png`). Une nouvelle image reçoit seule une nouvelle adresse (empreinte) |
 | L'historique est vide après un déploiement | Le disque persistant n'est pas monté sur `DATA_DIR` : voir la liste de contrôle ci-dessus |
 
 ## Sécurité en bref
@@ -329,6 +399,8 @@ dans les journaux ; messages d'erreur sans détail technique ; licence revérifi
 
 - Le paiement réel (PayDunya en production, retour du client, appel `/ipn`) est couvert par des tests simulés : il doit
   être essayé en mode test (voir plus haut), puis une fois avec un vrai paiement de l'offre mensuelle.
+- Les résultats publics valent ce que valent les scores disponibles chez TheSportsDB : un match dont le score n'est jamais publié
+  garde son combiné « en attente » (il n'est ni compté ni affiché), et le bilan lit les 1000 dernières générations (la page dit « depuis le … »).
 - La qualité des pronostics dépend des données de TheSportsDB (calendriers parfois incomplets) et de l'estimation de
   l'IA ; le site affiche donc des probabilités, pas des certitudes.
 - Les conditions du site (`/conditions`) décrivent le service tel qu'il est ; les conditions générales de vente, les

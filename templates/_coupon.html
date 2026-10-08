@@ -1,0 +1,87 @@
+{# Coupons des pages publiques, écrits côté serveur. Même structure et mêmes classes que static/js/dashboard.js
+   (slipNode, legNode, resultNode) : un changement de l'un se reporte dans l'autre. Jinja échappe toutes les valeurs.
+   Les heures sont écrites en UTC puis remplacées par l'heure de l'appareil par static/js/public.js (balise <time>). #}
+
+{% macro when(iso) %}<time class="local" datetime="{{ iso }}">{{ iso|fr_day }} à&nbsp;{{ iso|fr_hour }} UTC</time>{% endmacro %}
+
+{% macro icon(kind) %}
+<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+  {% if kind == 'won' %}
+  <circle cx="10" cy="10" r="9" fill="currentColor"/>
+  <path d="M5.6 10.4l3 3 5.8-6.2" fill="none" stroke="#e8eaf1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  {% elif kind == 'lost' %}
+  <circle cx="10" cy="10" r="9" fill="currentColor"/>
+  <path d="M6.7 6.7l6.6 6.6M13.3 6.7l-6.6 6.6" fill="none" stroke="#e8eaf1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  {% elif kind == 'void' %}
+  <circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M6.2 10h7.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  {% else %}
+  <circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M10 5.6V10l2.9 1.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  {% endif %}
+</svg>
+{% endmacro %}
+
+{% macro result(item) %}
+{% set kind = item.outcome if item.outcome in ('won', 'lost', 'void') else 'wait' %}
+{% set score = (item.score or '')|replace(' - ', ' – ') %}
+<p class="leg__result leg__result--{{ kind }}">{{ icon(kind) }}{% if kind == 'won' %}Gagné, score {{ score }}{% elif kind == 'lost' %}Perdu, score {{ score }}{% elif kind == 'void' %}Match reporté ou annulé&nbsp;: pronostic non compté{% else %}Résultat en attente{% endif %}</p>
+{% endmacro %}
+
+{% macro leg_item(item, with_result=false) %}
+<li class="leg">
+  <div>
+    <p class="leg__teams">{{ item.home_team }} – {{ item.away_team }}</p>
+    <p class="leg__pick">{{ item.type_name }}</p>
+    {% if item.league %}
+    <p class="leg__meta">{{ item.league }}</p>
+    {% endif %}
+    {% if item.kickoff %}
+    <p class="leg__meta">{{ when(item.kickoff) }}</p>
+    {% endif %}
+  </div>
+  <div class="leg__side">
+    <p class="leg__odds">{% if item.odds_source != 'bookmakers' %}<span class="approx" aria-hidden="true">≈</span><span class="sr-only">environ </span>{% endif %}{{ item.estimated_odds|fr_odds }}</p>
+    {% if item.confidence|fr_pct %}
+    <p class="leg__conf">confiance {{ item.confidence|fr_pct }}</p>
+    {% endif %}
+  </div>
+  {% if with_result %}
+  {{ result(item) }}
+  {% endif %}
+</li>
+{% endmacro %}
+
+{# status : « won », « lost »... pour un combiné déjà joué (tampon et résultat de chaque match), rien pour un combiné à venir.
+   tag : niveau de titre du coupon (h2 sous le titre de la page, h3 sous un titre de section). #}
+{% macro slip(combo, title, status=none, tag='h3') %}
+<article class="slip" aria-label="{{ title }}">
+  <div class="slip__paper">
+    <div class="slip__head">
+      <div>
+        <{{ tag }} class="slip__title">{{ title }}</{{ tag }}>
+      </div>
+      {% if status %}
+      <span class="stamp stamp--{{ status }}">{{ {'won': 'Gagné', 'lost': 'Perdu', 'void': 'Annulé'}.get(status, 'En attente') }}</span>
+      {% endif %}
+    </div>
+    <ol class="legs">
+      {% for item in combo.predictions %}
+      {{ leg_item(item, status is not none) }}
+      {% endfor %}
+    </ol>
+  </div>
+  <div class="slip__stub">
+    <div>
+      <span class="slip__label">Cote totale</span>
+      <span class="slip__total-value">{{ combo.total_odds|fr_odds }}</span>
+    </div>
+    {% if combo.success_probability|fr_pct %}
+    <div class="slip__chance">
+      <span class="slip__label">Chance estimée</span>
+      <span class="slip__chance-value">{{ combo.success_probability|fr_pct }}</span>
+    </div>
+    {% endif %}
+  </div>
+</article>
+{% endmacro %}
