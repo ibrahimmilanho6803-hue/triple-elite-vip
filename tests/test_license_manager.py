@@ -147,9 +147,9 @@ def test_commande_cycle_complet(lm):
     assert lm.create_pending_order("tok1", "autre@x.com", "Annuel", 12) is True      # doublon ignoré
     order = lm.get_pending_order("tok1")
     assert order == {"email": "client@x.com", "plan": "Mensuel", "duree": 1, "processed": False,
-                     "license_key": None, "renewed": None}
+                     "license_key": None, "renewed": None, "jours": None}
     claimed = lm.claim_order("tok1")
-    assert claimed == {"email": "client@x.com", "plan": "Mensuel", "duree": 1}
+    assert claimed == {"email": "client@x.com", "plan": "Mensuel", "duree": 1, "jours": None}
     assert lm.claim_order("tok1") is None                                           # déjà prise
     assert lm.get_pending_order("tok1")["processed"] is True
     assert lm.complete_order("tok1", "cle123") is True
@@ -158,6 +158,26 @@ def test_commande_cycle_complet(lm):
     lm.complete_order("tok1", "cle123", renewed=True)
     assert lm.get_pending_order("tok1")["renewed"] is True
     assert lm.get_pending_order("inconnu") is None and lm.claim_order("inconnu") is None
+
+
+def test_commande_du_pass_de_7_jours_garde_sa_duree_en_jours(lm):
+    """Le pass ne tient pas en mois entiers : la durée exacte est enregistrée avec la commande et revient à la réservation."""
+    assert lm.create_pending_order("pass", "p@x.com", "Pass 7 jours", 1, 7) is True
+    assert lm.get_pending_order("pass")["jours"] == 7 and lm.get_pending_order("pass")["duree"] == 1
+    assert lm.claim_order("pass") == {"email": "p@x.com", "plan": "Pass 7 jours", "duree": 1, "jours": 7}
+
+
+def test_commande_d_avant_le_pass_se_lit_toujours_en_mois(path):
+    """Une commande enregistrée par l'ancienne version (sans durée en jours) est encore payée après la mise à jour :
+    elle doit donner la durée prévue, en mois."""
+    raw(path, "CREATE TABLE pending_orders (token TEXT PRIMARY KEY, email TEXT NOT NULL, plan TEXT NOT NULL, "
+              "duree INTEGER NOT NULL, created TEXT, processed BOOLEAN DEFAULT FALSE)")
+    raw(path, "INSERT INTO pending_orders VALUES ('en-vol', 'a@b.com', 'Annuel', 12, '2026-10-01 00:00:00', 0)")
+    lm = sqlite_license_manager(path)
+    claimed = lm.claim_order("en-vol")
+    assert claimed["jours"] is None and claimed["duree"] == 12
+    info = lm.issue_license(claimed["email"], claimed["duree"], days=claimed["jours"])
+    assert info["expires"] - license_manager._utcnow() > datetime.timedelta(days=364, hours=23)
 
 
 def test_liberation_d_une_commande(lm):
@@ -190,7 +210,7 @@ def test_anciennes_commandes_sans_colonnes_recentes(path):
     raw(path, "INSERT INTO pending_orders VALUES ('vieux', 'a@b.com', 'Mensuel', 1, '2026-01-01 00:00:00', 1)")
     lm = sqlite_license_manager(path)                                      # init_db ajoute les colonnes
     assert lm.get_pending_order("vieux") == {"email": "a@b.com", "plan": "Mensuel", "duree": 1, "processed": True,
-                                             "license_key": None, "renewed": None}
+                                             "license_key": None, "renewed": None, "jours": None}
 
 
 def test_une_seule_reservation_en_cas_d_appels_simultanes(lm):
@@ -250,6 +270,35 @@ def test_durees_en_jours():
     assert license_manager.duration_days(12) == 365        # une vraie année, pas 12 x 30 jours
     assert license_manager.duration_days(3) == 91
     assert license_manager.duration_days(0) == 0
+
+
+def test_pass_de_7_jours_donne_exactement_7_jours(lm, path):
+    info = lm.issue_license("p@x.com", 1, days=7)                 # « days » l'emporte sur les mois
+    assert info["renewed"] is False
+    delta = info["expires"] - license_manager._utcnow()
+    assert datetime.timedelta(days=6, hours=23) < delta <= datetime.timedelta(days=7)
+    assert lm.verify_license("p@x.com", info["key"]) == (True, "Licence valide")
+    # Sans « days », la durée reste celle des mois, comme avant.
+    assert lm.issue_license("m@x.com", 1)["expires"] - license_manager._utcnow() > datetime.timedelta(days=29, hours=23)
+
+
+def test_pass_de_7_jours_sur_un_abonnement_en_cours_s_ajoute_et_garde_la_cle(lm, path):
+    first = lm.issue_license("a@b.com", 1)
+    end = set_expiry(path, "a@b.com", 10)                         # il reste 10 jours
+    again = lm.issue_license("a@b.com", 1, days=7)
+    assert again["renewed"] is True and again["key"] == first["key"]
+    assert again["expires"] == end + datetime.timedelta(days=7)
+    # Pass expiré : nouvelle clé, 7 jours à partir de maintenant.
+    set_expiry(path, "a@b.com", -1)
+    later = lm.issue_license("a@b.com", 1, days=7)
+    assert later["renewed"] is False and later["key"] != first["key"]
+    assert later["expires"] - license_manager._utcnow() <= datetime.timedelta(days=7)
+
+
+def test_duree_en_jours_invalide_n_allonge_rien(lm):
+    for days in (0, -5):
+        info = lm.issue_license(f"x{days}@b.com", 1, days=days)
+        assert info["expires"] - license_manager._utcnow() <= datetime.timedelta(seconds=5)       # jamais négatif ni long
 
 
 def test_check_login_detaille_la_raison(lm, path):

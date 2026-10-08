@@ -43,18 +43,26 @@ MSG_TEST_ONLY = ("Les paiements ne sont pas encore ouverts : le site est en phas
 
 
 def _build_plans():
+    """Les offres, dans l'ordre où elles s'affichent. `days` est la durée réellement accordée ; `months` est la même
+    durée arrondie en mois entiers, gardée dans la colonne « duree » pour les versions du code qui ne lisent pas encore
+    `jours` (un pass de 7 jours y compte pour un mois : mieux vaut un client un peu mieux servi que lésé)."""
     days = license_manager.duration_days
+    prices = web.price_labels()
     plans = {
-        "monthly": {"key": "monthly", "label": "Mensuel", "title": "Abonnement mensuel", "months": 1,
-                    "eur": config.PRICE_MONTHLY, "fcfa": config.PRICE_MONTHLY_FACTURE_FCFA, "note": ""},
-        "yearly": {"key": "yearly", "label": "Annuel", "title": "Abonnement annuel", "months": 12,
-                   "eur": config.PRICE_YEARLY, "fcfa": config.PRICE_YEARLY_FACTURE_FCFA,
-                   "note": f"soit {web.format_eur(round(config.PRICE_YEARLY / 12, 2))} par mois"},
+        "weekly": {"key": "weekly", "label": "Pass 7 jours", "title": "Pass 7 jours", "months": 1, "days": 7,
+                   "note": "Pour tester le service"},
+        "monthly": {"key": "monthly", "label": "Mensuel", "title": "Abonnement mensuel", "months": 1, "days": days(1),
+                    "note": ""},
+        "yearly": {"key": "yearly", "label": "Annuel", "title": "Abonnement annuel", "months": 12, "days": days(12),
+                   "note": f"soit {prices['yearly']['per_month']} par mois"},
     }
-    for plan in plans.values():
-        plan["access"] = f"{days(plan['months'])}{web.NBSP}jours d’accès"
-        plan["eur_label"] = web.format_eur(plan["eur"])
-        plan["fcfa_label"] = web.format_fcfa(plan["fcfa"])
+    for key, plan in plans.items():
+        price = prices[key]
+        plan["fcfa"] = price["value"]                 # le montant transmis à PayDunya : toujours celui de config.py
+        plan["fcfa_label"] = price["fcfa"]
+        plan["amount_label"] = price["amount"]
+        plan["eur_label"] = price["eur"]
+        plan["access"] = f"{plan['days']}{web.NBSP}jours d’accès"
     return plans
 
 
@@ -214,7 +222,7 @@ def create_app(lm=None, paydunya=None, send_license=None, test_emails=None):
 
         # La commande est enregistrée AVANT d'envoyer le client payer : sans elle, un paiement
         # ne pourrait pas être rattaché à un e-mail. Si l'enregistrement échoue, on s'arrête là.
-        if not lm.create_pending_order(invoice["token"], email, plan["label"], plan["months"]):
+        if not lm.create_pending_order(invoice["token"], email, plan["label"], plan["months"], plan["days"]):
             log.error("commande non enregistrée (%s) : le client n'est pas envoyé payer", web.mask_email(email))
             return render_pay(selected, email, error=MSG_UNAVAILABLE, accepted=True, status=503)
 
@@ -252,7 +260,8 @@ def create_app(lm=None, paydunya=None, send_license=None, test_emails=None):
                 return {"state": "unavailable", "order": order}
             return finished(current) if current else {"state": "unknown"}
         try:
-            info = lm.issue_license(claimed["email"], claimed["duree"])
+            # « jours » vaut None pour les commandes enregistrées avant le pass de 7 jours : elles se lisent en mois.
+            info = lm.issue_license(claimed["email"], claimed["duree"], days=claimed.get("jours"))
         except Exception:
             log.exception("PAIEMENT CONFIRMÉ MAIS LICENCE NON DÉLIVRÉE (%s, %s) : nouvelle tentative au prochain "
                           "passage du client ou de PayDunya", web.mask_email(claimed["email"]), short(token))

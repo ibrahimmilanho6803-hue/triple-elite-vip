@@ -445,6 +445,52 @@ def test_toutes_les_pages_publiques_gardent_l_avertissement_sur_les_paris(site):
 
 
 # --------------------------------------------------------------------------
+# Offres : l'essai de 7 jours est proposé là où le visiteur juge le service
+# --------------------------------------------------------------------------
+
+def test_les_pages_de_preuve_proposent_l_essai_de_7_jours(site):
+    publish_generation(site)
+    for path in ("/gratuit", "/resultats"):
+        page = raw(site.client.get(path))
+        text = visible(page)
+        assert f'href="{config.PAIEMENT_URL}/paiement?plan=weekly"' in page, path
+        assert "Essayer 7 jours, 2 000 FCFA" in text, path                         # le bouton convenu avec le vendeur
+        assert "Essaie 7 jours pour 2 000 FCFA (≈ 3 €)" in text and "à partir de 6 000 FCFA par mois" in text, path
+        assert f'href="{config.PAIEMENT_URL}"' in page and "voir toutes les offres" in text, path
+        assert "30 €" not in text and "19 700" not in text, path                      # les anciens prix ont disparu
+
+
+def test_l_accueil_presente_trois_formules_en_fcfa(site):
+    page = raw(site.client.get("/"))
+    text = visible(page)
+    names = re.findall(r'<h3 class="plan__name">([^<]+)</h3>', page)
+    assert [visible(name) for name in names] == ["Pass 7 jours", "Mensuel", "Annuel"]
+    assert [href.split("=")[-1] for href in re.findall(r'href="[^"]*/paiement\?plan=(\w+)"', page)] == [
+        "weekly", "monthly", "yearly"] and "Trois formules, le même accès" in text
+    assert "À partir de 2 000 FCFA (≈ 3 €) pour 7 jours" in text                  # sous le bouton principal
+    assert "soit 3 283 FCFA par mois" in text and "pour le prix de 6,6 mois (45 % d’économie)" in text
+    assert "En quelle monnaie je paie" in text and "Puis-je d’abord essayer" in text
+    assert "1 € = 655,957 FCFA" in text
+
+
+def test_l_accueil_annonce_le_tarif_de_lancement_puis_l_efface(site, monkeypatch):
+    today = datetime.now(timezone.utc).date()
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", today + timedelta(days=30))
+    text = visible(site.client.get("/"))
+    assert "Tarif de lancement" in text and "Jusqu’au " in text
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", today - timedelta(days=1))      # la date est passée : plus rien d'annoncé
+    text = visible(site.client.get("/"))
+    assert "Tarif de lancement" not in text and "Jusqu’au " not in text and "30 jours d’accès" in text
+
+
+def test_les_conditions_decrivent_les_trois_durees_et_les_prix_en_fcfa(site):
+    text = visible(site.client.get("/conditions"))
+    assert "7 jours (Pass 7 jours), 30 jours (mensuel) ou 365 jours (annuel)" in text
+    assert "Les prix sont affichés et débités en FCFA" in text and "1 € = 655,957 FCFA" in text
+    assert "arrondi à la centaine supérieure" not in text
+
+
+# --------------------------------------------------------------------------
 # Aperçus de partage, plan du site, robots
 # --------------------------------------------------------------------------
 

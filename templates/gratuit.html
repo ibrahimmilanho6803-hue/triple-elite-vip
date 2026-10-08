@@ -50,9 +50,9 @@
 
         <section class="panel cta">
           <h2 class="cta__title">Tu veux les autres combinés&nbsp;?</h2>
-          <p>Les autres combinés de l’analyse, la génération à la demande et l’historique complet sont réservés aux abonnés. À partir de {{ price_monthly }} par mois.</p>
+          <p>Les autres combinés de l’analyse, la génération à la demande et l’historique complet sont réservés aux abonnés. Essaie 7&nbsp;jours pour {{ prices.weekly.fcfa }} ({{ prices.weekly.eur }}), ou abonne-toi à partir de {{ prices.monthly.fcfa }} par mois&nbsp;: <a href="{{ paiement_url }}">voir toutes les offres</a>.</p>
           <div class="cta__actions">
-            <a class="btn btn--or" href="{{ paiement_url }}">S’abonner</a>
+            <a class="btn btn--or" href="{{ paiement_url }}/paiement?plan=weekly">Essayer 7&nbsp;jours, {{ prices.weekly.fcfa }}</a>
             <a class="btn btn--ligne" href="{{ results_url }}">Voir les résultats</a>
           </div>
         </section>

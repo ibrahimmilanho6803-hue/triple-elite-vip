@@ -235,9 +235,11 @@ class TestPagesPubliques:
         expect(page).to_have_title(re.compile("Triple Elite VIP"))
         expect(page.locator("html")).to_have_attribute("lang", "fr")
         text = norm(page.locator("main").inner_text())
-        assert "30 €" in text and "60 €" in text
+        assert "2 000 FCFA" in text and "6 000 FCFA" in text and "39 400 FCFA" in text
+        assert "≈ 3 €" in text and "≈ 9 €" in text and "≈ 60 €" in text
         assert "34 %" in text                                         # l'avertissement honnête sur les combinés
-        assert page.locator("a[href$='/paiement?plan=yearly']").count() >= 1
+        for plan in ("weekly", "monthly", "yearly"):
+            assert page.locator(f"a[href$='/paiement?plan={plan}']").count() >= 1
 
     @pytest.mark.parametrize("path, status", [("/conditions", 200), ("/login", 200), ("/resultats", 200),
                                               ("/gratuit", 200), ("/n-existe-pas", 404)])
@@ -563,6 +565,96 @@ class TestBarreDeNavigation:
 
 
 # ======================================================================================================
+# Offres et prix : trois formules en FCFA, lisibles sur tous les écrans
+# ======================================================================================================
+
+# Géométrie de chaque carte de formule : son contenu reste dans la carte, l'unité (FCFA) reste sur la ligne du montant.
+GEOMETRIE_DES_FORMULES = """els => els.map(card => {
+    const box = card.getBoundingClientRect();
+    const rect = selector => card.querySelector(selector).getBoundingClientRect();
+    const inside = Array.from(card.querySelectorAll(
+        '.plan__name, .plan__amount, .plan__unit, .plan__per, .plan__note, .plan__list li, .btn')).every(e => {
+        const r = e.getBoundingClientRect();
+        return r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
+    });
+    const amount = rect('.plan__amount'), unit = rect('.plan__unit');
+    const badge = card.querySelector('.plan__badge');
+    return {top: box.top, bottom: box.bottom, left: box.left, inside,
+            sameLine: unit.top < amount.bottom && unit.bottom > amount.top,
+            nameTop: rect('.plan__name').top, buttonBottom: rect('.btn').bottom,
+            badgeTop: badge ? badge.getBoundingClientRect().top : null};
+})"""
+
+
+class TestOffres:
+    @pytest.mark.parametrize("width", [320, 390, 768, 1000, 1280])
+    def test_les_trois_formules_tiennent_dans_l_ecran(self, make_page, site, width):
+        page = make_page(viewport={"width": width, "height": 900}, is_mobile=width < 800, has_touch=width < 800)
+        page.goto(site.url + "/")
+        page.evaluate("document.fonts.ready.then(() => true)")                       # polices chargées : mesures fiables
+        assert no_horizontal_overflow(page)
+        cards = page.locator(".plan").evaluate_all(GEOMETRIE_DES_FORMULES)
+        assert len(cards) == 3
+        assert all(card["inside"] for card in cards), cards                          # rien ne dépasse de sa carte
+        assert all(card["sameLine"] for card in cards), cards                        # « FCFA » reste à côté du montant
+        if width > 960:                                                              # trois colonnes de même hauteur
+            assert len({round(card["top"]) for card in cards}) == 1
+            assert len({round(card["buttonBottom"]) for card in cards}) == 1         # boutons alignés en bas des cartes
+            assert cards[0]["left"] < cards[1]["left"] < cards[2]["left"]
+            # Le badge « Tarif de lancement » est posé sur le bord : le contenu des trois cartes reste à la même hauteur.
+            assert len({round(card["nameTop"]) for card in cards}) == 1
+        else:                                                                        # une colonne, dans l'ordre
+            for before, after in zip(cards, cards[1:]):
+                assert after["top"] >= before["bottom"] + 20, cards
+            assert cards[1]["badgeTop"] >= cards[0]["bottom"] + 10                   # le badge ne mord pas sur la carte d'avant
+
+    def test_sans_tarif_de_lancement_ni_badge_ni_date(self, page, site, monkeypatch):
+        monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", None)
+        page.goto(site.url + "/")
+        expect(page.locator(".plan__badge")).to_have_count(0)
+        assert "Tarif de lancement" not in norm(page.locator("main").inner_text())
+        assert "30 jours d’accès" in norm(page.locator(".plan--vedette").inner_text())
+
+    @pytest.mark.parametrize("width", [320, 360, 390, 1280])
+    def test_les_choix_de_la_page_de_paiement_tiennent_dans_l_ecran(self, make_page, pay_site, width):
+        page = make_page(viewport={"width": width, "height": 900}, is_mobile=width < 800, has_touch=width < 800)
+        page.goto(pay_site.url + "/paiement")
+        page.evaluate("document.fonts.ready.then(() => true)")
+        assert no_horizontal_overflow(page)
+        boxes = page.locator(".choice__box").evaluate_all("""els => els.map(box => {
+            const r = box.getBoundingClientRect();
+            const amount = box.querySelector('.choice__amount');
+            const a = amount.getBoundingClientRect();
+            const texts = Array.from(box.querySelectorAll('.choice__name, .choice__desc, .choice__tag'));
+            return {right: r.right, amountLeft: a.left, amountRight: a.right, amountTop: a.top,
+                    textRight: Math.max(...texts.map(e => e.getBoundingClientRect().right)),
+                    textBottom: Math.max(...texts.map(e => e.getBoundingClientRect().bottom)),
+                    cut: texts.some(e => e.scrollWidth > e.clientWidth + 1) || amount.scrollWidth > amount.clientWidth + 1,
+                    eurRight: box.querySelector('.choice__eur').getBoundingClientRect().right};
+        })""")
+        assert len(boxes) == 3
+        for box in boxes:
+            assert not box["cut"] and box["amountRight"] <= box["right"] and box["eurRight"] <= box["right"], box
+            side_by_side = box["amountTop"] < box["textBottom"]
+            if side_by_side:
+                assert box["textRight"] <= box["amountLeft"], box                    # le prix ne recouvre pas le texte
+            assert side_by_side == (width > 380), (width, box)                       # petit téléphone : le prix passe dessous
+        total = page.locator(".pay__total strong").bounding_box()
+        assert total["x"] + total["width"] <= width                                  # « 39 400 FCFA » du récapitulatif en entier
+        page.click("label.choice:has(input[value=yearly])")
+        total = page.locator(".pay__total strong").bounding_box()
+        assert total["x"] + total["width"] <= width and no_horizontal_overflow(page)
+
+    def test_les_boutons_d_essai_menent_au_pass_de_7_jours(self, page, site):
+        make_free_pick(site)
+        for path in ("/gratuit", "/resultats"):
+            page.goto(site.url + path)
+            button = page.get_by_role("link", name="Essayer 7 jours, 2 000 FCFA")
+            expect(button).to_have_count(1)
+            assert button.get_attribute("href") == f"{config.PAIEMENT_URL}/paiement?plan=weekly", path
+
+
+# ======================================================================================================
 # Application installable (site des clients)
 # ======================================================================================================
 
@@ -770,12 +862,37 @@ class TestPaiement:
     def test_le_recapitulatif_suit_l_offre_choisie(self, page, pay_site):
         page.goto(pay_site.url + "/paiement")
         expect(page.locator("input[value=monthly]")).to_be_checked()
-        assert norm(page.locator("#sum-eur").inner_text()) == "30 €"
-        assert norm(page.locator("#sum-fcfa").inner_text()) == "19 700 FCFA"
+        assert norm(page.locator("#sum-fcfa").inner_text()) == "6 000 FCFA"
+        assert norm(page.locator("#sum-eur").inner_text()) == "≈ 9 €"
         page.click("label.choice:has(input[value=yearly])")
         assert norm(page.locator("#sum-name").inner_text()) == "Abonnement annuel"
-        assert norm(page.locator("#sum-eur").inner_text()) == "60 €"
         assert norm(page.locator("#sum-fcfa").inner_text()) == "39 400 FCFA"
+        assert norm(page.locator("#sum-eur").inner_text()) == "≈ 60 €"
+        page.click("label.choice:has(input[value=weekly])")
+        assert norm(page.locator("#sum-name").inner_text()) == "Pass 7 jours"
+        assert norm(page.locator("#sum-fcfa").inner_text()) == "2 000 FCFA"
+        assert norm(page.locator("#sum-eur").inner_text()) == "≈ 3 €"
+
+    def test_le_lien_d_essai_preselectionne_le_pass_de_7_jours(self, page, pay_site):
+        page.goto(pay_site.url + "/paiement?plan=weekly")
+        expect(page.locator("input[value=weekly]")).to_be_checked()
+        assert norm(page.locator("#sum-name").inner_text()) == "Pass 7 jours"
+        assert norm(page.locator("#sum-fcfa").inner_text()) == "2 000 FCFA"
+        assert norm(page.locator("#sum-eur").inner_text()) == "≈ 3 €"
+
+    def test_achat_du_pass_de_7_jours(self, page, pay_site):
+        token = start_payment(page, pay_site, "Essai@Exemple.com", plan="weekly")
+        invoice = pay_site.pd.created[-1]
+        assert invoice["amount"] == config.PRICE_WEEKLY_FCFA == 2000
+        assert invoice["name"] == "Triple Elite VIP - Pass 7 jours"
+        pay_site.pd.pay(token)
+        page.goto(pay_site.url + f"/succes?token={token}")
+        expect(page.locator("h1")).to_have_text("Paiement confirmé")
+        key = page.locator("#license-key").get_attribute("data-key")
+        assert [(m["to"], m["key"], m["plan"]) for m in pay_site.mailer.sent] == [("essai@exemple.com", key, "Pass 7 jours")]
+        assert pay_site.lm.check_login("essai@exemple.com", key)["ok"]
+        left = pay_site.lm.get_status("essai@exemple.com")["expires"] - license_manager._utcnow()
+        assert timedelta(days=6, hours=23) < left <= timedelta(days=7)
 
     def test_page_de_paiement_sans_avertissement_du_navigateur(self, page, pay_site):
         page.goto(pay_site.url + "/paiement")
@@ -784,7 +901,7 @@ class TestPaiement:
     def test_achat_d_un_nouvel_abonne(self, page, pay_site):
         token = start_payment(page, pay_site, "Nouveau.Client@Exemple.com", plan="yearly")
         invoice = pay_site.pd.created[-1]
-        assert invoice["amount"] == config.PRICE_YEARLY_FACTURE_FCFA     # le montant vient du serveur, jamais du navigateur
+        assert invoice["amount"] == config.PRICE_YEARLY_FCFA     # le montant vient du serveur, jamais du navigateur
         assert invoice["custom_data"]["email"] == "nouveau.client@exemple.com"
 
         # Le client est revenu de PayDunya, la confirmation n'est pas encore arrivée.

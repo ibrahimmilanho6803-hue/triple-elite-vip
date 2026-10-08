@@ -56,14 +56,57 @@ def typo(text):
     return _APOSTROPHE.sub("\\1\u2019", "" if text is None else str(text))
 
 
-def format_eur(amount):
-    amount = float(amount)
-    text = f"{amount:.0f}" if amount == int(amount) else f"{amount:.2f}".replace(".", ",")
-    return f"{text}{NBSP}€"
+def format_number(amount):
+    """6000 -> « 6 000 » (espace insécable entre les milliers)."""
+    return f"{int(amount):,}".replace(",", NBSP)
 
 
 def format_fcfa(amount):
-    return f"{int(amount):,}".replace(",", NBSP) + f"{NBSP}FCFA"
+    return f"{format_number(amount)}{NBSP}FCFA"
+
+
+def format_eur_approx(fcfa):
+    """Équivalent indicatif en euros d'un prix en FCFA, arrondi à l'euro : « ≈ 3 € » (le FCFA est arrimé à l'euro)."""
+    return f"≈{NBSP}{round(fcfa / config.FCFA_PER_EUR)}{NBSP}€"
+
+
+_MOIS_LONGS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+               "novembre", "décembre")
+
+
+def launch_until_label(today=None):
+    """« 31 décembre 2026 » tant que le tarif de lancement du mensuel court ; None une fois la date passée, ou si
+    aucun tarif de lancement n'est annoncé (config.LAUNCH_PRICE_UNTIL) : aucune page ne garde une mention périmée."""
+    until = config.LAUNCH_PRICE_UNTIL
+    if isinstance(until, datetime):                  # une date avec heure dans config.py ne doit pas faire planter les pages
+        until = until.date()
+    today = today or datetime.now(timezone.utc).date()
+    if until is None or until < today:
+        return None
+    return f"{_fr_day_number(until)} {_MOIS_LONGS[until.month - 1]} {until.year}"
+
+
+def price_labels():
+    """Les trois offres prêtes à afficher, lues dans config à chaque appel. Le FCFA d'abord : c'est la monnaie des
+    clients et celle du paiement. L'euro ne vient qu'ensuite, à titre indicatif.
+
+    Renvoie {"weekly" | "monthly" | "yearly": {"value", "fcfa" (« 6 000 FCFA »), "amount" (« 6 000 »), "eur" (« ≈ 9 € »)}}
+    plus, pour l'annuel, ce qu'il fait gagner par rapport à douze mois de mensuel (absent s'il ne fait rien gagner)."""
+    labels = {}
+    for key, fcfa in (("weekly", config.PRICE_WEEKLY_FCFA), ("monthly", config.PRICE_MONTHLY_FCFA),
+                      ("yearly", config.PRICE_YEARLY_FCFA)):
+        labels[key] = {"value": fcfa, "fcfa": format_fcfa(fcfa), "amount": format_number(fcfa),
+                       "eur": format_eur_approx(fcfa)}
+    yearly, monthly = int(config.PRICE_YEARLY_FCFA), int(config.PRICE_MONTHLY_FCFA)
+    labels["yearly"]["per_month"] = format_fcfa(round(yearly / 12))
+    saving = 100 * (12 * monthly - yearly) // (12 * monthly) if yearly > 0 and monthly > 0 else 0
+    if saving >= 1:
+        # Calcul en entiers et arrondis dans le sens qui ne promet jamais plus que la réalité : le prix exprimé en mois
+        # est arrondi vers le haut (au dixième), le pourcentage d'économie vers le bas. Sous 1 %, rien n'est annoncé.
+        tenths = -(-(yearly * 10) // monthly)
+        labels["yearly"]["months_price"] = f"{tenths / 10:g}".replace(".", ",")
+        labels["yearly"]["saving"] = saving
+    return labels
 
 
 def join_fr(items):
@@ -371,7 +414,6 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
     app.jinja_env.trim_blocks = True
     app.jinja_env.lstrip_blocks = True
 
-    per_month = config.PRICE_YEARLY / 12
     base = home_url.rstrip("/")             # « » sur le site client (adresses relatives), son adresse complète ailleurs
 
     @app.context_processor
@@ -389,13 +431,10 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
             "paiement_url": config.PAIEMENT_URL,
             "seller_email": config.SELLER_EMAIL,
             "product_name": config.PRODUCT_NAME,
-            "price_monthly": format_eur(config.PRICE_MONTHLY),
-            "price_yearly": format_eur(config.PRICE_YEARLY),
-            "price_monthly_num": f"{config.PRICE_MONTHLY:g}".replace(".", ","),
-            "price_yearly_num": f"{config.PRICE_YEARLY:g}".replace(".", ","),
-            "price_yearly_per_month": format_eur(round(per_month, 2)),
-            "fcfa_monthly": format_fcfa(config.PRICE_MONTHLY_FACTURE_FCFA),
-            "fcfa_yearly": format_fcfa(config.PRICE_YEARLY_FACTURE_FCFA),
+            # Prix des offres (voir config.py) : FCFA d'abord, euro indicatif ensuite.
+            "prices": price_labels(),
+            "launch_until": launch_until_label(),
+            "fcfa_per_eur": f"{config.FCFA_PER_EUR:g}".replace(".", ","),
             # Moyens de paiement annoncés (voir config.py) : lus à chaque requête, donc faciles à tester.
             "cards_enabled": bool(config.CARDS_ENABLED),
             "payment_countries": join_fr(config.PAYMENT_COUNTRIES),

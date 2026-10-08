@@ -21,9 +21,9 @@
         <a class="btn btn--ligne btn--grand" href="{{ login_url }}">J’ai déjà un accès</a>
       </div>
       {% if cards_enabled %}
-      <p class="hero__fine">À partir de {{ price_monthly }} par mois. Orange Money, MTN, Moov, Wave ou carte bancaire.</p>
+      <p class="hero__fine">À partir de {{ prices.weekly.fcfa }} ({{ prices.weekly.eur }}) pour 7&nbsp;jours. Orange Money, MTN, Moov, Wave ou carte bancaire.</p>
       {% else %}
-      <p class="hero__fine">À partir de {{ price_monthly }} par mois. Paiement par Mobile Money (Orange Money, MTN, Moov, Wave) depuis&nbsp;: {{ payment_countries }}.</p>
+      <p class="hero__fine">À partir de {{ prices.weekly.fcfa }} ({{ prices.weekly.eur }}) pour 7&nbsp;jours. Paiement par Mobile Money (Orange Money, MTN, Moov, Wave) depuis&nbsp;: {{ payment_countries }}.</p>
       {% endif %}
       {% if free_pick_enabled %}
       <p class="hero__links">Pas encore décidé&nbsp;? <a href="{{ free_url }}">Vois le combiné gratuit du jour</a> ou <a href="{{ results_url }}">nos résultats réels</a>.</p>
@@ -200,32 +200,56 @@
 <section class="section section--ligne" id="offres">
   <div class="container">
     <div class="section__head">
-      <h2 class="h2">Deux formules, le même accès</h2>
-      <p class="lead">Paiement unique, sans prélèvement automatique. Tu peux renouveler avant la fin&nbsp;: la durée s’ajoute au temps restant.</p>
+      <h2 class="h2">Trois formules, le même accès</h2>
+      <p class="lead">Prix en FCFA, paiement unique, sans prélèvement automatique. Tu peux renouveler avant la fin&nbsp;: la durée s’ajoute au temps restant.</p>
     </div>
     <div class="plans">
       <div class="plan">
+        <h3 class="plan__name">Pass 7&nbsp;jours</h3>
+        <p class="plan__price"><span class="plan__amount">{{ prices.weekly.amount }}</span> <span class="plan__unit">FCFA</span></p>
+        <p class="plan__per">pour 7&nbsp;jours · {{ prices.weekly.eur }}</p>
+        <p class="plan__note">Un seul paiement, rien à résilier</p>
+        <ul class="plan__list">
+          <li>Tout l’accès pendant 7&nbsp;jours</li>
+          <li>Pour juger sur pièces avant de t’abonner</li>
+        </ul>
+        <a class="btn btn--ligne btn--bloc" href="{{ paiement_url }}/paiement?plan=weekly">Essayer 7&nbsp;jours</a>
+      </div>
+      <div class="plan plan--vedette">
+        {% if launch_until %}
+        <p class="plan__badge">Tarif de lancement</p>
+        {% endif %}
         <h3 class="plan__name">Mensuel</h3>
-        <p class="plan__price"><span class="plan__amount">{{ price_monthly_num }}&nbsp;€</span><span class="plan__per">par mois</span></p>
-        <p class="plan__fcfa">Facturé {{ fcfa_monthly }}</p>
+        <p class="plan__price"><span class="plan__amount">{{ prices.monthly.amount }}</span> <span class="plan__unit">FCFA</span></p>
+        <p class="plan__per">par mois · {{ prices.monthly.eur }}</p>
+        {% if launch_until %}
+        <p class="plan__note plan__note--lancement">Jusqu’au {{ launch_until }}</p>
+        {% else %}
+        <p class="plan__note">30&nbsp;jours d’accès</p>
+        {% endif %}
         <ul class="plan__list">
           <li>Génération des combinés à la demande</li>
           <li>Cote, confiance et chance de réussite de chaque coupon</li>
           <li>Historique des résultats et bilan</li>
           <li>Support par e-mail</li>
         </ul>
-        <a class="btn btn--ligne btn--bloc" href="{{ paiement_url }}/paiement?plan=monthly">Choisir le mensuel</a>
+        <a class="btn btn--or btn--bloc" href="{{ paiement_url }}/paiement?plan=monthly">Choisir le mensuel</a>
       </div>
-      <div class="plan plan--vedette">
+      <div class="plan">
         <h3 class="plan__name">Annuel</h3>
-        <p class="plan__price"><span class="plan__amount">{{ price_yearly_num }}&nbsp;€</span><span class="plan__per">par an, soit {{ price_yearly_per_month }} par mois</span></p>
-        <p class="plan__fcfa">Facturé {{ fcfa_yearly }}</p>
+        <p class="plan__price"><span class="plan__amount">{{ prices.yearly.amount }}</span> <span class="plan__unit">FCFA</span></p>
+        <p class="plan__per">par an · {{ prices.yearly.eur }}</p>
+        <p class="plan__note">soit {{ prices.yearly.per_month }} par mois</p>
         <ul class="plan__list">
           <li>Tout l’abonnement mensuel</li>
+          {% if prices.yearly.months_price %}
+          <li>Douze mois d’accès pour le prix de {{ prices.yearly.months_price }}&nbsp;mois ({{ prices.yearly.saving }}&nbsp;% d’économie)</li>
+          {% else %}
           <li>Douze mois d’accès</li>
+          {% endif %}
           <li>Un seul paiement pour toute l’année</li>
         </ul>
-        <a class="btn btn--or btn--bloc" href="{{ paiement_url }}/paiement?plan=yearly">Choisir l’annuel</a>
+        <a class="btn btn--ligne btn--bloc" href="{{ paiement_url }}/paiement?plan=yearly">Choisir l’annuel</a>
       </div>
     </div>
   </div>
@@ -250,8 +274,12 @@
         {% endif %}
       </details>
       <details>
-        <summary>Pourquoi le paiement est-il en FCFA&nbsp;?</summary>
-        <p>PayDunya encaisse uniquement en FCFA. Les prix en euros sont convertis au taux fixe de 1&nbsp;€ = 655,957&nbsp;FCFA, arrondi à la centaine supérieure&nbsp;: {{ price_monthly }} = {{ fcfa_monthly }}, {{ price_yearly }} = {{ fcfa_yearly }}.</p>
+        <summary>Puis-je d’abord essayer avant de m’abonner&nbsp;?</summary>
+        <p>Oui&nbsp;: le Pass 7&nbsp;jours ({{ prices.weekly.fcfa }}) donne l’accès complet pendant 7&nbsp;jours, en un seul paiement. Rien à résilier, aucun prélèvement ensuite. Si tu veux continuer, tu paies l’offre de ton choix avant la fin&nbsp;: la durée s’ajoute au temps restant et ta clé reste la même.</p>
+      </details>
+      <details>
+        <summary>En quelle monnaie je paie&nbsp;?</summary>
+        <p>En FCFA&nbsp;: c’est la seule monnaie que PayDunya encaisse, et nos prix sont affichés dans cette monnaie. Les montants en euros ne sont donnés qu’à titre indicatif (1&nbsp;€ = {{ fcfa_per_eur }}&nbsp;FCFA, taux fixe), arrondis à l’euro.</p>
       </details>
       <details>
         <summary>Les cotes sont-elles celles de mon bookmaker&nbsp;?</summary>

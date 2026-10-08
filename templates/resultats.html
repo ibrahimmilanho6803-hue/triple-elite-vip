@@ -83,9 +83,9 @@
 
     <section class="panel cta">
       <h2 class="h2">Reçois les prochains combinés</h2>
-      <p>Génère tes trois combinés quand tu veux, avec la cote, la confiance de chaque pronostic et la chance de réussite estimée. À partir de {{ price_monthly }} par mois.</p>
+      <p>Génère tes trois combinés quand tu veux, avec la cote, la confiance de chaque pronostic et la chance de réussite estimée. Essaie 7&nbsp;jours pour {{ prices.weekly.fcfa }} ({{ prices.weekly.eur }}), ou abonne-toi à partir de {{ prices.monthly.fcfa }} par mois&nbsp;: <a href="{{ paiement_url }}">voir toutes les offres</a>.</p>
       <div class="cta__actions">
-        <a class="btn btn--or" href="{{ paiement_url }}">S’abonner</a>
+        <a class="btn btn--or" href="{{ paiement_url }}/paiement?plan=weekly">Essayer 7&nbsp;jours, {{ prices.weekly.fcfa }}</a>
         {% if free_pick_enabled %}
         <a class="btn btn--ligne" href="{{ free_url }}">Voir le combiné gratuit du jour</a>
         {% endif %}

@@ -37,6 +37,25 @@ def test_moyens_de_paiement_annonces_sont_bien_formes():
     assert all(name and name == name.strip() and "'" not in name for name in countries)    # apostrophe typographique
 
 
+def test_les_prix_sont_bien_formes():
+    """Montants entiers et positifs en FCFA (PayDunya ne facture pas de centimes), un taux de change utilisable, et une date
+    de fin de tarif de lancement qui est une vraie date (ou rien) : sinon les pages ne pourraient plus s'afficher."""
+    import datetime
+    for price in (config.PRICE_WEEKLY_FCFA, config.PRICE_MONTHLY_FCFA, config.PRICE_YEARLY_FCFA):
+        assert isinstance(price, int) and not isinstance(price, bool) and price >= 100, price
+    assert config.PRICE_WEEKLY_FCFA < config.PRICE_MONTHLY_FCFA < config.PRICE_YEARLY_FCFA
+    assert 650 < config.FCFA_PER_EUR < 660                                     # taux fixe 1 € = 655,957 FCFA
+    assert config.LAUNCH_PRICE_UNTIL is None or isinstance(config.LAUNCH_PRICE_UNTIL, datetime.date)
+
+
+def test_une_date_de_lancement_avec_heure_ne_fait_pas_planter_les_pages(monkeypatch):
+    import datetime
+    import web_common
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", datetime.datetime(2026, 12, 31, 18, 30))
+    assert web_common.launch_until_label(datetime.date(2026, 12, 31)) == "31 décembre 2026"
+    assert web_common.launch_until_label(datetime.date(2027, 1, 1)) is None
+
+
 def test_liste_d_adresses_de_test():
     assert config.parse_email_list(" A@x.com, b@y.com;C@Z.com  d@w.org ,, ") == {"a@x.com", "b@y.com", "c@z.com", "d@w.org"}
     assert config.parse_email_list("") == frozenset() and config.parse_email_list(None) == frozenset()

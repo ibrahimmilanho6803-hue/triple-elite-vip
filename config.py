@@ -4,6 +4,7 @@
 # Les vrais secrets (clés API, mots de passe) ne sont JAMAIS ici : ils vivent
 # uniquement dans les variables d'environnement (voir .env.example et render.yaml).
 
+import datetime
 import os
 import re
 
@@ -192,18 +193,21 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 PRODUCT_NAME = "Triple Elite VIP"
 VERSION = "2.1"
 
-# Prix affichés au client sur les pages de vente et de paiement.
-DEVISE = "€"
-PRICE_MONTHLY = 30   # € / mois (affichage)
-PRICE_YEARLY = 60    # € / an (affichage)
+# Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
+# Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente
+# et de paiement, et transmis tels quels à PayDunya (voir paiement.py).
+PRICE_WEEKLY_FCFA = 2000      # Pass 7 jours : l'essai à petit prix, un seul paiement, rien à résilier
+PRICE_MONTHLY_FCFA = 6000     # Mensuel : tarif de lancement (voir LAUNCH_PRICE_UNTIL)
+PRICE_YEARLY_FCFA = 39400     # Annuel
 
-# PayDunya (Orange Money, MTN, Moov, Wave, carte) ne facture qu'en FCFA (XOF) : leur
-# API ne propose aucune option pour créer une facture en euros. Le FCFA étant arrimé
-# à l'euro à taux fixe (1 EUR = 655,957 FCFA), les montants ci-dessous sont
-# l'équivalent réel de PRICE_MONTHLY / PRICE_YEARLY et sont ce qui est RÉELLEMENT
-# transmis à PayDunya (voir paiement.py), même si la page affiche « 30 € » / « 60 € ».
-PRICE_MONTHLY_FACTURE_FCFA = 19700   # ~30 EUR
-PRICE_YEARLY_FACTURE_FCFA = 39400    # ~60 EUR
+# Les équivalents en euros ne sont affichés qu'à titre indicatif (« ≈ 3 € »), pour les clients qui comptent en euros.
+# Le FCFA est arrimé à l'euro à taux fixe.
+FCFA_PER_EUR = 655.957
+
+# Fin du tarif de lancement du mensuel. Tant que cette date n'est pas passée, les pages l'annoncent ; ensuite l'annonce
+# disparaît toute seule (aucune mention périmée). Le prix, lui, ne change que si PRICE_MONTHLY_FCFA change : le monter
+# après cette date est un choix à faire (None = ne jamais annoncer de tarif de lancement).
+LAUNCH_PRICE_UNTIL = datetime.date(2026, 12, 31)
 
 # --- Contact vendeur ---
 SELLER_EMAIL = "tripleelitevip@gmail.com"

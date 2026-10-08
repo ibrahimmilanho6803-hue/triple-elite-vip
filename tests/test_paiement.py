@@ -46,6 +46,11 @@ def order_row(env, token):
                (token,))
 
 
+def order_days(env, token):
+    """Durée en jours enregistrée avec la commande (None : commande d'avant le pass de 7 jours)."""
+    return raw(env.path, "SELECT jours FROM pending_orders WHERE token = ?", (token,))[0][0]
+
+
 def start(env, email=EMAIL, plan="monthly", accept="1", **kwargs):
     """Le client choisit une offre et coche la case des conditions (accept=None : il ne la coche pas) :
     renvoie (réponse, jeton de la facture créée)."""
@@ -68,12 +73,17 @@ def text(response):
 def test_page_d_offres_prix_et_formulaire(env):
     response = env.client.get("/paiement")
     page = text(response)
+    flat = page.replace("&nbsp;", " ").replace("\u00a0", " ")
     assert response.status_code == 200
-    assert "30 €" in page and "60 €" in page
-    assert "19 700 FCFA" in page and "39 400 FCFA" in page
-    assert page.count('name="plan"') == 2 and 'action="/payer"' in page and 'method="post"' in page
-    assert 'value="monthly" checked' in page and 'value="yearly" checked' not in page
-    assert "365 jours d’accès" in page and "30 jours d’accès" in page
+    # Le FCFA d'abord (la monnaie des clients et de PayDunya) ; l'euro n'est qu'un ordre de grandeur.
+    assert "2 000 FCFA" in flat and "6 000 FCFA" in flat and "39 400 FCFA" in flat
+    assert "≈ 3 €" in flat and "≈ 9 €" in flat and "≈ 60 €" in flat
+    assert "19 700" not in flat and "30 €" not in flat                          # les anciens prix ont disparu
+    assert page.count('name="plan"') == 3 and 'action="/payer"' in page and 'method="post"' in page
+    assert re.findall(r'name="plan" value="(\w+)"', page) == ["weekly", "monthly", "yearly"]      # du plus petit au plus grand
+    assert 'value="monthly" checked' in page and page.count(" checked") == 1                       # le mensuel reste proposé d'abord
+    assert "7 jours d’accès" in flat and "30 jours d’accès" in flat and "365 jours d’accès" in flat
+    assert "Pass 7 jours" in flat and "soit 3 283 FCFA par mois" in flat
     assert "Support Telegram" not in page and "style=" not in page and "onclick" not in page
 
 
@@ -120,6 +130,53 @@ def test_l_avis_de_paiement_reste_visible_avec_le_message_d_annulation_et_les_er
     assert 'id="pay-methods"' in text(env.client.get("/paiement?annule=1&plan=monthly"))
     response, _ = start(env, email="pas-un-mail")
     assert response.status_code == 400 and 'id="pay-methods"' in text(response)
+
+
+def test_etiquettes_de_prix_fcfa_d_abord_euro_indicatif():
+    prices = web_common.price_labels()
+    assert prices["weekly"]["fcfa"] == "2\u00a0000\u00a0FCFA" and prices["weekly"]["amount"] == "2\u00a0000"
+    assert prices["monthly"]["fcfa"] == "6\u00a0000\u00a0FCFA" and prices["yearly"]["amount"] == "39\u00a0400"
+    assert [prices[key]["eur"] for key in ("weekly", "monthly", "yearly")] == [
+        "≈\u00a03\u00a0€", "≈\u00a09\u00a0€", "≈\u00a060\u00a0€"]
+    assert prices["yearly"]["per_month"] == "3\u00a0283\u00a0FCFA"
+    # L'annuel est annoncé « au prix de 6,6 mois » et « 45 % » d'économie : arrondis dans le sens qui ne promet pas plus.
+    assert prices["yearly"]["months_price"] == "6,6" and prices["yearly"]["saving"] == 45
+
+
+def test_economie_de_l_annuel_ne_promet_jamais_plus_que_la_realite(monkeypatch):
+    monkeypatch.setattr(config, "PRICE_MONTHLY_FCFA", 6000)
+    monkeypatch.setattr(config, "PRICE_YEARLY_FCFA", 36000)                          # exactement 6 mois : 50 %
+    yearly = web_common.price_labels()["yearly"]
+    assert yearly["months_price"] == "6" and yearly["saving"] == 50
+    monkeypatch.setattr(config, "PRICE_YEARLY_FCFA", 36001)                          # un FCFA de plus : 49 %, 6,1 mois
+    yearly = web_common.price_labels()["yearly"]
+    assert yearly["months_price"] == "6,1" and yearly["saving"] == 49
+    for flat in (72000, 71999, 80000):                                               # l'annuel ne ferait rien gagner (ou moins de 1 %)
+        monkeypatch.setattr(config, "PRICE_YEARLY_FCFA", flat)
+        yearly = web_common.price_labels()["yearly"]
+        assert "saving" not in yearly and "months_price" not in yearly, flat           # aucune promesse affichée
+
+
+def test_le_tarif_de_lancement_s_annonce_jusqu_a_sa_date_puis_disparait(monkeypatch):
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", datetime.date(2026, 12, 31))
+    assert web_common.launch_until_label(datetime.date(2026, 10, 8)) == "31 décembre 2026"
+    assert web_common.launch_until_label(datetime.date(2026, 12, 31)) == "31 décembre 2026"      # jusqu'au dernier jour inclus
+    assert web_common.launch_until_label(datetime.date(2027, 1, 1)) is None                     # plus aucune mention périmée
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", None)
+    assert web_common.launch_until_label(datetime.date(2026, 10, 8)) is None
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", datetime.date(2027, 1, 1))
+    assert web_common.launch_until_label(datetime.date(2026, 10, 8)) == "1er janvier 2027"
+
+
+def test_la_page_annonce_le_tarif_de_lancement_tant_qu_il_court(env, monkeypatch):
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", today + datetime.timedelta(days=30))
+    page = text(env.client.get("/paiement")).replace("&nbsp;", " ")
+    assert page.count("Tarif de lancement jusqu’au ") == 1                                       # sur le mensuel seulement
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", today - datetime.timedelta(days=1))
+    assert "Tarif de lancement" not in text(env.client.get("/paiement"))
+    monkeypatch.setattr(config, "LAUNCH_PRICE_UNTIL", None)
+    assert "Tarif de lancement" not in text(env.client.get("/paiement"))
 
 
 def test_enumeration_a_la_francaise():
@@ -193,11 +250,12 @@ def test_achat_mensuel_redirige_vers_paydunya_et_enregistre_la_commande(env):
     response, token = start(env, email="  Client@Exemple.com ")
     assert response.status_code == 303 and response.headers["Location"] == f"https://paydunya.com/checkout/invoice/{token}"
     sent = env.pd.created[0]
-    assert sent["amount"] == config.PRICE_MONTHLY_FACTURE_FCFA == 19700
+    assert sent["amount"] == config.PRICE_MONTHLY_FCFA == 6000
     assert sent["return_url"] == f"{config.PAIEMENT_URL}/succes" and sent["callback_url"] == f"{config.PAIEMENT_URL}/ipn"
     assert sent["cancel_url"].startswith(f"{config.PAIEMENT_URL}/paiement?annule=1")
     assert sent["custom_data"] == {"plan": "monthly", "email": EMAIL}
     assert order_row(env, token) == [(EMAIL, "Mensuel", 1, 0, None, None)]
+    assert order_days(env, token) == 30
 
 
 def test_achat_annuel(env):
@@ -205,15 +263,36 @@ def test_achat_annuel(env):
     assert response.status_code == 303
     assert env.pd.created[0]["amount"] == 39400 and "Annuel" in env.pd.created[0]["name"]
     assert order_row(env, token) == [(EMAIL, "Annuel", 12, 0, None, None)]
+    assert order_days(env, token) == 365
+
+
+def test_achat_du_pass_de_7_jours(env):
+    response, token = start(env, plan="weekly")
+    assert response.status_code == 303
+    sent = env.pd.created[0]
+    assert sent["amount"] == config.PRICE_WEEKLY_FCFA == 2000                     # le montant vient du serveur, en FCFA
+    assert sent["name"] == "Triple Elite VIP - Pass 7 jours" and sent["custom_data"] == {"plan": "weekly", "email": EMAIL}
+    # La commande garde la durée exacte (7 jours) ; « duree » (mois) n'est qu'un repli arrondi vers le haut.
+    assert order_row(env, token) == [(EMAIL, "Pass 7 jours", 1, 0, None, None)]
+    assert order_days(env, token) == 7
 
 
 def test_les_prix_sont_ceux_de_la_configuration():
-    assert PLANS["monthly"]["fcfa"] == config.PRICE_MONTHLY_FACTURE_FCFA and PLANS["monthly"]["months"] == 1
-    assert PLANS["yearly"]["fcfa"] == config.PRICE_YEARLY_FACTURE_FCFA and PLANS["yearly"]["months"] == 12
-    # Le montant facturé en FCFA ne dépasse jamais l'équivalent exact du prix en euros de plus d'une centaine.
-    for key, euros in (("monthly", config.PRICE_MONTHLY), ("yearly", config.PRICE_YEARLY)):
-        exact = euros * 655.957
-        assert exact <= PLANS[key]["fcfa"] < exact + 100
+    assert list(PLANS) == ["weekly", "monthly", "yearly"]                          # ordre d'affichage : du plus court au plus long
+    assert [PLANS[key]["fcfa"] for key in PLANS] == [config.PRICE_WEEKLY_FCFA, config.PRICE_MONTHLY_FCFA,
+                                                     config.PRICE_YEARLY_FCFA] == [2000, 6000, 39400]
+    assert [PLANS[key]["days"] for key in PLANS] == [7, 30, 365]
+    assert [PLANS[key]["months"] for key in PLANS] == [1, 1, 12]
+    # Les mois gardés pour les anciennes versions ne donnent jamais MOINS que la durée vraiment accordée.
+    for plan in PLANS.values():
+        assert license_manager.duration_days(plan["months"]) >= plan["days"]
+
+
+def test_plus_on_s_engage_longtemps_moins_le_jour_coute():
+    """Garde-fou de la grille de prix : si une modification de config.py rendait le pass moins cher au jour que le
+    mensuel (ou le mensuel moins cher que l'annuel), les clients auraient intérêt à acheter la mauvaise offre."""
+    per_day = [PLANS[key]["fcfa"] / PLANS[key]["days"] for key in ("weekly", "monthly", "yearly")]
+    assert per_day[0] > per_day[1] > per_day[2]
 
 
 @pytest.mark.parametrize("email", ["", "pas-un-email", "a@b", "a b@c.com", "a@@c.com", "a@c.com, b@c.com",
@@ -321,6 +400,39 @@ def test_retour_apres_paiement_delivre_et_affiche_la_licence(env):
 
 def test_abonnement_annuel_dure_365_jours(env):
     _, token = start(env, plan="yearly")
+    env.pd.pay(token)
+    assert env.client.get(f"/succes?token={token}").status_code == 200
+    delta = env.lm.get_status(EMAIL)["expires"] - license_manager._utcnow()
+    assert datetime.timedelta(days=364, hours=23) < delta <= datetime.timedelta(days=365)
+
+
+def test_pass_de_7_jours_dure_7_jours_et_l_e_mail_le_nomme(env):
+    _, token = start(env, plan="weekly")
+    env.pd.pay(token)
+    page = text(env.client.get(f"/succes?token={token}"))
+    assert "Paiement confirmé" in page
+    status = env.lm.get_status(EMAIL)
+    assert datetime.timedelta(days=6, hours=23) < status["expires"] - license_manager._utcnow() <= datetime.timedelta(days=7)
+    assert env.mailer.sent == [{"to": EMAIL, "key": order_row(env, token)[0][4], "plan": "Pass 7 jours",
+                                "expires": status["expires"], "renewed": False}]
+
+
+def test_pass_de_7_jours_s_ajoute_a_un_abonnement_en_cours(env):
+    first = env.lm.issue_license(EMAIL, 1)
+    before = first["expires"]
+    _, token = start(env, plan="weekly")
+    env.pd.pay(token)
+    page = text(env.client.get(f"/succes?token={token}"))
+    assert "Abonnement prolongé" in page and first["key"] not in page
+    assert env.lm.get_status(EMAIL)["expires"] == before + datetime.timedelta(days=7)
+    assert env.mailer.sent[0]["renewed"] is True and env.mailer.sent[0]["key"] == first["key"]
+
+
+def test_commande_enregistree_avant_le_pass_est_delivree_selon_ses_mois(env):
+    """Un paiement en cours pendant la mise à jour (commande sans durée en jours) donne la durée qui était annoncée."""
+    _, token = start(env, plan="yearly")
+    raw(env.path, "UPDATE pending_orders SET jours = NULL WHERE token = ?", (token,))
+    assert order_days(env, token) is None
     env.pd.pay(token)
     assert env.client.get(f"/succes?token={token}").status_code == 200
     delta = env.lm.get_status(EMAIL)["expires"] - license_manager._utcnow()

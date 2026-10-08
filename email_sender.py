@@ -48,6 +48,14 @@ def _date_label(expires):
     return expires.strftime("%d/%m/%Y") if expires else None
 
 
+def _plan_phrase(plan):
+    """« abonnement mensuel », « abonnement annuel », « pass 7 jours » : l'offre telle qu'on la nomme dans une phrase."""
+    name = (plan or "").strip().lower()
+    if not name:
+        return "abonnement"
+    return name if name.startswith("pass") else f"abonnement {name}"
+
+
 def build_message(destinataire, cle, plan, expires=None, renewed=False, expediteur=None, granted=False):
     """Message texte + HTML (UTF-8, accents compris). `renewed` : renouvellement d'une licence encore valide.
     `granted` : accès offert ou rétabli à la main (script de licences), sans achat : le rappel de la renonciation
@@ -55,7 +63,7 @@ def build_message(destinataire, cle, plan, expires=None, renewed=False, expedite
     expediteur = expediteur or sender_address()
     until = _date_label(expires)
     login_url = f"{config.SITE_URL}/login"
-    plan_label = f"abonnement {plan.lower()}" if plan else "abonnement"
+    plan_label = _plan_phrase(plan)
 
     until_label = typo("Abonnement actif jusqu'au" if renewed else "Valable jusqu'au")
     if renewed:

@@ -35,7 +35,8 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
 
 Avant d'acheter, un visiteur peut consulter les résultats réels et un combiné gratuit (voir « Pages publiques »).
 
-1. Il choisit une offre sur `/paiement` (30 € par mois, 60 € par an, débités en FCFA : 19 700 et 39 400 FCFA).
+1. Il choisit une offre sur `/paiement` : Pass 7 jours (2 000 FCFA), mensuel (6 000 FCFA, tarif de lancement) ou annuel
+   (39 400 FCFA). Les prix sont en FCFA, la monnaie du paiement ; l'équivalent en euros n'est qu'indicatif (voir « Prix et offres »).
 2. `/payer` crée la facture PayDunya et mémorise la commande **avant** la redirection.
 3. Après paiement, PayDunya le renvoie sur `/succes?token=…`. Le site demande à PayDunya de confirmer, délivre la
    licence (une seule fois, même si la page est rechargée), l'**affiche** et l'envoie par e-mail.
@@ -44,7 +45,7 @@ Avant d'acheter, un visiteur peut consulter les résultats réels et un combiné
    PayDunya qui est interrogé. Le rappel (`callback_url`) est envoyé avec chaque facture : rien à régler chez PayDunya
    (l'adresse `/ipn-paydunya`, enregistrée dans l'application PayDunya, répond aussi).
 5. Un client qui renouvelle **avant** la fin de son abonnement garde sa clé ; la durée achetée s'ajoute au temps restant.
-   Après expiration, une nouvelle clé est délivrée. Un mois compte 30 jours, un an 365 jours.
+   Après expiration, une nouvelle clé est délivrée. Le pass compte 7 jours, un mois 30 jours, un an 365 jours.
 6. Il se connecte sur le site avec son e-mail et sa clé, puis génère ses combinés (un seul calcul en arrière-plan pour
    tous les clients, réutilisé pendant 3 heures) et consulte l'historique avec le score de chaque match.
 7. Il peut installer le site sur son téléphone comme une application (voir « Application installable »).
@@ -288,6 +289,45 @@ sable » : les paiements y sont fictifs. Un interrupteur permet de les essayer *
 La licence obtenue pendant l'essai est une vraie licence pour ton adresse ; elle peut être désactivée ou supprimée avec
 `python generate_keys.py`.
 
+## Prix et offres
+
+Trois offres, un seul accès (génération à la demande, historique, bilan). Tout est dans `config.py` ; les pages (accueil, FAQ,
+paiement, conditions, e-mail) et le montant envoyé à PayDunya en sont déduits : un prix ne se change qu'à un endroit.
+
+| Offre | Constante | Prix | Durée accordée |
+| --- | --- | --- | --- |
+| Pass 7 jours | `PRICE_WEEKLY_FCFA` | 2 000 FCFA (≈ 3 €) | 7 jours |
+| Mensuel | `PRICE_MONTHLY_FCFA` | 6 000 FCFA (≈ 9 €), tarif de lancement | 30 jours |
+| Annuel | `PRICE_YEARLY_FCFA` | 39 400 FCFA (≈ 60 €) | 365 jours |
+
+- **FCFA d'abord.** C'est la monnaie des clients et la seule que PayDunya encaisse. L'euro n'est qu'un ordre de grandeur, arrondi à
+  l'euro (`FCFA_PER_EUR`, taux fixe 655,957) et précédé de « ≈ » : il n'est jamais facturé.
+- **Pas de renouvellement automatique.** Chaque offre est un paiement unique. Acheter avant la fin ajoute la durée au temps restant
+  et garde la même clé : le pass peut donc servir d'essai, puis se prolonger par un mensuel.
+- **Tarif de lancement du mensuel.** `LAUNCH_PRICE_UNTIL` (par défaut le 31 décembre 2026) : tant que la date n'est pas passée,
+  l'accueil et la page de paiement annoncent « Tarif de lancement jusqu'au … ». Ensuite l'annonce **disparaît toute seule** (aucune
+  mention périmée) mais le prix ne change pas tout seul : pour le monter, modifier `PRICE_MONTHLY_FCFA`. `None` n'annonce aucun
+  tarif de lancement. Ne mets qu'une date que tu comptes tenir : c'est une promesse faite aux clients.
+- **L'annuel affiche ce qu'il fait gagner**, calculé à partir des deux prix (« au prix de 6,6 mois », « 45 % d'économie »), arrondi dans
+  le sens qui ne promet jamais plus que la réalité ; rien n'est affiché si l'annuel ne fait rien gagner.
+- **Garde-fou.** Un test (`test_plus_on_s_engage_longtemps_moins_le_jour_coute`) échoue si une modification rend le jour plus cher
+  sur une offre longue que sur une courte : les clients auraient intérêt à acheter la mauvaise offre.
+- **Changer un prix** : modifier la constante, lancer `python -m pytest tests -q`, puis envoyer sur `main`. Les tests qui vérifient
+  les montants affichés (accueil, paiement, boutons d'essai) écrivent les prix en toutes lettres : ils échouent tant qu'on ne les a pas
+  mis à jour avec le prix, ce qui évite d'afficher un montant par mégarde. Une facture déjà créée garde son ancien montant.
+
+Côté base, la commande (`pending_orders`) garde la durée **en mois** (`duree`, historique) et, depuis le pass, la durée exacte **en
+jours** (`jours`, colonne ajoutée toute seule au démarrage). Quand `jours` est renseignée elle l'emporte ; vide (commandes
+enregistrées avant le pass, paiement encore en cours pendant une mise à jour), la durée se lit en mois comme avant : aucun
+paiement en cours n'est perdu ni raccourci. Pour le pass, `duree` vaut 1 (repli arrondi vers le haut pour une ancienne version du code).
+
+Pour voir ce qui se vend par offre (factures créées, puis payées) :
+
+```sql
+SELECT plan, COUNT(*) AS factures, COUNT(*) FILTER (WHERE license_key IS NOT NULL) AS payees
+FROM pending_orders GROUP BY plan ORDER BY plan;
+```
+
 ## Moyens de paiement annoncés aux clients
 
 Les pages (accueil, FAQ, page de paiement) n'annoncent que ce que PayDunya propose **réellement** à ce compte marchand :
@@ -423,7 +463,8 @@ dans les journaux ; messages d'erreur sans détail technique ; licence revérifi
 ## Limites connues
 
 - Le paiement réel (PayDunya en production, retour du client, appel `/ipn`) est couvert par des tests simulés : il doit
-  être essayé en mode test (voir plus haut), puis une fois avec un vrai paiement de l'offre mensuelle.
+  être essayé en mode test (voir plus haut), puis une fois avec un vrai paiement de l'offre la moins chère (Pass 7 jours,
+  2 000 FCFA) : c'est aussi la preuve que PayDunya accepte une facture de ce montant.
 - Les résultats publics valent ce que valent les scores disponibles chez TheSportsDB : un match dont le score n'est jamais publié
   garde son combiné « en attente » (il n'est ni compté ni affiché), et le bilan lit les 1000 dernières générations (la page dit « depuis le … »).
 - La qualité des pronostics dépend des données de TheSportsDB (calendriers parfois incomplets) et de l'estimation de

@@ -67,9 +67,13 @@ def test_pages_publiques(env):
 
 
 def test_prix_et_textes_de_la_page_d_accueil(env):
-    page = env.client.get("/").get_data(as_text=True)
-    assert "30 €" in page.replace("&nbsp;", " ") or "30&nbsp;€" in page
-    assert "19 700 FCFA" in page and "39 400 FCFA" in page
+    html = env.client.get("/").get_data(as_text=True)
+    page = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.replace("&nbsp;", " ")))       # le texte lu par le visiteur
+    # Le FCFA d'abord (la monnaie des clients), l'euro seulement à titre indicatif.
+    assert "2 000 FCFA" in page and "6 000 FCFA" in page and "39 400 FCFA" in page
+    assert "≈ 3 €" in page and "≈ 9 €" in page and "≈ 60 €" in page
+    assert "Pass 7 jours" in page and all(f"plan={plan}" in html for plan in ("weekly", "monthly", "yearly"))
+    assert "30 €" not in page and "19 700" not in page       # les anciens prix ont disparu
     assert "Telegram" not in page                            # aucun canal de support inexistant
     assert "Cote totale" in page and "Équipe A" in page      # exemple clairement fictif
     assert "fictives" in page

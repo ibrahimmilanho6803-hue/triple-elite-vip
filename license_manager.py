@@ -115,8 +115,10 @@ class LicenseManager:
                 conn.commit()
                 # Colonnes ajoutées après coup (bases déjà en service) : la clé délivrée et
                 # le fait qu'il s'agisse d'un renouvellement, pour pouvoir les réafficher au
-                # client même si son e-mail tarde ou n'arrive pas.
-                for column in ("license_key TEXT", "renewed BOOLEAN"):
+                # client même si son e-mail tarde ou n'arrive pas ; et la durée en JOURS, que
+                # le pass de 7 jours exige (« duree » est en mois). Vide pour les commandes
+                # enregistrées avant : elles se lisent alors en mois, comme toujours.
+                for column in ("license_key TEXT", "renewed BOOLEAN", "jours INTEGER"):
                     try:
                         cursor.execute(f"ALTER TABLE pending_orders ADD COLUMN {column}")
                         conn.commit()
@@ -203,19 +205,21 @@ class LicenseManager:
         rows.sort(key=lambda r: (self._usable(r, now), r["active"], r["expires"], str(r["key"])), reverse=True)
         return rows
 
-    def issue_license(self, email, duration_months):
+    def issue_license(self, email, duration_months, days=None):
         """Crée ou renouvelle la licence d'un e-mail.
 
         - licence encore valide : la durée achetée s'AJOUTE au temps restant et la
           clé reste la même (le client ne perd rien en renouvelant à l'avance) ;
         - licence expirée / désactivée / inexistante : nouvelle clé, durée à partir
           de maintenant.
+        La durée est donnée en mois, ou en jours exacts avec `days` (le pass de 7 jours) : `days` l'emporte.
         Lève une exception si la base est inaccessible : l'appelant ne doit alors
         surtout pas prétendre avoir délivré une licence.
         Renvoie {"key", "expires" (datetime), "renewed" (bool)}.
         """
         email = normalize_email(email)
         now = _utcnow()
+        length = duration_days(duration_months) if days is None else max(0, int(days))
         with self._db() as conn:
             cursor = conn.cursor()
             rows = self._rows_for(cursor, email)
@@ -226,7 +230,7 @@ class LicenseManager:
                 base, key, renewed = best["expires"], best["key"], True
             if key is None:
                 key = self._new_key(email)
-            new_expiry = base + datetime.timedelta(days=duration_days(duration_months))
+            new_expiry = base + datetime.timedelta(days=length)
             if best:
                 cursor.execute("UPDATE licenses SET key = %s, expires = %s, active = %s WHERE email = %s",
                                (key, str(new_expiry), True, best["email"]))
@@ -367,14 +371,16 @@ class LicenseManager:
     # Commandes en attente de paiement (utilisées par paiement.py)
     # ------------------------------------------------------------------
 
-    def create_pending_order(self, token, email, plan, duree):
+    def create_pending_order(self, token, email, plan, duree, jours=None):
+        """Enregistre la commande. `duree` : durée en mois (obligatoire en base) ; `jours` : durée exacte en jours,
+        qui l'emporte quand elle est renseignée (pass de 7 jours, qui ne tient pas en mois entiers)."""
         try:
             with self._db() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT INTO pending_orders (token, email, plan, duree, created, processed) "
-                    "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (token) DO NOTHING",
-                    (token, normalize_email(email), plan, duree, str(_utcnow()), False))
+                    "INSERT INTO pending_orders (token, email, plan, duree, jours, created, processed) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (token) DO NOTHING",
+                    (token, normalize_email(email), plan, duree, jours, str(_utcnow()), False))
                 conn.commit()
             return True
         except Exception as e:
@@ -386,13 +392,13 @@ class LicenseManager:
         Lève une exception si la base est injoignable (à ne pas confondre avec « inconnue »)."""
         with self._db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT email, plan, duree, processed, license_key, renewed FROM pending_orders "
+            cursor.execute("SELECT email, plan, duree, processed, license_key, renewed, jours FROM pending_orders "
                            "WHERE token = %s", (token,))
             row = cursor.fetchone()
         if not row:
             return None
         return {"email": row[0], "plan": row[1], "duree": row[2], "processed": bool(row[3]),
-                "license_key": row[4], "renewed": None if row[5] is None else bool(row[5])}
+                "license_key": row[4], "renewed": None if row[5] is None else bool(row[5]), "jours": row[6]}
 
     def claim_order(self, token):
         """Réserve la commande de façon ATOMIQUE : un seul des appelants simultanés
@@ -403,12 +409,12 @@ class LicenseManager:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE pending_orders SET processed = %s WHERE token = %s AND processed = %s "
-                "RETURNING email, plan, duree", (True, token, False))
+                "RETURNING email, plan, duree, jours", (True, token, False))
             row = cursor.fetchone()
             conn.commit()
         if not row:
             return None
-        return {"email": row[0], "plan": row[1], "duree": row[2]}
+        return {"email": row[0], "plan": row[1], "duree": row[2], "jours": row[3]}
 
     def release_order(self, token):
         """Annule la réservation (la licence n'a pas pu être délivrée : on pourra réessayer)."""

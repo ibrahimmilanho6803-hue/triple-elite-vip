@@ -35,6 +35,18 @@ def test_message_nouvelle_licence():
     assert message.get_content_charset() in (None, "utf-8") and message.is_multipart()
 
 
+def test_message_du_pass_de_7_jours_dit_pass_et_non_abonnement():
+    """« Merci pour ton abonnement pass 7 jours » serait bancal : le pass se nomme tel quel."""
+    for plan, expected in (("Pass 7 jours", "Merci pour ton pass 7 jours Triple Elite VIP !"),
+                           ("Mensuel", "Merci pour ton abonnement mensuel Triple Elite VIP !"),
+                           ("Annuel", "Merci pour ton abonnement annuel Triple Elite VIP !"),
+                           ("", "Merci pour ton abonnement Triple Elite VIP !"),
+                           (None, "Merci pour ton abonnement Triple Elite VIP !")):
+        text, html = bodies(build_message("client@exemple.com", "a1b2c3d4e5f60718", plan, EXPIRES))
+        assert expected in text and expected in html, plan
+        assert "abonnement pass" not in text
+
+
 @pytest.mark.parametrize("renewed", [False, True])
 def test_message_rappelle_l_acces_immediat_et_la_renonciation(renewed):
     """L'accord donné à la case des conditions doit être confirmé sur un support durable : cet e-mail."""

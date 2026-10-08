@@ -236,18 +236,26 @@ button { cursor: pointer; }
 .honest__cap { margin-top: 10px; color: var(--craie); max-width: 28ch; }
 
 /* ------------------------------------------------------------------ accueil : offres */
-.plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-column-gap: 24px; max-width: 800px; }
+/* Trois formules côte à côte (une colonne sous 960 px). Le prix s'écrit en FCFA, la monnaie du client ; l'équivalent en
+   euros reste une ligne discrète. Le badge « Tarif de lancement » est posé sur le bord de la carte : il ne pousse rien. */
+.plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-column-gap: 24px; }
 .plan {
-  display: flex; flex-direction: column;
+  position: relative; display: flex; flex-direction: column;
   border: 1px solid var(--ligne); border-radius: var(--rayon); padding: 26px 24px 24px;
   background: var(--nuit-2);
 }
 .plan--vedette { border-color: var(--or); }
+.plan__badge {
+  position: absolute; top: -12px; left: 20px; padding: 2px 12px; border-radius: 999px;
+  background: var(--or); color: var(--encre); font-size: 0.8125rem; font-weight: 700; line-height: 1.5;
+}
 .plan__name { font-size: 1.125rem; font-weight: 650; }
 .plan__price { margin-top: 10px; display: flex; align-items: baseline; flex-wrap: wrap; }
-.plan__amount { font-family: var(--font-display); font-weight: 800; font-size: 4rem; line-height: 0.9; color: var(--or); }
-.plan__per { margin-left: 8px; color: var(--craie); font-size: 1.0625rem; }
-.plan__fcfa { margin-top: 6px; color: var(--craie); font-size: 0.875rem; }
+.plan__amount { font-family: var(--font-display); font-weight: 800; font-size: 3.75rem; line-height: 0.9; color: var(--or); white-space: nowrap; }
+.plan__unit { margin-left: 8px; color: var(--or); font-weight: 650; font-size: 1.0625rem; }
+.plan__per { margin-top: 6px; color: var(--craie); font-size: 0.9375rem; }
+.plan__note { margin-top: 2px; color: var(--craie); font-size: 0.875rem; }
+.plan__note--lancement { color: var(--or); font-weight: 650; }
 .plan__list { margin: 18px 0 24px; flex: 1 0 auto; }
 .plan__list li { position: relative; padding: 6px 0 6px 24px; }
 .plan__list li::before {
@@ -551,15 +559,17 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
 .choice input:focus-visible + .choice__box { outline: 2px solid var(--or); outline-offset: 2px; }
 .choice__name { display: block; font-weight: 650; font-size: 1.0625rem; }
 .choice__desc { display: block; color: var(--craie); font-size: 0.875rem; margin-top: 2px; }
+.choice__tag { display: block; margin-top: 4px; color: var(--or); font-size: 0.8125rem; font-weight: 650; }
 .choice__price { text-align: right; }
-.choice__eur { display: block; font-family: var(--font-display); font-weight: 800; font-size: 2.3rem; line-height: 1; color: var(--or); white-space: nowrap; }
-.choice__fcfa { display: block; color: var(--craie); font-size: 0.8125rem; margin-top: 3px; white-space: nowrap; }
+.choice__amount { display: block; font-family: var(--font-display); font-weight: 800; font-size: 2.3rem; line-height: 1; color: var(--or); white-space: nowrap; }
+.choice__unit { margin-left: 2px; font-family: var(--font-text); font-weight: 650; font-size: 0.875rem; color: var(--or); }
+.choice__eur { display: block; color: var(--craie); font-size: 0.8125rem; margin-top: 3px; white-space: nowrap; }
 .pay__summary { position: sticky; top: 20px; }
 .pay__heading { font-family: var(--font-display); font-weight: 750; font-size: 1.7rem; line-height: 1.1; }
 .pay__plan { margin-top: 10px; font-weight: 650; }
-.pay__total { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 0 4px; }
-.pay__total strong { font-family: var(--font-display); font-weight: 800; font-size: 2.8rem; line-height: 1; color: var(--or); }
-.pay__fcfa { color: var(--texte); }
+.pay__total { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin: 6px 0 4px; }
+.pay__total strong { font-family: var(--font-display); font-weight: 800; font-size: 2.8rem; line-height: 1; color: var(--or); white-space: nowrap; }
+.pay__eur { color: var(--craie); }
 .pay__rate { margin-top: 6px; }
 .pay__list { margin: 20px 0 16px; padding-top: 16px; border-top: 1px solid var(--ligne); color: var(--craie); font-size: 0.9rem; }
 .pay__list li { padding: 3px 0; }
@@ -656,6 +666,8 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
   .hero__slip { margin-top: 48px; }
   .honest__fig { margin-bottom: 18px; }
   .pay__summary { position: static; margin-top: 28px; }
+  .plans { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
+  .plan + .plan { margin-top: 30px; }             /* de la place pour le badge posé sur le bord de la carte suivante */
   .results__grid, .history__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .free { grid-template-columns: minmax(0, 1fr); }
   .free__side { margin-top: 32px; }
@@ -670,8 +682,6 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
   .hero { padding-top: 36px; padding-bottom: 52px; }
   .steps { grid-template-columns: minmax(0, 1fr); }
   .step + .step { margin-top: 28px; }
-  .plans { grid-template-columns: minmax(0, 1fr); }
-  .plan + .plan { margin-top: 18px; }
   .results__grid, .history__grid { grid-template-columns: minmax(0, 1fr); }
   .leagues { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .leagues li { border-left: 0; border-top: 1px solid var(--ligne); }
@@ -702,6 +712,10 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
 @media (max-width: 380px) {
   .slip__paper, .slip__stub { padding-left: 16px; padding-right: 16px; }
   .leg__odds { font-size: 1.65rem; }
+  /* Offres de la page de paiement : le prix passe sous le texte, qui garde toute la largeur (sinon 3 ou 4 lignes étroites). */
+  .choice__box { grid-template-columns: minmax(0, 1fr); }
+  .choice__price { margin-top: 10px; text-align: left; display: flex; align-items: baseline; flex-wrap: wrap; }
+  .choice__eur { margin: 0 0 0 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

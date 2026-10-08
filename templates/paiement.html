@@ -8,7 +8,7 @@
 <div class="container section">
   <div class="section__head">
     <h1 class="h2">Choisis ton abonnement</h1>
-    <p class="lead">Paiement unique, sans renouvellement automatique. Ta clé de licence s’affiche dès que le paiement est confirmé, et t’est aussi envoyée par e-mail.</p>
+    <p class="lead">Prix en FCFA, paiement unique, sans renouvellement automatique. Ta clé de licence s’affiche dès que le paiement est confirmé, et t’est aussi envoyée par e-mail.</p>
   </div>
 
   {% if not cards_enabled %}
@@ -33,16 +33,17 @@
         {% for p in plans %}
         <label class="choice">
           <input type="radio" name="plan" value="{{ p.key }}"{% if p.key == selected %} checked{% endif %}
-                 data-name="{{ p.title }}" data-eur="{{ p.eur_label }}" data-fcfa="{{ p.fcfa_label }}">
+                 data-name="{{ p.title }}" data-fcfa="{{ p.fcfa_label }}" data-eur="{{ p.eur_label }}">
           <span class="choice__box">
             <span>
               <span class="choice__name">{{ p.label }}</span>
               <span class="choice__desc">{{ p.access }}</span>
               {% if p.note %}<span class="choice__desc">{{ p.note }}</span>{% endif %}
+              {% if p.key == "monthly" and launch_until %}<span class="choice__tag">Tarif de lancement jusqu’au {{ launch_until }}</span>{% endif %}
             </span>
             <span class="choice__price">
+              <span class="choice__amount">{{ p.amount_label }} <span class="choice__unit">FCFA</span></span>
               <span class="choice__eur">{{ p.eur_label }}</span>
-              <span class="choice__fcfa">{{ p.fcfa_label }}</span>
             </span>
           </span>
         </label>
@@ -75,10 +76,10 @@
       <p class="pay__plan" id="sum-name">{{ selected_plan.title }}</p>
       <div class="pay__total">
         <span class="muted">Total</span>
-        <strong id="sum-eur">{{ selected_plan.eur_label }}</strong>
+        <strong id="sum-fcfa">{{ selected_plan.fcfa_label }}</strong>
       </div>
-      <p class="pay__fcfa">Débité en FCFA&nbsp;: <strong id="sum-fcfa">{{ selected_plan.fcfa_label }}</strong></p>
-      <p class="small muted pay__rate">PayDunya n’encaisse qu’en FCFA. Taux fixe&nbsp;: 1&nbsp;€ = 655,957&nbsp;FCFA, arrondi à la centaine supérieure.</p>
+      <p class="pay__eur">Équivalent indicatif en euros&nbsp;: <span id="sum-eur">{{ selected_plan.eur_label }}</span></p>
+      <p class="small muted pay__rate">Le paiement se fait en FCFA, la seule monnaie que PayDunya encaisse. Le montant en euros est arrondi (1&nbsp;€ = {{ fcfa_per_eur }}&nbsp;FCFA).</p>
 
       <ul class="pay__list">
         <li>Trois combinés de trois matchs, générés à la demande</li>
