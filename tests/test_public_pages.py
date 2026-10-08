@@ -94,6 +94,58 @@ def test_menus_et_pied_de_page_menent_aux_nouvelles_pages(site):
         assert "Combiné gratuit du jour" in page and "Résultats" in page, path
 
 
+# --------------------------------------------------------------------------
+# Barre de navigation du bas (templates/_tabbar.html) : le menu du site, cinq boutons
+# --------------------------------------------------------------------------
+
+BARRE = [("Accueil", "/"), ("Combiné gratuit", "/gratuit"), ("Résultats combinés", "/resultats"), ("Accès VIP", "/login"),
+         ("Abonnement VIP", f"{config.PAIEMENT_URL}/paiement")]
+
+
+def tabbar(page):
+    """La barre du bas telle que la lit un visiteur : [(nom, adresse, page affichée ?)], de gauche à droite."""
+    nav = re.search(r'<nav class="tabbar".*?</nav>', page, re.S)
+    assert nav, "pas de barre du bas"
+    return [(htmllib.unescape(label), htmllib.unescape(href), bool(current)) for href, current, label in re.findall(
+        r'<a class="tabbar__link" href="([^"]+)"( aria-current="page")?>.*?<span class="tabbar__label">([^<]+)</span>',
+        nav.group(0), re.S)]
+
+
+def test_la_barre_du_bas_a_cinq_boutons_qui_menent_aux_bonnes_pages(site):
+    publish_generation(site)
+    for path in ("/", "/gratuit", "/resultats", "/conditions", "/login", "/page-inconnue"):
+        assert [(name, href) for name, href, _ in tabbar(raw(site.client.get(path)))] == BARRE, path
+
+
+def test_la_barre_du_bas_marque_la_page_affichee_et_une_seule(site):
+    publish_generation(site)
+    expected = {"/": "Accueil", "/gratuit": "Combiné gratuit", "/resultats": "Résultats combinés", "/login": "Accès VIP",
+                "/conditions": None, "/page-inconnue": None}                  # ces deux pages n'ont pas de bouton à elles
+    for path, name in expected.items():
+        shown = [button for button, _, here in tabbar(raw(site.client.get(path))) if here]
+        assert shown == ([name] if name else []), path
+
+
+def test_la_barre_du_bas_perd_le_combine_gratuit_quand_la_page_est_coupee(site, monkeypatch):
+    monkeypatch.setattr(config, "FREE_PICK_ENABLED", False)
+    for path in ("/", "/resultats", "/login"):
+        names = [name for name, _, _ in tabbar(raw(site.client.get(path)))]
+        assert names == ["Accueil", "Résultats combinés", "Accès VIP", "Abonnement VIP"], path
+
+
+def test_l_en_tete_ne_garde_que_la_marque(site):
+    """Le menu est la barre du bas : plus de second menu (ni de bouton « S'abonner ») en haut des pages."""
+    for path in ("/", "/gratuit", "/resultats", "/conditions", "/login"):
+        header = re.search(r'<header class="topbar">.*?</header>', raw(site.client.get(path)), re.S).group(0)
+        assert header.count("<a ") == 1 and 'class="brand"' in header and "<nav" not in header, path
+
+
+def test_la_page_hors_connexion_n_a_pas_de_barre(site):
+    """Sans réseau, les boutons mèneraient à des pages introuvables : la page enregistrée dans le téléphone n'en a pas."""
+    response = site.client.get("/hors-ligne")
+    assert response.status_code == 200 and "tabbar" not in raw(response)
+
+
 def test_aucun_script_ni_style_en_ligne_dans_les_nouvelles_pages(site):
     publish_generation(site)
     for path in ("/", "/resultats", "/gratuit"):

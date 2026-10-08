@@ -124,6 +124,19 @@ def test_aucun_script_ni_style_en_ligne_dans_les_pages(env):
         assert "javascript:" not in html, path
 
 
+def test_l_espace_client_a_la_barre_du_bas_sur_acces_vip_et_garde_la_deconnexion(env):
+    login(env.client)
+    page = env.client.get("/app").get_data(as_text=True)
+    nav = re.search(r'<nav class="tabbar".*?</nav>', page, re.S).group(0)
+    assert re.findall(r'<a class="tabbar__link" href="([^"]+)"( aria-current="page")?>', nav) == [
+        ("/", ""), ("/gratuit", ""), ("/resultats", ""), ("/login", ' aria-current="page"'),
+        (f"{config.PAIEMENT_URL}/paiement", "")]
+    header = re.search(r'<header class="topbar">.*?</header>', page, re.S).group(0)
+    assert 'action="/logout"' in header and "Déconnexion" in header
+    # « Accès VIP » mène à /login : un client déjà connecté est renvoyé tout de suite à son espace.
+    assert env.client.get("/login").headers["Location"].endswith("/app")
+
+
 def test_cookie_de_session(env):
     response = login(env.client)
     cookie = response.headers["Set-Cookie"]

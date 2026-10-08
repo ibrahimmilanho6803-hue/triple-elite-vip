@@ -2,10 +2,14 @@
 
 {% block title %}Mon espace – Triple Elite VIP{% endblock %}
 
+{% set active_nav = "vip" %}
+
 {% block nav %}
-  <form method="post" action="/logout">
-    <button class="btn btn--ligne btn--petit" type="submit">Déconnexion</button>
-  </form>
+  <div class="topbar__nav">
+    <form method="post" action="/logout">
+      <button class="btn btn--ligne btn--petit" type="submit">Déconnexion</button>
+    </form>
+  </div>
 {% endblock %}
 
 {# L'invitation à installer l'application est en haut de l'espace client, pas dans le pied de page. #}

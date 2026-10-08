@@ -37,9 +37,8 @@
         </svg>
         <span class="brand__name">Triple Elite VIP</span>
       </a>
-      <nav class="topbar__nav" aria-label="Menu principal">
-        {% block nav %}{% endblock %}
-      </nav>
+      {# Le menu est la barre du bas (_tabbar.html) ; ce bloc ne sert qu'à un bouton d'action à droite (« Déconnexion »). #}
+      {% block nav %}{% endblock %}
     </div>
   </header>
 
@@ -70,6 +69,8 @@
       <p class="footer__legal">Nos pronostics sont des estimations statistiques, jamais une garantie de résultat. Les paris comportent des risques (perte d’argent, dépendance) et sont interdits aux moins de 18&nbsp;ans. Ne mise que ce que tu peux te permettre de perdre.</p>
     </div>
   </footer>
+  {# Fin du corps de page : la barre colle au bas de l'écran (position « sticky »), et reste en bas de page là où le navigateur ne le sait pas. #}
+  {% block tabbar %}{% include "_tabbar.html" %}{% endblock %}
   {% block pwa_script %}{% if pwa %}<script src="{{ asset('js/pwa.js') }}" defer></script>{% endif %}{% endblock %}
   {% block scripts %}{% endblock %}
 </body>

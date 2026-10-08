@@ -386,13 +386,8 @@ class TestResultatsEtCombineGratuit:
         expect(page).to_have_url(re.compile(r"/gratuit$"))
         expect(page.locator(".free .slip")).to_be_visible()
 
-    def test_menu_complet_sur_ordinateur_liens_du_pied_de_page_sur_telephone(self, page, phone_page, site):
-        page.goto(site.url + "/")
-        expect(page.locator("header .nav-link", has_text="Résultats")).to_be_visible()
-        expect(page.locator("header .nav-link", has_text="Combiné gratuit")).to_be_visible()
+    def test_le_pied_de_page_garde_les_liens_vers_les_nouvelles_pages(self, phone_page, site):
         phone_page.goto(site.url + "/")
-        expect(phone_page.locator("header .nav-link", has_text="Résultats")).to_be_hidden()    # la place va à « S’abonner »
-        expect(phone_page.locator("header").get_by_role("link", name="S’abonner")).to_be_visible()
         footer = phone_page.locator("footer")
         expect(footer.get_by_role("link", name="Résultats")).to_be_visible()
         expect(footer.get_by_role("link", name="Combiné gratuit du jour")).to_be_visible()
@@ -423,6 +418,148 @@ def test_espace_client_sans_debordement_sur_telephone(phone_page, site):
     phone_page.click("#tab-history")
     expect(phone_page.locator("#history-content")).to_be_visible()
     assert no_horizontal_overflow(phone_page)
+
+
+# ======================================================================================================
+# Barre de navigation du bas (les deux sites)
+# ======================================================================================================
+
+BARRE = ["Accueil", "Combiné gratuit", "Résultats combinés", "Accès VIP", "Abonnement VIP"]
+DORE = "rgb(227, 179, 65)"                                              # --or de la feuille de style
+TITRES = {"/": "Trois combinés", "/gratuit": "Le combiné gratuit du jour", "/resultats": "Nos résultats, gagnés et perdus",
+          "/login": "Connexion"}
+
+
+def boutons(page):
+    """Boîtes (gauche, droite, haut, bas) des boutons de la barre, de gauche à droite."""
+    return page.locator("nav.tabbar a").evaluate_all(
+        "els => els.map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right, r.top, r.bottom]; })")
+
+
+class TestBarreDeNavigation:
+    def test_cinq_boutons_de_meme_largeur_en_bas_de_l_ecran_sur_telephone(self, phone_page, site):
+        phone_page.goto(site.url + "/")
+        links = phone_page.locator("nav.tabbar").get_by_role("link")
+        expect(links).to_have_count(5)
+        assert [norm(name) for name in links.all_inner_texts()] == BARRE
+        boxes = boutons(phone_page)
+        widths = [right - left for left, right, _, _ in boxes]
+        assert max(widths) - min(widths) < 1.5, widths                              # cinq boîtes égales
+        assert boxes[0][0] == pytest.approx(0, abs=1) and boxes[-1][1] == pytest.approx(390, abs=1)    # toute la largeur
+        assert all(box[3] == pytest.approx(844, abs=1) for box in boxes)             # collées au bas de l'écran
+        assert no_horizontal_overflow(phone_page)
+
+    @pytest.mark.parametrize("width", [320, 360, 390])
+    def test_les_noms_des_boutons_tiennent_sur_deux_lignes_au_plus(self, make_page, site, width):
+        """À 320 px, chaque bouton fait 64 px de large : « Abonnement » ne doit être coupé ni en deux lignes, ni dépasser."""
+        page = make_page(viewport={"width": width, "height": 640}, is_mobile=True, has_touch=True)
+        page.goto(site.url + "/")
+        page.evaluate("document.fonts.ready.then(() => true)")                       # polices chargées : mesures fiables
+        broken = page.locator(".tabbar__label").evaluate_all("""els => els.filter(e => {
+            const text = e.firstChild;                                  // le texte du nom, sans autre balise
+            const lines = range => new Set(Array.from(range.getClientRects()).map(r => Math.round(r.top))).size;
+            const all = document.createRange();
+            all.selectNodeContents(e);
+            if (lines(all) > 2 || e.scrollWidth > e.clientWidth + 1) return true;
+            for (const word of text.data.matchAll(/\\S+/g)) {            // un mot réparti sur deux lignes est un mot coupé
+                const one = document.createRange();
+                one.setStart(text, word.index);
+                one.setEnd(text, word.index + word[0].length);
+                if (lines(one) > 1) return true;
+            }
+            return false;
+        }).map(e => e.textContent.trim())""")
+        assert broken == []
+        assert no_horizontal_overflow(page)
+
+    def test_chaque_bouton_ouvre_la_page_prevue(self, phone_page, site):
+        make_free_pick(site)
+        bar = phone_page.locator("nav.tabbar")
+        phone_page.goto(site.url + "/")
+        for name, path in (("Combiné gratuit", "/gratuit"), ("Résultats combinés", "/resultats"), ("Accès VIP", "/login"),
+                           ("Accueil", "/")):
+            bar.get_by_role("link", name=name).click()
+            expect(phone_page).to_have_url(site.url + path)
+            expect(phone_page.locator("h1")).to_contain_text(TITRES[path])
+        # « Abonnement VIP » quitte le site client pour le site de paiement (autre adresse : on ne la suit pas ici).
+        expect(bar.get_by_role("link", name="Abonnement VIP")).to_have_attribute("href", config.PAIEMENT_URL + "/paiement")
+
+    def test_acces_vip_mene_droit_a_l_espace_d_un_client_connecte(self, phone_page, site):
+        enter(phone_page, site)
+        phone_page.goto(site.url + "/")
+        phone_page.locator("nav.tabbar").get_by_role("link", name="Accès VIP").click()
+        expect(phone_page).to_have_url(site.url + "/app")                           # pas de page de connexion entre les deux
+        expect(phone_page.locator("#app")).to_contain_text("Abonnement actif jusqu’au")
+        expect(phone_page.locator("nav.tabbar a[aria-current=page]")).to_have_text("Accès VIP")
+        expect(phone_page.locator("header").get_by_role("button", name="Déconnexion")).to_be_visible()
+
+    @pytest.mark.parametrize("path, name", [("/", "Accueil"), ("/gratuit", "Combiné gratuit"),
+                                            ("/resultats", "Résultats combinés"), ("/login", "Accès VIP")])
+    def test_le_bouton_de_la_page_affichee_est_dore(self, phone_page, site, path, name):
+        make_free_pick(site)
+        phone_page.goto(site.url + path)
+        current = phone_page.locator("nav.tabbar a[aria-current=page]")
+        expect(current).to_have_count(1)
+        expect(current).to_have_text(name)
+        assert current.evaluate("e => getComputedStyle(e).color") == DORE
+        other = phone_page.locator("nav.tabbar a:not([aria-current])").first
+        assert other.evaluate("e => getComputedStyle(e).color") != DORE
+
+    def test_la_barre_suit_le_defilement_et_ne_cache_pas_le_bas_de_la_page(self, phone_page, site):
+        phone_page.goto(site.url + "/")
+        bar = phone_page.locator("nav.tabbar")
+        phone_page.evaluate("window.scrollTo({top: 1500, behavior: 'instant'})")
+        box = bar.bounding_box()
+        assert box["y"] + box["height"] == pytest.approx(844, abs=1)                # toujours collée au bas de l'écran
+        phone_page.evaluate("window.scrollTo({top: document.documentElement.scrollHeight, behavior: 'instant'})")
+        legal, box = phone_page.locator(".footer__legal").bounding_box(), bar.bounding_box()
+        assert legal["y"] + legal["height"] <= box["y"] + 1                         # la dernière ligne reste lisible
+
+    def test_sur_ordinateur_la_barre_flotte_en_bas_au_centre(self, page, site):
+        page.goto(site.url + "/")
+        expect(page.locator("nav.tabbar").get_by_role("link")).to_have_count(5)
+        box = page.locator("nav.tabbar").bounding_box()
+        assert box["width"] <= 641
+        assert box["x"] + box["width"] / 2 == pytest.approx(640, abs=1)             # centrée dans la fenêtre de 1280 px
+        assert box["y"] + box["height"] == pytest.approx(900 - 16, abs=1)
+        assert no_horizontal_overflow(page)
+        assert page.locator("header a").count() == 1                                # l'en-tête ne garde que la marque
+
+    def test_sans_combine_gratuit_la_barre_a_quatre_boutons(self, phone_page, site, monkeypatch):
+        monkeypatch.setattr(config, "FREE_PICK_ENABLED", False)
+        phone_page.goto(site.url + "/")
+        links = phone_page.locator("nav.tabbar").get_by_role("link")
+        assert [norm(name) for name in links.all_inner_texts()] == [name for name in BARRE if name != "Combiné gratuit"]
+        widths = [right - left for left, right, _, _ in boutons(phone_page)]
+        assert max(widths) - min(widths) < 1.5 and sum(widths) == pytest.approx(390, abs=1.5)
+
+    def test_navigation_au_clavier_dans_l_ordre_de_la_page(self, page, site):
+        """La barre est la dernière chose de la page : la touche Tab y arrive après le contenu et le pied de page."""
+        page.goto(site.url + "/conditions")
+        page.locator("footer a").last.focus()
+        page.keyboard.press("Tab")
+        expect(page.locator("nav.tabbar a").first).to_be_focused()
+        for _ in range(4):
+            page.keyboard.press("Tab")
+        expect(page.locator("nav.tabbar a").last).to_be_focused()
+        box = page.locator("nav.tabbar a").last.bounding_box()
+        assert box["y"] + box["height"] <= 900                                      # le bouton atteint est bien à l'écran
+
+    def test_la_page_hors_connexion_n_a_pas_de_barre(self, phone_page, site):
+        phone_page.goto(site.url + "/hors-ligne")
+        expect(phone_page.locator("h1")).to_have_text("Pas de connexion")
+        expect(phone_page.locator("nav.tabbar")).to_have_count(0)
+
+    def test_le_site_de_paiement_a_la_meme_barre(self, phone_page, pay_site):
+        phone_page.goto(pay_site.url + "/paiement")
+        links = phone_page.locator("nav.tabbar").get_by_role("link")
+        assert [norm(name) for name in links.all_inner_texts()] == BARRE
+        expect(phone_page.locator("nav.tabbar a[aria-current=page]")).to_have_text("Abonnement VIP")
+        hrefs = links.evaluate_all("els => els.map(e => e.getAttribute('href'))")
+        assert hrefs[:4] == [config.SITE_URL, config.SITE_URL + "/gratuit", config.SITE_URL + "/resultats",
+                             config.SITE_URL + "/login"]                            # pages de l'autre site : adresses complètes
+        assert boutons(phone_page)[0][3] == pytest.approx(844, abs=1)
+        assert no_horizontal_overflow(phone_page)
 
 
 # ======================================================================================================

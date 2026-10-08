@@ -1,5 +1,6 @@
 """Site de paiement : parcours d'achat complet avec un faux PayDunya et une vraie base de licences (SQLite)."""
 import datetime
+import re
 import threading
 from types import SimpleNamespace
 
@@ -166,6 +167,22 @@ def test_le_site_de_paiement_n_est_pas_une_application_installable(env):
         assert marker not in page, marker
     for path in ("/manifest.webmanifest", "/sw.js", "/hors-ligne", "/.well-known/assetlinks.json", "/debut"):
         assert env.client.get(path).status_code == 404, path
+
+
+def test_le_site_de_paiement_a_la_meme_barre_du_bas_avec_des_adresses_completes(env):
+    """Même menu que sur le site client ; ici les adresses portent le nom du site (les pages sont sur un autre domaine)."""
+    expected = [("Accueil", config.SITE_URL), ("Combiné gratuit", f"{config.SITE_URL}/gratuit"),
+                ("Résultats combinés", f"{config.SITE_URL}/resultats"), ("Accès VIP", f"{config.SITE_URL}/login"),
+                ("Abonnement VIP", f"{config.PAIEMENT_URL}/paiement")]
+    for path in ("/paiement", "/succes", "/page-inconnue"):
+        page = text(env.client.get(path))
+        nav = re.search(r'<nav class="tabbar".*?</nav>', page, re.S).group(0)
+        buttons = re.findall(r'<a class="tabbar__link" href="([^"]+)"( aria-current="page")?>.*?'
+                             r'<span class="tabbar__label">([^<]+)</span>', nav, re.S)
+        assert [(label, href) for href, _, label in buttons] == expected, path
+        assert [label for _, here, label in buttons if here] == (["Abonnement VIP"] if path != "/page-inconnue" else []), path
+        header = re.search(r'<header class="topbar">.*?</header>', page, re.S).group(0)
+        assert header.count("<a ") == 1 and "<nav" not in header, path
 
 
 # --------------------------------------------------------------------------

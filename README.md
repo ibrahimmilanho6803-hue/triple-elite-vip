@@ -52,7 +52,7 @@ Avant d'acheter, un visiteur peut consulter les résultats réels et un combiné
 ## Pages publiques : résultats et combiné gratuit
 
 Deux pages ouvertes à tous (et aux moteurs de recherche) montrent le produit tel qu'il est, sans maquillage, avant tout
-paiement. L'accueil (section « Nos résultats sont publics »), le menu et le pied de page y mènent.
+paiement. L'accueil (section « Nos résultats sont publics »), la barre de navigation du bas et le pied de page y mènent.
 
 - `/resultats` : le bilan réel (combinés gagnés sur joués, pronostics gagnés sur joués, chance annoncée en moyenne face à la
   réussite constatée) et le détail des 12 derniers combinés **entièrement joués**, gagnés comme perdus, avec le score de chaque
@@ -109,6 +109,31 @@ du site dans la Search Console de Google (facultatif).
 **Quand on modifie les coupons de l'espace client** (`static/js/dashboard.js`), reporter le changement dans
 `templates/_coupon.html`, leur copie côté serveur pour les pages publiques : la feuille de style est commune.
 
+## Barre de navigation du bas
+
+Le menu des deux sites est une barre collée en bas de l'écran, avec cinq boutons de même largeur (`templates/_tabbar.html` ;
+style : section « barre de navigation du bas » de `static/css/site.css`) :
+
+| Bouton | Page ouverte |
+| --- | --- |
+| Accueil | l'accueil du site |
+| Combiné gratuit | `/gratuit` (le bouton disparaît si `FREE_PICK_ENABLED=0`) |
+| Résultats combinés | `/resultats` |
+| Accès VIP | `/login`, la page de connexion ; un client déjà connecté est renvoyé tout de suite à son espace (`/app`) |
+| Abonnement VIP | `/paiement`, sur le site de paiement |
+
+- Le bouton de la page affichée est en doré. Chaque page le dit en tête de son gabarit : `{% set active_nav = "accueil" %}`
+  (valeurs : `accueil`, `gratuit`, `resultats`, `vip`, `abonnement`). Les pages sans bouton à elles (conditions, erreurs) n'en
+  disent rien : aucun bouton n'est doré.
+- L'en-tête ne garde que la marque (et « Déconnexion » dans l'espace client) : il n'y a plus de second menu en haut. La page
+  « Pas de connexion » (`hors_ligne.html`, enregistrée dans le téléphone) n'a pas de barre, ses boutons ne mèneraient nulle part.
+- Sur téléphone la barre prend toute la largeur ; à partir de 720 px c'est un bloc arrondi, centré, qui flotte en bas ; un
+  téléphone tenu en large la rend plus basse, sans icônes. Elle est en `position: sticky` à la fin de la page : elle suit le
+  défilement sans cacher le pied de page.
+- Pour changer un nom, une adresse ou une icône : `templates/_tabbar.html`, une seule fois pour les deux sites. Les noms doivent
+  tenir sur deux lignes sans couper de mot dès 320 px de large (« Abonnement » est le plus long) ; les tests navigateur
+  (`TestBarreDeNavigation`) le vérifient.
+
 ## Les fichiers
 
 | Fichier | Rôle |
@@ -124,7 +149,7 @@ du site dans la Search Console de Google (facultatif).
 | `combo_history.py` | Historique : résultats réels des matchs joués, bilan |
 | `web_common.py`, `privacy.py` | Sécurité commune (en-têtes, anti-CSRF, limitation d'essais), gabarits, e-mails masqués dans les journaux |
 | `config.py` | Réglages non secrets ; lit aussi un fichier `.env` en local |
-| `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site ; `templates/_coupon.html` (coupons des pages publiques), `_meta.html` (aperçu de partage), `static/js/public.js`, `static/images/partage.png` |
+| `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site ; `templates/_coupon.html` (coupons des pages publiques), `_meta.html` (aperçu de partage), `_tabbar.html` (barre de navigation du bas), `static/js/public.js`, `static/images/partage.png` |
 | `pwa.py`, `templates/sw.js`, `static/js/pwa.js`, `static/icons/` | Application installable : manifeste, service worker, page « hors connexion », bouton d'installation, icônes |
 | `main.py`, `generate_keys.py`, `scripts/send_test_email.py` | Outils en ligne de commande (voir plus bas) |
 | `scripts/make_icons.py`, `scripts/make_share_image.py` | Fabrication des icônes de l'application et de l'image d'aperçu de partage (Playwright) |

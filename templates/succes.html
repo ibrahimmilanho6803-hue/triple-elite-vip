@@ -18,9 +18,7 @@
   {% if refresh_url %}<noscript><meta http-equiv="refresh" content="{{ refresh_seconds }};url={{ refresh_url }}"></noscript>{% endif %}
 {% endblock %}
 
-{% block nav %}
-  <a class="btn btn--ligne btn--petit" href="{{ home_url }}">Accueil</a>
-{% endblock %}
+{% set active_nav = "abonnement" %}
 
 {% block main %}
 <div class="centered centered--large"{% if refresh_url %} data-refresh-url="{{ refresh_url }}" data-refresh-seconds="{{ refresh_seconds }}"{% endif %}>

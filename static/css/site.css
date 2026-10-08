@@ -279,6 +279,67 @@ button { cursor: pointer; }
 .footer nav a:hover { color: var(--texte); }
 .footer__legal { margin-top: 24px; max-width: 70ch; font-size: 0.8125rem; }
 
+/* ------------------------------------------------------------------ barre de navigation du bas (templates/_tabbar.html) */
+/* Dernier élément de la page, collé au bas de l'écran (« sticky ») : elle ne cache rien, et là où « sticky » manquerait elle
+ * resterait simplement en bas de page. Cinq boutons de même largeur. Sur téléphone elle occupe toute la largeur ; sur grand
+ * écran c'est un bloc arrondi qui flotte en bas, au centre. */
+:root { --tabbar-h: 68px; }
+html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien atteint au clavier ne reste pas sous la barre */
+.tabbar {
+  position: sticky; bottom: 0; z-index: 50; flex: none;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--nuit-2); border-top: 1px solid var(--ligne);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.35);
+}
+.tabbar__list { display: flex; max-width: 640px; margin: 0 auto; }
+.tabbar__list li { flex: 1 1 0; min-width: 0; }
+.tabbar__link {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  height: var(--tabbar-h); padding: 10px 2px 0;
+  color: var(--craie); text-align: center; text-decoration: none; font-weight: 600; line-height: 1.15;
+  font-size: 0.625rem; font-size: clamp(0.5625rem, 3vw, 0.75rem);     /* « Abonnement » tient dans un cinquième d'écran dès 320 px */
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.tabbar__link:active { background: var(--nuit-3); color: var(--texte); }
+.tabbar__link:focus-visible { outline-offset: -4px; }
+.tabbar__list li + li .tabbar__link::after {                        /* fine séparation entre deux boutons */
+  content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 1px; background: var(--ligne);
+}
+.tabbar__icon {
+  width: 24px; height: 24px; margin-bottom: 5px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.tabbar__label { max-width: 100%; overflow-wrap: anywhere; text-wrap: balance; }
+.tabbar__link[aria-current="page"] { color: var(--or); background: rgba(227, 179, 65, 0.08); }
+.tabbar__link[aria-current="page"]::before {                        /* trait doré en haut du bouton de la page affichée */
+  content: ""; position: absolute; top: -1px; left: 18%; right: 18%; height: 3px;
+  background: var(--or); border-radius: 0 0 3px 3px;
+}
+@media (hover: hover) {
+  .tabbar__link:hover { color: var(--texte); background: var(--nuit-3); }
+  .tabbar__link[aria-current="page"]:hover { color: var(--or-clair); }
+}
+@media (min-width: 720px) {
+  :root { --tabbar-h: 72px; }
+  html { scroll-padding-bottom: calc(var(--tabbar-h) + 40px); }
+  .tabbar {
+    bottom: 16px; width: min(640px, calc(100% - 32px)); margin: 0 auto 16px; padding-bottom: 0;
+    border: 1px solid var(--ligne); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+  .tabbar__link { font-size: 0.8125rem; }
+  .tabbar__icon { width: 26px; height: 26px; }
+  .tabbar__link[aria-current="page"]::before { top: 0; }
+}
+@media (max-height: 480px) {                                         /* téléphone tenu en large : barre plus basse, sans icônes */
+  :root { --tabbar-h: 48px; }
+  .tabbar__link { justify-content: center; padding-top: 0; }
+  .tabbar__icon { display: none; }
+}
+@media (min-width: 720px) and (max-height: 480px) { .tabbar { bottom: 8px; margin-bottom: 8px; } }
+@media print { .tabbar { display: none; } }
+
 /* ------------------------------------------------------------------ panneaux, messages, formulaires */
 .panel {
   background: var(--nuit-2); border: 1px solid var(--ligne); border-radius: var(--rayon); padding: 24px;
@@ -549,9 +610,6 @@ button { cursor: pointer; }
 .doc li + li { margin-top: 6px; }
 
 /* ------------------------------------------------------------------ pages publiques : résultats, combiné gratuit */
-.nav-link { color: var(--craie); text-decoration: none; font-weight: 600; font-size: 0.9375rem; padding: 8px 10px; }
-.nav-link:hover { color: var(--texte); }
-
 .pagehead { padding: 48px 0 8px; }
 .pagehead__title {
   font-family: var(--font-display); font-weight: 800; text-transform: uppercase;
@@ -626,7 +684,6 @@ button { cursor: pointer; }
   .brand__mark { width: 28px; height: 28px; margin-right: 8px; }
   .topbar__nav .btn { padding: 0 12px; white-space: nowrap; }
   .hero__cta .btn { flex: 1 1 100%; margin-right: 0; }
-  .nav-wide { display: none; }
   .pagehead { padding-top: 32px; }
   .public { padding-bottom: 56px; }
   .public__title { margin-top: 40px; }
@@ -640,10 +697,6 @@ button { cursor: pointer; }
   .keybox__value { font-size: 1.9rem; }
   .error-page__code { font-size: 6rem; }
   .doc h1 { font-size: 2.4rem; }
-}
-
-@media (max-width: 400px) {
-  .topbar__nav .nav-secondary { display: none; }
 }
 
 @media (max-width: 380px) {
