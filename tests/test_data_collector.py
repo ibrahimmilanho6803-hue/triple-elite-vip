@@ -1,7 +1,11 @@
+import logging
 import sqlite3
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import requests
 
 import config
 import data_collector
@@ -201,6 +205,161 @@ def test_un_seul_appel_par_championnat(db, monkeypatch):
     monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335", "Serie A": "4332"})
     DataCollector().get_matchday(now=NOW)
     assert len(web.calls) == 3 and all("eventsnextleague.php?id=" in url for url in web.calls)
+
+
+class Stuck:
+    """Remplace requests.get : un championnat ne répond JAMAIS (jusqu'à ce que le test le libère), les autres répondent."""
+
+    def __init__(self, answers, stuck="id=4328"):
+        self.answers, self.stuck, self.release, self.calls = answers, stuck, threading.Event(), []
+
+    def __call__(self, url, timeout=None, **kwargs):
+        if self.stuck in url:
+            self.calls.append(url)
+            self.release.wait(10)
+            raise OSError("trop tard")
+        return self.answers(url, timeout=timeout, **kwargs)
+
+
+def test_un_championnat_qui_ne_repond_jamais_est_abandonne_apres_le_delai(db, monkeypatch, caplog):
+    """Le 11 octobre, un appel resté sans réponse (même pas une erreur) a figé « Générer les combinés » pendant 5 minutes."""
+    web = Stuck(FakeWeb({"id=4335": [kickoff_event(1, "2026-10-10", 14)]}))
+    monkeypatch.setattr(data_collector.requests, "get", web)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335"})
+    monkeypatch.setattr(DataCollector, "FETCH_DEADLINE", 0.4)
+    monkeypatch.setattr(DataCollector, "RETRY_DEADLINE", 0.4)
+    started = time.monotonic()
+    with caplog.at_level(logging.WARNING):
+        matchday = DataCollector().get_matchday(now=NOW)
+    assert time.monotonic() - started < 4                                   # 0,4 s + 0,4 s de deuxième essai, et non 10 s
+    assert matchday["complete"] is False                                    # rien n'est conclu sur un championnat muet
+    assert [m["id"] for m in matchday["matches"]] == ["1"] and matchday["matches"][0]["league"] == "La Liga"
+    assert len(web.calls) == 2                                              # le premier essai, puis un seul de plus
+    assert "sans réponse" in caplog.text and "eventsnextleague.php?id=4328" in caplog.text
+    web.release.set()
+
+
+def test_la_collecte_continue_sans_le_championnat_qui_ne_repond_pas(db, monkeypatch):
+    answers = FakeWeb({"id=4335": [event(1, "Real", "Barca", "1", "1")]})
+    web = Stuck(answers)
+    monkeypatch.setattr(data_collector.requests, "get", web)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335"})
+    monkeypatch.setattr(DataCollector, "FETCH_DEADLINE", 0.4)
+    started = time.monotonic()
+    summary = DataCollector().collect_all_data()
+    assert time.monotonic() - started < 4
+    assert summary["Premier League"] == 0 and summary["La Liga"] >= 1
+    web.release.set()
+
+
+def test_un_championnat_qui_echoue_une_fois_a_une_deuxieme_chance(db, monkeypatch):
+    good = FakeWeb({"eventsnextleague": [kickoff_event(1, "2026-10-10", 14)]})
+    attempts = []
+
+    def flaky(url, timeout=None, **kwargs):
+        if "id=4328" in url:
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise OSError("coupure passagère")
+        return good(url, timeout=timeout, **kwargs)
+
+    monkeypatch.setattr(data_collector.requests, "get", flaky)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335"})
+    matchday = DataCollector().get_matchday(now=NOW)
+    assert matchday["complete"] is True and len(attempts) == 2
+    assert matchday["total"] == 1 and [m["id"] for m in matchday["matches"]] == ["1"]
+
+
+def test_un_championnat_en_panne_n_a_qu_un_seul_nouvel_essai(db, monkeypatch):
+    web = FakeWeb({"id=4328": OSError("réseau"), "id=4335": [kickoff_event(1, "2026-10-10", 14)]})
+    monkeypatch.setattr(data_collector.requests, "get", web)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335"})
+    matchday = DataCollector().get_matchday(now=NOW)
+    assert matchday["complete"] is False
+    assert [url for url in web.calls if "id=4328" in url] != [] and len([u for u in web.calls if "id=4328" in u]) == 2
+    assert len([u for u in web.calls if "id=4335" in u]) == 1                 # celui qui a répondu n'est pas redemandé
+
+
+def test_la_cle_d_api_n_apparait_jamais_dans_les_journaux(db, monkeypatch, caplog):
+    secret = "CLE-PAYANTE-123456"
+    monkeypatch.setattr(config, "SPORTSDB_API_KEY", secret)
+
+    def failing(url, timeout=None, **kwargs):
+        path = url.split("thesportsdb.com", 1)[1]
+        raise requests.exceptions.ConnectionError(
+            f"HTTPSConnectionPool(host='www.thesportsdb.com', port=443): Max retries exceeded with url: {path} "
+            f"(Caused by NameResolutionError(\"Failed to resolve 'www.thesportsdb.com'\"))")
+
+    monkeypatch.setattr(data_collector.requests, "get", failing)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    with caplog.at_level(logging.INFO):
+        collector = DataCollector()
+        collector.get_matchday(now=NOW)
+        collector.collect_all_data()
+    assert secret not in caplog.text
+    assert "eventsnextleague.php?id=4328" in caplog.text and "json/***/" in caplog.text    # l'appel reste reconnaissable
+
+
+def test_hide_keys_et_call_label():
+    hide, label = data_collector.hide_keys, data_collector.call_label
+    assert hide("url: /api/v1/json/ABC123/eventsnextleague.php?id=4328 (Caused by x)") == \
+        "url: /api/v1/json/***/eventsnextleague.php?id=4328 (Caused by x)"
+    assert hide("https://x.example/odds?regions=eu&apiKey=SECRET&markets=h2h") == \
+        "https://x.example/odds?regions=eu&apiKey=***&markets=h2h"
+    assert hide("rien à cacher : 3 matchs") == "rien à cacher : 3 matchs"
+    assert hide(ValueError("clé /json/ABC/x")) == "clé /json/***/x"
+    assert label("https://www.thesportsdb.com/api/v1/json/ABC123/eventsseason.php?id=4328&s=2026-2027") == \
+        "eventsseason.php?id=4328&s=2026-2027"
+
+
+def test_run_parallel_garde_l_ordre_borne_l_attente_et_consigne_les_exceptions(caplog):
+    release = threading.Event()
+
+    def work(n):
+        if n == 1:
+            release.wait(10)                  # ne revient pas
+        if n == 2:
+            raise ValueError("boum")
+        return n * 10
+
+    started = time.monotonic()
+    with caplog.at_level(logging.ERROR):
+        out = data_collector.run_parallel(work, [0, 1, 2, 3], deadline=0.3, name="essai", describe=lambda n: f"n°{n}")
+    assert out == [0, None, None, 30] and time.monotonic() - started < 3
+    assert "essai : 1 appel(s) sans réponse" in caplog.text and "n°1" in caplog.text and "boum" in caplog.text
+    assert "Fil de « n°1 »" in caplog.text and "release.wait(10)" in caplog.text        # où l'appel abandonné est resté bloqué
+    release.set()
+    assert data_collector.run_parallel(work, [], deadline=1) == []
+
+
+def test_run_parallel_ne_depasse_pas_le_maximum_simultane():
+    state = {"live": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def work(n):
+        with lock:
+            state["live"] += 1
+            state["peak"] = max(state["peak"], state["live"])
+        time.sleep(0.05)
+        with lock:
+            state["live"] -= 1
+        return n
+
+    assert data_collector.run_parallel(work, range(10), deadline=10, max_workers=3) == list(range(10))
+    assert state["peak"] <= 3
+
+
+def test_run_parallel_ne_lance_plus_rien_une_fois_le_delai_passe():
+    started = []
+
+    def work(n):
+        started.append(n)
+        time.sleep(0.6)
+        return n
+
+    assert data_collector.run_parallel(work, [0, 1, 2], deadline=0.3, max_workers=1) == [None, None, None]
+    time.sleep(0.8)                                                           # le premier finit, personne d'autre ne démarre
+    assert started == [0]
 
 
 def test_event_day():

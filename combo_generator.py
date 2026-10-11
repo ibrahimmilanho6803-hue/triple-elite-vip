@@ -24,6 +24,7 @@ import requests
 import config
 import markets
 from analyzerv2 import MatchAnalyzer
+from data_collector import hide_keys
 from probabilities import implied_odds, market_probability
 
 log = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ class ComboGenerator:
             if not isinstance(events, list):
                 return (cached or {}).get("events") or []
         except Exception as e:
-            log.warning("the-odds-api %s : %s", sport, e)
+            log.warning("the-odds-api %s : %s", sport, hide_keys(e))        # le message contient l'adresse, donc la clé
             return (cached or {}).get("events") or []
         try:
             os.makedirs(ODDS_CACHE_DIR, exist_ok=True)

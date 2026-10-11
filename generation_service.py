@@ -27,8 +27,10 @@ serveur lance plusieurs processus.
 import json
 import logging
 import os
+import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 
 import config
@@ -36,6 +38,7 @@ from pipeline import NO_MATCH_TEXTS, GenerationError, NoMatchToday, no_match_rea
 
 log = logging.getLogger(__name__)
 
+STACK_LINES = 14                 # profondeur de la pile consignée quand une analyse est déclarée perdue
 FAILURE_COOLDOWN_SECONDS = 120
 MATCHDAY_CHECK_EVERY = 1800      # secondes entre deux vérifications des matchs du jour, tant que le constat est négatif
 MATCHDAY_RETRY_AFTER = 300       # secondes avant de réessayer quand TheSportsDB n'a pas répondu
@@ -59,6 +62,22 @@ def _iso(timestamp):
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
+def _once(refund):
+    """`refund` enveloppé pour ne rendre le clic qu'UNE fois : l'analyse qui échoue et le travail déclaré perdu pendant
+    qu'elle tournait encore peuvent tous deux vouloir le rendre. None reste None."""
+    if refund is None:
+        return None
+    lock, state = threading.Lock(), {"done": False}
+
+    def give_back_once():
+        with lock:
+            if state["done"]:
+                return
+            state["done"] = True
+        refund()
+    return give_back_once
+
+
 class GenerationService:
     def __init__(self, pipeline=run_pipeline, cache_dir=None, results_dir=None, clock=time.time, matchday_source=None):
         """matchday_source : fonction sans argument qui renvoie les matchs du jour (DataCollector.get_matchday) ; sert à
@@ -70,8 +89,10 @@ class GenerationService:
         self.matchday_source = matchday_source or self._real_matchday
         self._lock = threading.Lock()
         self._matchday_lock = threading.Lock()
+        self._lost_lock = threading.Lock()
         self._matchday_failed_at = None
         self._thread = None
+        self._refund = None              # le clic à rendre si l'analyse EN COURS dans ce processus n'aboutit à rien
         self._progress = {"step": "", "percent": 0, "message": ""}
         # Copie en mémoire de ce que ce processus a écrit : sert de secours si le
         # disque est plein ou inaccessible (le service continue alors de fonctionner).
@@ -98,7 +119,7 @@ class GenerationService:
         self._mem[name] = data
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
-            tmp = self._path(name) + f".{os.getpid()}.tmp"
+            tmp = self._path(name) + f".{os.getpid()}.{threading.get_ident()}.tmp"      # un fichier par fil : écritures simultanées
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, default=str)
             os.replace(tmp, self._path(name))
@@ -246,24 +267,54 @@ class GenerationService:
     # Travail en arrière-plan
     # ------------------------------------------------------------------
 
-    def _job(self):
-        job = self._read("job.json")
-        if not job or job.get("state") != "running":
-            return job
-        # Un travail « en cours » dont le processus a disparu (redémarrage du
-        # serveur...) ou qui dure trop longtemps est considéré comme perdu.
-        if job.get("pid") == os.getpid():
+    def _lost_cause(self, job):
+        """Pourquoi ce travail « en cours » est perdu (texte pour les journaux), ou None s'il suit son cours : son processus
+        a disparu (redémarrage du serveur...), son fil s'est arrêté, ou il dure trop longtemps."""
+        own = job.get("pid") == os.getpid()
+        if own:
             alive = self._thread is not None and self._thread.is_alive()
         else:
             alive = _pid_alive(job.get("pid"))
-        if alive and self.clock() - float(job.get("started_ts", 0)) < config.JOB_MAX_SECONDS:
+        if not alive:
+            return "son fil s'est arrêté" if own else "le processus qui la menait a disparu"
+        if self.clock() - float(job.get("started_ts", 0)) >= config.JOB_MAX_SECONDS:
+            return "elle dure trop longtemps"
+        return None
+
+    def _job(self):
+        job = self._read("job.json")
+        if not job or job.get("state") != "running" or self._lost_cause(job) is None:
             return job
+        with self._lost_lock:
+            job = self._read("job.json")              # un autre fil vient peut-être de le constater (voire d'en lancer un autre)
+            cause = self._lost_cause(job) if job and job.get("state") == "running" else None
+            if cause is None:
+                return job
+            return self._declare_lost(job, cause)
+
+    def _declare_lost(self, job, cause):
+        """Le travail « en cours » est perdu (voir _lost_cause). Dans cet ordre : on le dit dans les journaux (où il en était et,
+        s'il tourne encore ici, ce que fait son fil à cet instant : c'est ce qui dira quel appel ne revient pas), on rend au
+        client le clic qui l'avait lancé, et SEULEMENT ENSUITE le travail passe en erreur (le navigateur voit alors le message :
+        son clic est déjà rendu). Un clic ne se rend que pour un travail lancé par CE processus."""
+        own = job.get("pid") == os.getpid()
+        stack = ""
+        if own and self._thread is not None and self._thread.is_alive():
+            frame = sys._current_frames().get(self._thread.ident)
+            if frame is not None:
+                stack = " Son fil en est là :\n" + "".join(traceback.format_stack(frame, limit=STACK_LINES)).rstrip()
+        age = self.clock() - float(job.get("started_ts", 0))
+        log.error("génération perdue (%s) : étape « %s » (%s %%), lancée il y a %d s.%s",
+                  cause, job.get("message") or job.get("step") or "?", job.get("percent", 0), age, stack)
+        if own:
+            self._give_back(self._refund)
         lost = {"state": "error", "message": MSG_GENERIC_ERROR, "finished_ts": self.clock()}
         self._write("job.json", lost)
         return lost
 
     def _set_progress(self, step, percent, message):
         self._progress = {"step": step, "percent": int(percent), "message": message}
+        log.info("génération : %s (%d %%)", message, self._progress["percent"])
         job = self._read("job.json")
         if job and job.get("state") == "running" and job.get("pid") == os.getpid():
             job.update(self._progress)
@@ -278,6 +329,12 @@ class GenerationService:
             refund()
         except Exception:
             log.exception("génération du client non rendue")
+
+    def _finish_job(self, state):
+        """Écrit l'état final du travail, sauf si un travail plus récent a pris sa place (celui-ci avait été déclaré perdu
+        puis un autre lancé : il arrive trop tard et ne doit pas écraser l'état du nouveau)."""
+        if self._thread is threading.current_thread():
+            self._write("job.json", state)
 
     def _run(self, refund=None):
         # Ordre voulu pour chaque issue : constat du jour, clics rendus, et SEULEMENT ENSUITE l'état final du travail (dès
@@ -294,26 +351,29 @@ class GenerationService:
             })
             if meta.get("matches_total") is not None:
                 self._note_matchday(meta.get("day_total"), meta["matches_total"])
-            self._write("job.json", {"state": "done", "finished_ts": now})
+            self._finish_job({"state": "done", "finished_ts": now})
         except NoMatchToday as e:
             log.log(e.level, "génération sans objet : %s (%d match(s) aujourd'hui, %d à venir)",
                     e.user_message, e.total, e.upcoming)
             self._note_matchday(e.total, e.upcoming)
             self._uncount_generation()
             self._give_back(refund)
-            self._write("job.json", {"state": "no_match", "finished_ts": self.clock()})
+            self._finish_job({"state": "no_match", "finished_ts": self.clock()})
         except GenerationError as e:
             log.log(e.level, "génération sans résultat : %s", e.user_message)
             self._give_back(refund)
-            self._write("job.json", {"state": "error", "message": e.user_message,
-                                     "finished_ts": self.clock()})
+            self._finish_job({"state": "error", "message": e.user_message, "finished_ts": self.clock()})
         except Exception:
             log.exception("génération en échec")
             self._give_back(refund)
-            self._write("job.json", {"state": "error", "message": MSG_GENERIC_ERROR,
-                                     "finished_ts": self.clock()})
+            self._finish_job({"state": "error", "message": MSG_GENERIC_ERROR, "finished_ts": self.clock()})
+        finally:
+            if self._refund is refund:                  # ce travail est fini : plus rien à rendre pour lui
+                self._refund = None
 
     def _start(self, refund=None):
+        refund = _once(refund)
+        self._refund = refund
         self._progress = {"step": "demarrage", "percent": 1, "message": "Démarrage de l'analyse…"}
         self._write("job.json", {"state": "running", "pid": os.getpid(), "started_ts": self.clock(),
                                  **self._progress})

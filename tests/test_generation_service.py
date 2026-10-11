@@ -194,15 +194,19 @@ def test_plafond_atteint_sans_aucun_cache(dirs, monkeypatch):
     assert service.request_generation() == {"state": "error", "error": generation_service.MSG_DAILY_LIMIT_EMPTY}
 
 
-def test_travail_perdu_apres_redemarrage(dirs):
+def test_travail_perdu_apres_redemarrage(dirs, caplog):
     clock = Clock()
     service = make(dirs, Pipeline(), clock)
     os.makedirs(dirs[0])
     # Travail « en cours » lancé par un processus disparu.
     with open(os.path.join(dirs[0], "job.json"), "w") as f:
-        json.dump({"state": "running", "pid": 2 ** 22 + 12345, "started_ts": clock.now, "percent": 30}, f)
-    state = service.status()
+        json.dump({"state": "running", "pid": 2 ** 22 + 12345, "started_ts": clock.now, "percent": 30,
+                   "message": "Collecte des derniers résultats…"}, f)
+    with caplog.at_level(logging.ERROR):
+        state = service.status()
     assert state["state"] == "error" and state["error"] == generation_service.MSG_GENERIC_ERROR
+    assert "génération perdue (le processus qui la menait a disparu)" in caplog.text      # dit dans les journaux, avec l'étape
+    assert "Collecte des derniers résultats…" in caplog.text and "30 %" in caplog.text
     clock.now += generation_service.FAILURE_COOLDOWN_SECONDS + 1
     assert service.request_generation()["state"] == "running"
     wait(service)
@@ -228,6 +232,25 @@ def test_fichiers_corrompus_ne_plantent_pas(dirs):
     assert service.request_generation()["state"] == "running"
     wait(service)
     assert service.status()["state"] == "done"
+
+
+def test_des_ecritures_simultanees_du_meme_fichier_ne_se_marchent_pas_dessus(dirs, caplog):
+    """Plusieurs fils (navigateurs qui interrogent, analyse, boucle quotidienne) écrivent parfois le même fichier d'état."""
+    service = make(dirs, Pipeline())
+
+    def hammer(n):
+        for i in range(80):
+            service._write("job.json", {"state": "running", "n": n, "i": i})
+
+    threads = [threading.Thread(target=hammer, args=(n,)) for n in range(8)]
+    with caplog.at_level(logging.ERROR):
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    assert "impossible" not in caplog.text
+    assert service._read("job.json")["state"] == "running"
+    assert not [name for name in os.listdir(dirs[0]) if name.endswith(".tmp")]
 
 
 def test_disque_inaccessible_le_service_continue_en_memoire(tmp_path):
@@ -398,6 +421,97 @@ def test_un_refund_qui_leve_ne_casse_rien(dirs, caplog):
         service.request_generation(refund=broken)
         wait(service)
     assert service.status()["state"] == "error" and "génération du client non rendue" in caplog.text
+
+
+def test_chaque_etape_de_l_analyse_est_consignee(dirs, caplog):
+    service = make(dirs, Pipeline())
+    with caplog.at_level(logging.INFO):
+        service.request_generation()
+        wait(service)
+    assert "génération : Analyse… (40 %)" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Une analyse qui ne finit jamais (appel réseau resté sans réponse) : déclarée perdue, clic rendu UNE fois, blocage consigné
+# --------------------------------------------------------------------------
+
+def stuck(dirs, clock, error=None):
+    """Une analyse démarrée par un client, puis restée bloquée à l'étape « Analyse… » (le temps du test)."""
+    pipeline = Pipeline(error=error)
+    pipeline.gate.clear()
+    service = make(dirs, pipeline, clock)
+    refunds = Refunds(service)
+    assert service.request_generation(refund=refunds)["started"] is True
+    time.sleep(0.1)                                          # le temps qu'elle atteigne son étape
+    assert service.status()["state"] == "running"
+    return service, pipeline, refunds
+
+
+def test_une_analyse_bloquee_est_declaree_perdue_le_clic_est_rendu_et_l_endroit_du_blocage_consigne(dirs, caplog):
+    clock = Clock()
+    service, pipeline, refunds = stuck(dirs, clock)
+    clock.now += config.JOB_MAX_SECONDS - 1
+    assert service.status()["state"] == "running" and refunds.calls == 0              # pas encore trop long
+    clock.now += 2
+    with caplog.at_level(logging.ERROR):
+        state = service.status()
+    assert state == {"state": "error", "error": generation_service.MSG_GENERIC_ERROR}
+    assert refunds.calls == 1 and refunds.states == ["running"]          # rendu AVANT que l'erreur ne soit visible du navigateur
+    assert "génération perdue (elle dure trop longtemps)" in caplog.text
+    assert "Analyse…" in caplog.text and "40 %" in caplog.text                         # l'étape où elle en était
+    assert "Son fil en est là" in caplog.text and "self.gate.wait(5)" in caplog.text  # et ce que faisait son fil
+    pipeline.gate.set()
+    wait(service)
+
+
+def test_le_clic_d_une_analyse_perdue_n_est_rendu_qu_une_fois(dirs):
+    clock = Clock()
+    service, pipeline, refunds = stuck(dirs, clock, error=RuntimeError("enfin"))
+    clock.now += config.JOB_MAX_SECONDS + 1
+    assert [service.status()["state"] for _ in range(3)] == ["error"] * 3
+    assert refunds.calls == 1
+    pipeline.gate.set()                                      # l'analyse finit par échouer à son tour : rien de plus à rendre
+    wait(service)
+    assert refunds.calls == 1
+
+
+def test_des_navigateurs_qui_interrogent_en_meme_temps_ne_font_declarer_la_perte_qu_une_fois(dirs, caplog):
+    clock = Clock()
+    service, pipeline, refunds = stuck(dirs, clock)
+    clock.now += config.JOB_MAX_SECONDS + 1
+    answers = []
+    threads = [threading.Thread(target=lambda: answers.append(service.status()["state"])) for _ in range(10)]
+    with caplog.at_level(logging.ERROR):
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    assert answers == ["error"] * 10
+    assert refunds.calls == 1 and caplog.text.count("génération perdue") == 1
+    pipeline.gate.set()
+    wait(service)
+
+
+def test_une_analyse_perdue_qui_se_termine_enfin_ne_touche_ni_au_clic_ni_a_l_etat_de_la_suivante(dirs):
+    clock = Clock()
+    service, pipeline, first = stuck(dirs, clock, error=RuntimeError("tard"))
+    first_thread = service._thread
+    clock.now += config.JOB_MAX_SECONDS + 1
+    assert service.status()["state"] == "error" and first.calls == 1
+    clock.now += generation_service.FAILURE_COOLDOWN_SECONDS + 1
+    next_pipeline = Pipeline()
+    next_pipeline.gate.clear()
+    service.pipeline = next_pipeline
+    second = Refunds(service)
+    assert service.request_generation(refund=second)["started"] is True      # un autre client relance
+    pipeline.gate.set()                                                      # la première analyse échoue enfin...
+    first_thread.join(5)
+    assert not first_thread.is_alive()
+    assert first.calls == 1 and second.calls == 0                            # ... sans rendre le clic de l'autre client
+    assert service.status()["state"] == "running"                            # ... ni écraser l'état de son analyse
+    next_pipeline.gate.set()
+    wait(service)
+    assert service.status()["state"] == "done" and second.calls == 0
 
 
 # --------------------------------------------------------------------------

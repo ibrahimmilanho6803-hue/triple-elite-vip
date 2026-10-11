@@ -183,7 +183,7 @@ class _JsonState:
         try:
             directory = self._directory()
             os.makedirs(directory, exist_ok=True)
-            tmp = os.path.join(directory, f"{name}.{os.getpid()}.tmp")
+            tmp = os.path.join(directory, f"{name}.{os.getpid()}.{threading.get_ident()}.tmp")    # un fichier par fil
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
             os.replace(tmp, os.path.join(directory, name))

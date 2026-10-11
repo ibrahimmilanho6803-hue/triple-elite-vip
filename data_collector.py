@@ -1,7 +1,11 @@
 """Collecte des données de matchs (TheSportsDB) et statistiques des équipes."""
 import logging
+import re
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
+import sys
+import threading
+import time
+import traceback
 from datetime import datetime, timezone
 
 import requests
@@ -65,8 +69,77 @@ def event_day(event):
         return None
 
 
+# --------------------------------------------------------------------------
+# Appels réseau : journaux sans clé d'API, attentes bornées
+# --------------------------------------------------------------------------
+
+STACK_LINES = 12            # profondeur des piles consignées quand des appels sont abandonnés
+
+_KEY_IN_URL = re.compile(r"(/json/|[?&]api_?key=)[^/&\s'\")]+", re.IGNORECASE)
+
+
+def hide_keys(text):
+    """Le texte sans les clés d'API qu'il contient (…/json/<clé>/…, …?apiKey=<clé>). Les messages d'erreur de `requests`
+    reprennent l'adresse complète de l'appel : sans ce filtre, la clé (payante) de TheSportsDB finirait dans les journaux."""
+    return _KEY_IN_URL.sub(r"\1***", str(text))
+
+
+def call_label(url):
+    """L'appel sans l'adresse du serveur ni la clé : « eventsnextleague.php?id=4328 ». De quoi le reconnaître dans les journaux."""
+    return hide_keys(url).rsplit("/", 1)[-1]
+
+
+def run_parallel(func, items, *, deadline, max_workers=8, name="appel", describe=str):
+    """[func(item) pour chaque item], en parallèle (au plus `max_workers` à la fois) et avec une attente BORNÉE.
+
+    Au bout de `deadline` secondes pour l'ensemble, un appel qui n'a pas rendu la main vaut None, comme un appel qui a échoué
+    (une exception de `func` vaut aussi None, et est consignée) : la suite continue sans lui. Les appels tournent dans des
+    fils « daemon » qu'on n'attend jamais jusqu'au bout. Un appel qui ne revient pas (nom de domaine jamais résolu, verrou
+    resté pris...) ne bloque donc ni la génération ni l'arrêt du serveur, alors qu'un ThreadPoolExecutor attend ses fils à la
+    sortie de son `with` comme à la sortie du processus. Les appels abandonnés sont nommés dans les journaux (`describe`)."""
+    items = list(items)
+    results = [None] * len(items)
+    if not items:
+        return results
+    end = time.monotonic() + deadline
+    places = threading.BoundedSemaphore(max(1, min(max_workers, len(items))))
+
+    def work(index, item):
+        if not places.acquire(timeout=max(0.0, end - time.monotonic())):
+            return                                           # le délai est passé avant qu'une place se libère
+        try:
+            if time.monotonic() < end:
+                results[index] = func(item)
+        except Exception:
+            log.exception("%s : appel en échec", name)
+        finally:
+            places.release()
+
+    threads = [threading.Thread(target=work, args=(index, item), name=f"{name}-{index}", daemon=True)
+               for index, item in enumerate(items)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(max(0.0, end - time.monotonic()))
+    silent = [(describe(item), thread) for item, thread in zip(items, threads) if thread.is_alive()]
+    if silent:
+        # Où chaque fil abandonné est resté bloqué (résolution du nom, poignée de main TLS, verrou...) : c'est ce qui dit
+        # quelle ressource ne répond plus. Les deux premiers suffisent, les autres sont presque toujours au même endroit.
+        frames, stacks = sys._current_frames(), ""
+        for label, thread in silent[:2]:
+            frame = frames.get(thread.ident)
+            if frame is not None:
+                stacks += f"\nFil de « {label} » :\n" + "".join(traceback.format_stack(frame, limit=STACK_LINES)).rstrip()
+        log.error("%s : %d appel(s) sans réponse au bout de %g s, abandonnés : %s.%s",
+                  name, len(silent), deadline, ", ".join(label for label, _ in silent), stacks)
+    return list(results)                 # une copie : un appel qui répondrait trop tard ne change plus ce qu'on rend
+
+
 class DataCollector:
-    REQUEST_TIMEOUT = 10  # secondes
+    REQUEST_TIMEOUT = 10   # secondes, par appel
+    FETCH_DEADLINE = 25    # secondes, pour l'ensemble des appels lancés ensemble ; au-delà, on poursuit sans les réponses manquantes
+    RETRY_DEADLINE = 15    # idem pour la deuxième chance donnée aux championnats qui n'ont pas répondu (get_matchday)
+    MAX_PARALLEL = 8       # appels simultanés au plus
 
     def __init__(self):
         # Sans variable SPORTSDB_API_KEY, la clé de test publique "3" est utilisée
@@ -104,16 +177,21 @@ class DataCollector:
             response = requests.get(url, timeout=self.REQUEST_TIMEOUT)
             return response.json().get("events") or []
         except Exception as e:
-            log.warning("TheSportsDB indisponible (%s) : %s", url.split("/json/")[-1].split("?")[0], e)
+            # Ni l'adresse ni le message d'erreur ne sont consignés tels quels : ils contiennent la clé d'API.
+            log.warning("TheSportsDB indisponible (%s) : %s", call_label(url), hide_keys(e))
             return None
 
-    def _fetch_many(self, urls):
-        """{clé: évènements ou None} pour un dict {clé: url}, téléchargés en parallèle."""
+    def _fetch_many(self, urls, deadline=None):
+        """{clé: évènements ou None} pour un dict {clé: url}, téléchargés en parallèle. L'attente est bornée (voir
+        run_parallel) : un appel sans réponse au bout de `deadline` secondes (FETCH_DEADLINE par défaut, pour l'ensemble)
+        vaut None, comme un appel en échec."""
         if not urls:
             return {}
-        with ThreadPoolExecutor(max_workers=min(8, len(urls)), thread_name_prefix="sportsdb") as pool:
-            futures = {key: pool.submit(self._fetch_events, url) for key, url in urls.items()}
-            return {key: future.result() for key, future in futures.items()}
+        keys = list(urls)
+        events = run_parallel(self._fetch_events, [urls[key] for key in keys], name="sportsdb", describe=call_label,
+                              deadline=self.FETCH_DEADLINE if deadline is None else deadline,
+                              max_workers=self.MAX_PARALLEL)
+        return dict(zip(keys, events))
 
     # ------------------------------------------------------------------
     # Enregistrement
@@ -254,7 +332,8 @@ class DataCollector:
     # ------------------------------------------------------------------
 
     def get_matchday(self, now=None):
-        """Les matchs du JOUR (jour UTC) des championnats suivis. Un seul appel par championnat.
+        """Les matchs du JOUR (jour UTC) des championnats suivis. Un appel par championnat ; un championnat qui n'a pas
+        répondu (panne passagère, réponse trop lente) a droit à un deuxième essai, et un seul.
 
         Renvoie {"day": "AAAA-MM-JJ", "matches": [...], "total": n, "complete": bool} :
           - matches : ceux qui n'ont pas encore commencé (MATCHS_PAR_CHAMPIONNAT par championnat au plus, hors matchs
@@ -267,6 +346,11 @@ class DataCollector:
         urls = {name: f"{self.base_url}/eventsnextleague.php?id={league_id}"
                 for name, league_id in self.leagues.items()}
         fetched = self._fetch_many(urls)
+        silent = {name: url for name, url in urls.items() if fetched.get(name) is None}
+        if silent:
+            # Une panne passagère ne doit pas faire croire qu'il n'y a pas de football aujourd'hui, ni coûter son clic à un client.
+            log.info("matchs du jour : %d championnat(s) sans réponse (%s), nouvel essai", len(silent), ", ".join(silent))
+            fetched.update(self._fetch_many(silent, deadline=self.RETRY_DEADLINE))
         upcoming, seen = [], set()
         for league_name in self.leagues:                 # ordre stable des championnats
             count = 0

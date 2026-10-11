@@ -512,3 +512,30 @@ def install_health_and_robots(app, *, robots_txt, health_extra=None):
     @app.get("/favicon.ico")
     def favicon():
         return redirect(url_for("static", filename="favicon.svg"), code=301)
+
+
+def start_on_first_request(app, start):
+    """Appelle `start()` UNE fois, à la première requête reçue par CE processus, et jamais à la création de l'application.
+
+    Pourquoi : sous gunicorn, l'application peut être créée dans le processus PRINCIPAL, avant la création (os.fork) du
+    processus qui répond aux visiteurs. Un fil de fond démarré à cet instant (la boucle de génération automatique, qui appelle
+    TheSportsDB chaque minute) laisse alors, dans la copie, des verrous pris par un fil qui n'existe plus : les appels réseau
+    du processus qui répond peuvent rester bloqués pour toujours, sans la moindre erreur. Lancée à la première requête, la
+    boucle naît dans le processus qui sert les visiteurs, jamais avant un fork (la surveillance de Render et d'UptimeRobot
+    frappe dans les secondes qui suivent le démarrage). Un échec de `start` est consigné, jamais montré au visiteur, et
+    n'est pas retenté à chaque requête."""
+    state = {"done": False}
+    lock = threading.Lock()
+
+    @app.before_request
+    def _start_once():
+        if state["done"]:
+            return None
+        with lock:
+            if not state["done"]:
+                state["done"] = True                 # d'abord : un échec ne doit pas se répéter à chaque requête
+                try:
+                    start()
+                except Exception:
+                    log.exception("démarrage différé impossible")
+        return None

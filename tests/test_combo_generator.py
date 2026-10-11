@@ -1,4 +1,5 @@
 import json
+import logging
 import random
 from collections import Counter
 
@@ -191,6 +192,24 @@ def test_echec_api_cotes_retombe_sur_le_cache_perime(monkeypatch, tmp_path):
     assert len(events) == 1
     monkeypatch.setattr(combo_generator.requests, "get", lambda *a, **k: (_ for _ in ()).throw(OSError("réseau")))
     assert len(ComboGenerator(analyzer=FakeAnalyzer())._load_events("soccer_epl")) == 1
+
+
+def test_la_cle_des_cotes_n_apparait_pas_dans_les_journaux(monkeypatch, tmp_path, caplog):
+    secret = "CLE-COTES-987654"
+    monkeypatch.setenv("ODDS_API_KEY", secret)
+    monkeypatch.setattr(combo_generator, "ODDS_CACHE_DIR", str(tmp_path))
+
+    def failing(url, params=None, timeout=None):
+        # `requests` reprend l'adresse complète, paramètres compris, dans le message de ses exceptions.
+        raise combo_generator.requests.exceptions.ConnectionError(
+            f"HTTPSConnectionPool(host='api.the-odds-api.com', port=443): Max retries exceeded with url: "
+            f"/v4/sports/soccer_epl/odds?apiKey={secret}&regions=eu&markets=h2h%2Ctotals (Caused by Timeout)")
+
+    monkeypatch.setattr(combo_generator.requests, "get", failing)
+    with caplog.at_level(logging.WARNING):
+        assert ComboGenerator(analyzer=FakeAnalyzer())._load_events("soccer_epl") == []
+    assert "the-odds-api soccer_epl" in caplog.text and "apiKey=***" in caplog.text
+    assert secret not in caplog.text
 
 
 # --------------------------------------------------------------------------

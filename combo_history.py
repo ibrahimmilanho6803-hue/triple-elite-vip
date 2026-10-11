@@ -12,13 +12,13 @@ import os
 import re
 import sqlite3
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import requests
 
 import config
-from data_collector import CALLED_OFF_STATUSES, DataCollector, event_start, is_final_status, parse_score
+from data_collector import (CALLED_OFF_STATUSES, DataCollector, event_start, hide_keys, is_final_status, parse_score,
+                            run_parallel)
 from markets import combo_status, describe_prediction, evaluate_prediction  # noqa: F401 (réexportés)
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,8 @@ _CHECK_EVERY = 30 * 60
 _CALLED_OFF_EVERY = 12 * 3600       # un match reporté peut être rejoué plus tard : on revérifie, mais rarement
 _MATCH_DURATION = 110 * 60
 _MAX_LOOKUPS = 12
-_LOOKUP_TIMEOUT = 6
+_LOOKUP_TIMEOUT = 6                 # secondes, par appel
+_LOOKUP_DEADLINE = 20               # secondes, pour l'ensemble des consultations d'une ouverture de l'historique
 
 
 def _lookup_event(match_id):
@@ -80,7 +81,7 @@ def _lookup_event(match_id):
         events = response.json().get("events") or []
         return events[0] if events else None
     except Exception as e:
-        log.warning("lookup du match %s impossible : %s", match_id, e)
+        log.warning("lookup du match %s impossible : %s", match_id, hide_keys(e))     # le message contient la clé d'API
         return None
 
 
@@ -106,8 +107,10 @@ def refresh_pending_results(pending, now=None, called_off=()):
         todo.append(match_id)
     if not todo:
         return False
-    with ThreadPoolExecutor(max_workers=min(8, len(todo)), thread_name_prefix="lookup") as pool:
-        events = list(pool.map(_lookup_event, todo))
+    # Attente bornée : une consultation qui ne revient pas ne doit pas figer pour toujours le rafraîchissement des pages
+    # publiques (showcase.py ne relance rien tant que le précédent n'est pas fini).
+    events = run_parallel(_lookup_event, todo, deadline=_LOOKUP_DEADLINE, max_workers=8, name="lookup",
+                          describe=lambda match_id: f"match {match_id}")
     updated, collector = False, None
     for match_id, event in zip(todo, events):
         if not event:

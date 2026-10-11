@@ -1,8 +1,11 @@
 import json
+import logging
 import os
+import threading
 import time
 
 import pytest
+import requests
 
 import combo_history
 import config
@@ -185,6 +188,41 @@ def test_panne_reseau_ne_plante_pas(env, monkeypatch):
     write(env, "20261003_100000", [combo(leg(1, "V1"), leg(2, "V1"), leg(3, "V1"))])
     data = load_history(env.results, db_path=env.db)
     assert data["combos"][0]["status"] == "pending"
+
+
+def test_la_cle_d_api_n_apparait_pas_dans_le_journal_d_une_consultation_en_echec(env, monkeypatch, caplog):
+    secret = "CLE-PAYANTE-123456"
+    monkeypatch.setattr(config, "SPORTSDB_API_KEY", secret)
+
+    def failing(url, params=None, timeout=None):
+        raise requests.exceptions.ConnectionError(
+            f"HTTPSConnectionPool(host='www.thesportsdb.com', port=443): Max retries exceeded with url: "
+            f"/api/v1/json/{secret}/lookupevent.php?id={params['id']} (Caused by NameResolutionError)")
+
+    monkeypatch.setattr(combo_history.requests, "get", failing)
+    with caplog.at_level(logging.WARNING):
+        assert refresh_pending_results({1: "Serie A"}, now=1000.0) is False
+    assert "lookup du match 1 impossible" in caplog.text and "json/***/lookupevent.php" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_une_consultation_qui_ne_revient_jamais_ne_fige_pas_le_rafraichissement(env, monkeypatch, caplog):
+    """Les pages publiques ne relancent rien tant que le rafraîchissement précédent n'est pas fini (showcase.py) : une
+    consultation sans réponse ne doit donc pas le faire durer pour toujours."""
+    release = threading.Event()
+
+    def stuck(url, params=None, timeout=None):
+        release.wait(10)
+        raise OSError("trop tard")
+
+    monkeypatch.setattr(combo_history.requests, "get", stuck)
+    monkeypatch.setattr(combo_history, "_LOOKUP_DEADLINE", 0.3)
+    started = time.monotonic()
+    with caplog.at_level(logging.ERROR):
+        assert refresh_pending_results({1: "Serie A", 2: "Serie A"}, now=1000.0) is False
+    assert time.monotonic() - started < 3
+    assert "lookup : 2 appel(s) sans réponse" in caplog.text and "match 1" in caplog.text
+    release.set()
 
 
 def test_match_reporte(env, monkeypatch):

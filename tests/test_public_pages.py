@@ -4,8 +4,10 @@ Deux garanties tiennent tout le reste : (1) un combiné à venir n'apparaît jam
 visiteur ne déclenche jamais un appel payant (génération IA) ni un appel réseau.
 """
 import html as htmllib
+import logging
 import re
 import struct
+import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlparse
@@ -14,6 +16,7 @@ import pytest
 
 import config
 import dashboard
+from daily_generation import DailyGeneration
 from generation_service import GenerationService
 from showcase import Showcase
 from site_fakes import FakeLicenses, history_with, make_pipeline, sample_combos
@@ -645,12 +648,56 @@ def test_la_generation_automatique_n_existe_pas_sans_reglage(tmp_path, monkeypat
     assert SpyDaily.created == [] and app.extensions["tev"].daily is None
 
 
-def test_la_generation_automatique_demarre_a_l_heure_reglee(tmp_path, monkeypatch):
+def test_la_generation_automatique_est_branchee_a_l_heure_reglee_mais_ne_demarre_pas_a_la_creation(tmp_path, monkeypatch):
+    """Sous gunicorn, l'application peut être créée dans le processus PRINCIPAL, avant la création de celui qui répond aux
+    visiteurs. Un fil de fond lancé à cet instant empoisonne la copie : ses appels réseau restent bloqués pour toujours
+    (c'est ce qui a figé « Générer les combinés » le 11 octobre). La boucle ne part donc qu'à la première requête."""
     SpyDaily.created = []
     monkeypatch.setattr(dashboard, "DailyGeneration", SpyDaily)
     monkeypatch.setattr(config, "AUTO_GENERATE_HOUR", 7)
     service = GenerationService(pipeline=make_pipeline(0.0), cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r"))
     app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda: history_with())
     (daily,) = SpyDaily.created
-    assert daily.service is service and daily.hour == 7 and daily.started == 1
+    assert daily.service is service and daily.hour == 7
     assert app.extensions["tev"].daily is daily
+    assert daily.started == 0                                          # rien n'est lancé à la création de l'application
+    client = app.test_client()
+    assert client.get("/health").status_code == 200
+    assert daily.started == 1                                          # la première requête (surveillance de Render)
+    for path in ("/", "/health", "/resultats", "/introuvable"):
+        client.get(path)
+    assert daily.started == 1                                          # une seule fois
+
+
+def test_aucun_fil_de_fond_ne_nait_a_la_creation_de_l_application(tmp_path, monkeypatch):
+    """Le vrai objet, pas un espion. Un fil vivant à la création de l'application est précisément ce qui peut bloquer pour
+    toujours les appels HTTPS du processus que gunicorn en copie (os.fork) : reproduit en laboratoire, la copie reste figée
+    sans erreur dans la couche TLS (création du contexte, poignée de main), environ 3 démarrages sur 100."""
+    monkeypatch.setattr(config, "AUTO_GENERATE_HOUR", 7)
+
+    def loops():
+        return [thread for thread in threading.enumerate() if thread.name == "daily-generation"]
+
+    before = loops()
+    service = GenerationService(pipeline=make_pipeline(0.0), cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r"))
+    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda: history_with())
+    assert isinstance(app.extensions["tev"].daily, DailyGeneration)
+    assert loops() == before and app.extensions["tev"].daily._thread is None
+
+
+def test_un_demarrage_differe_qui_echoue_ne_casse_pas_les_pages_et_n_est_pas_retente(tmp_path, monkeypatch, caplog):
+    class Failing(SpyDaily):
+        def start(self):
+            self.started += 1
+            raise RuntimeError("fil impossible")
+
+    SpyDaily.created = []
+    monkeypatch.setattr(dashboard, "DailyGeneration", Failing)
+    monkeypatch.setattr(config, "AUTO_GENERATE_HOUR", 7)
+    service = GenerationService(pipeline=make_pipeline(0.0), cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r"))
+    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda: history_with())
+    client = app.test_client()
+    with caplog.at_level(logging.ERROR):
+        assert [client.get("/health").status_code for _ in range(3)] == [200, 200, 200]
+    (daily,) = SpyDaily.created
+    assert daily.started == 1 and "démarrage différé impossible" in caplog.text

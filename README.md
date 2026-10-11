@@ -101,7 +101,13 @@ de ce jour-là (`daily_generation.py`). C'est un appel payant à l'IA (de l'ordr
 environ 6 $ par mois à raison d'une par jour de match). Un jour sans match (ou avec moins de trois matchs à venir) elle ne lance rien
 et ne coûte rien. Elle passe par les mêmes garde-fous que le bouton « Générer » (un travail à la fois, combinés encore frais
 réutilisés, plafond de 10 par jour, pause après un échec) et s'arrête après 3 tentatives dans la journée. Supprimer la variable la
-désactive.
+désactive. La boucle ne démarre qu'à la **première requête** reçue après chaque démarrage du serveur (la surveillance de Render la
+fournit dans les secondes qui suivent), jamais à la création de l'application : sous gunicorn, un fil de fond lancé avant la création
+du processus qui répond aux visiteurs laisse à celui-ci des appels HTTPS bloqués pour toujours, sans erreur ni délai dépassé (c'est
+ce qui avait figé « Générer les combinés » le 11 octobre 2026). Mécanisme reproduit en laboratoire : un fil qui fait des appels TLS
+au moment du fork laisse des verrous d'OpenSSL pris dans la copie, où la création d'un contexte TLS ou la poignée de main reste
+alors coincée (environ 3 démarrages sur 100, jamais sans fil de fond). Dans les journaux, `génération automatique activée` apparaît
+donc après le démarrage du serveur, pas avant.
 
 **Couper le combiné gratuit** : `FREE_PICK_ENABLED=0` (Render > Environment ; Render redémarre le service quand une variable change)
 retire `/gratuit` (erreur 404), ses liens et son entrée du plan du site. Valeur par défaut : activé.
@@ -140,6 +146,12 @@ répond, dans l'espace client comme sur `/gratuit` :
   constat négatif est revérifié au plus toutes les 30 minutes (un calendrier peut se compléter), après une panne de TheSportsDB au
   bout de 5 minutes. **Jamais de « pas de championnat » sur une réponse incomplète** : si un championnat n'a pas répondu, c'est une
   panne à réessayer (« Les matchs du jour sont momentanément indisponibles »), pas un verdict.
+- **Des attentes bornées.** Chaque appel à TheSportsDB attend au plus 10 secondes, et l'ensemble des appels d'une étape au plus
+  25 secondes (`DataCollector.FETCH_DEADLINE`) : un appel qui ne revient pas est abandonné et compte comme une panne, sans bloquer
+  la génération. Un championnat qui n'a pas répondu est réessayé une fois (15 secondes de plus). Si une analyse dure malgré tout
+  plus de 5 minutes (`JOB_MAX_SECONDS`), elle est déclarée perdue : **le clic du client lui est rendu**, et les journaux disent à
+  quelle étape elle en était et ce que faisait son fil (`génération perdue (…)`). Les clés d'API ne sont jamais écrites dans les
+  journaux (les messages d'erreur réseau les contiennent : elles sont remplacées par `***`).
 - **Qui fait ce constat.** La boucle quotidienne (`daily_generation.py`, active seulement si `AUTO_GENERATE_HOUR` est définie) le fait
   dès minuit UTC, avant l'heure de génération : « Pas de championnat aujourd'hui » s'affiche sans attendre personne. Sans elle, il se
   fait au premier clic d'un abonné sur « Générer » (qui ne lui coûte rien) ; d'ici là `/gratuit` dit seulement que le combiné n'est
@@ -538,6 +550,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | « E-mail ou clé de licence incorrect » alors que le client a bien sa clé | Le visiteur voit toujours ce même message ; le motif exact est dans les logs du service client : `connexion refusée : j***@… (motif)`. `e-mail inconnu` : aucune licence à cette adresse **dans la base de ce service** (faute de frappe dans l'adresse, ou les deux services ne pointent pas vers la même `DATABASE_URL` : au démarrage, chaque service écrit `Base de données des licences initialisée (base <nom>, N licence(s))`, et `python generate_keys.py` l'affiche en tête ; le nom doit être identique des deux côtés). `clé différente (N caractères saisis, 16 attendus)` : clé mal recopiée (le site accepte déjà espaces, majuscules, caractères invisibles, la lettre O pour 0 et I ou L pour 1). Vérifier avec `python generate_keys.py` puis `2` (liste des licences) depuis le Shell du service client, et renvoyer la clé par e-mail avec l'option proposée après `1`. `N lignes pour cet e-mail` à la fin du motif : doublons hérités (`Client@…` et `client@…`) ; la bonne clé fonctionne malgré tout, mais nettoyer avec `4` (supprimer) puis `1` (recréer) |
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
 | « Pas de championnat aujourd'hui », « Trop peu de matchs aujourd'hui » ou « Les matchs d'aujourd'hui ont déjà commencé » | Pas une panne : les combinés ne portent que sur les matchs du jour (UTC) qui n'ont pas commencé, il en faut 3. Logs du service client : `matchs du jour (AAAA-MM-JJ) : N à venir sur M`. Trêve internationale, ou calendrier de TheSportsDB incomplet : le constat est revérifié toutes les 30 minutes. « Les matchs du jour sont momentanément indisponibles » : un championnat n'a pas répondu chez TheSportsDB, réessayer |
+| « Générer les combinés » reste bloqué plusieurs minutes, puis « Une erreur est survenue pendant la génération » | Logs du service client : chaque étape est consignée (`génération : Recherche des matchs du jour… (5 %)`, puis `Collecte…`, `Analyse…`) ; la dernière dit où ça s'est arrêté. `génération perdue (elle dure trop longtemps) : étape « … »` est suivie de la pile du fil bloqué : sa dernière ligne montre l'appel qui ne revient pas. Le clic du client a été rendu (il peut réessayer). `TheSportsDB : N appel(s) sans réponse au bout de 25 s` : TheSportsDB, ou le réseau du serveur, ne répond plus ; l'étape est abandonnée au bout de 25 s et non de 5 minutes. Si cela se répète sans cause visible, redémarrer le service depuis Render |
 | Un client ne peut plus générer (« Tu as utilisé tes 2 générations ») | Normal : 2 par jour UTC et par client (voir « Matchs du jour et générations des clients »). Lui en rendre une : `DELETE FROM generation_usage WHERE email = '…' AND day = '…'`. Log `compteur de générations illisible` : la base ne répond pas, personne n'est bloqué pour autant |
 | Les cotes sont toutes précédées de « ≈ » | `ODDS_API_KEY` absente, ou quota de the-odds-api atteint : c'est normal, ce sont des cotes estimées |
 | La page « Combiné gratuit » est vide | Normal tant qu'aucune génération n'a été faite avec les matchs d'aujourd'hui (voir « Pages publiques ») : générer depuis l'espace client, ou activer `AUTO_GENERATE_HOUR`. Si une génération du jour existe et que la page reste vide : tous ses combinés ont un match qui commence dans moins de 15 minutes, ou `FREE_PICK_ENABLED=0` |
@@ -551,7 +564,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 
 Sessions en cookies `HttpOnly`, `SameSite=Lax` et `Secure` ; politique CSP stricte (aucun script ni style en ligne) ;
 contrôle de l'origine des envois de formulaire et en-tête `X-Requested-With` sur l'API ; limitation des essais de
-connexion (par e-mail) et des créations de facture (par e-mail, adresse IP et globalement) ; adresses e-mail masquées
+connexion (par e-mail) et des créations de facture (par e-mail, adresse IP et globalement) ; adresses e-mail et clés d'API masquées
 dans les journaux ; messages d'erreur sans détail technique ; licence revérifiée en base à chaque requête protégée
 (avec une courte tolérance si la base est momentanément injoignable).
 

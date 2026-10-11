@@ -96,7 +96,8 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     if daily is None and config.AUTO_GENERATE_HOUR is not None:
         daily = DailyGeneration(service, config.AUTO_GENERATE_HOUR)
     if daily is not None:
-        daily.start()
+        # Pas tout de suite : à la première requête reçue, dans le processus qui sert les visiteurs (voir web_common).
+        web.start_on_first_request(app, daily.start)
     app.extensions["tev"] = SimpleNamespace(lm=lm, gate=gate, service=service, throttle=throttle, showcase=showcase,
                                             daily=daily)
 

@@ -5,6 +5,7 @@ mise à jour des scores en arrière-plan, partage) sert ce principe sans jamais 
 """
 import copy
 import json
+import logging
 import os
 import threading
 import time
@@ -478,6 +479,24 @@ def test_le_vrai_chargeur_lit_les_fichiers_et_ne_touche_pas_au_reseau(tmp_path, 
     shown = Showcase(FakeService(tmp_path / "cache"), clock=Clock(), background_refresh=False)
     bilan = shown.results()
     assert bilan["combos_settled"] == 0 and bilan["pending"] == 1        # score inconnu : en attente, rien d'inventé
+
+
+def test_des_ecritures_simultanees_de_l_etat_ne_se_marchent_pas_dessus(tmp_path, caplog):
+    """Le rafraîchissement en arrière-plan et les pages qui s'ouvrent écrivent parfois le même petit fichier d'état."""
+    state = showcase._JsonState(lambda: str(tmp_path / "etat"))
+
+    def hammer(n):
+        for i in range(80):
+            state.write("results.json", {"n": n, "i": i})
+
+    threads = [threading.Thread(target=hammer, args=(n,)) for n in range(8)]
+    with caplog.at_level(logging.ERROR):
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    assert "impossible" not in caplog.text and set(state.read("results.json")) == {"n", "i"}
+    assert not [name for name in os.listdir(tmp_path / "etat") if name.endswith(".tmp")]
 
 
 # --------------------------------------------------------------------------
