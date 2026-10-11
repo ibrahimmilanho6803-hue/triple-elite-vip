@@ -10,6 +10,9 @@ gratuit ». Les combinés d'une génération sont le produit payant.
     ses matchs n'a commencé. Il est mémorisé (free_pick.json) : il reste le même si une nouvelle génération sort
     entre-temps (le lien partagé le matin montre le même coupon le soir), et quand il a commencé, les autres combinés de
     la même génération ne prennent pas sa place : il faut une nouvelle génération pour un nouveau combiné gratuit.
+    Il ne porte que sur les matchs d'AUJOURD'HUI (jour UTC) : seule une génération composée avec les matchs du jour
+    (« day » dans ses métadonnées) en fournit un. Un jour sans match, il n'y en a pas, et la page le dit
+    (no_match_today : « Pas de championnat aujourd'hui »).
 
 Rien de ce que fait un visiteur ne coûte quoi que ce soit : jamais d'appel à l'IA (on lit seulement la dernière génération,
 GenerationService.latest) ni d'appel réseau dans la requête. Les scores manquants sont récupérés en arrière-plan, au plus
@@ -23,6 +26,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 import combo_history
@@ -137,6 +141,19 @@ def _upcoming_view(combo):
         "success_probability": combo.get("success_probability"),
         "predictions": [{key: leg.get(key) for key in _UPCOMING_LEG_FIELDS} for leg in combo["predictions"]],
     }
+
+
+def _day_of(moment):
+    """Jour UTC (« AAAA-MM-JJ ») d'un instant donné en secondes."""
+    return datetime.fromtimestamp(moment, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _generation_day(entry):
+    """Jour des matchs avec lesquels cette génération a été composée (« day » de ses métadonnées), ou None : les générations
+    d'avant le passage aux matchs du jour seulement n'en ont pas, et ne fournissent donc plus de combiné gratuit."""
+    meta = entry.get("meta") if isinstance(entry, dict) else None
+    day = meta.get("day") if isinstance(meta, dict) else None
+    return day if isinstance(day, str) else None
 
 
 def _wrap_pick(view):
@@ -275,8 +292,19 @@ class Showcase:
 
     # ---------------------------------------------------------- combiné gratuit
 
+    def no_match_today(self):
+        """Pourquoi il n'y a pas de combiné aujourd'hui, {"reason", "title", "message"} (voir GenerationService.no_match_today),
+        ou None quand la journée a des matchs (ou que rien n'a encore été constaté). Lecture seule, jamais d'exception : la
+        page gratuite s'affiche de toute façon."""
+        try:
+            return self.service.no_match_today()
+        except Exception:
+            log.exception("vitrine : constat des matchs du jour illisible")
+            return None
+
     def free_pick(self):
-        """{"combo": ..., "first_kickoff": ISO} ou None (page désactivée, aucune génération récente, tous les combinés ont commencé)."""
+        """{"combo": ..., "first_kickoff": ISO} ou None (page désactivée, aucune génération des matchs du jour, tous les
+        combinés ont commencé)."""
         if not config.FREE_PICK_ENABLED:
             return None
         now = self.clock()
@@ -296,18 +324,23 @@ class Showcase:
     def _current_pick(self, now):
         max_age = config.FREE_PICK_MAX_AGE_HOURS * 3600
         margin = config.FREE_PICK_MARGIN_MINUTES * 60
+        today = _day_of(now)
 
-        # Le combiné déjà choisi reste le combiné du jour tant qu'il est valable.
+        # Le combiné déjà choisi reste le combiné du jour tant qu'il est valable : choisi aujourd'hui, avec les matchs
+        # d'aujourd'hui (celui d'hier, ou d'avant « matchs du jour seulement », n'a pas de jour : il ne revient jamais).
         saved = self._state.read("free_pick.json")
         if saved:
             picked_at = web.as_number(saved.get("picked_ts"))
             combo = saved.get("combo")
-            if picked_at is not None and 0 <= now - picked_at <= max_age and is_upcoming(combo, now, margin):
+            if picked_at is not None and 0 <= now - picked_at <= max_age and saved.get("day") == today \
+                    and is_upcoming(combo, now, margin):
                 return _wrap_pick(combo)
 
         entry = self.service.latest()
         generated = web.as_number(entry.get("generated_ts")) if entry else None
         if generated is None or now - generated > max_age:
+            return None
+        if _generation_day(entry) != today:               # pas composée avec les matchs d'aujourd'hui : aucun combiné gratuit
             return None
         # Un seul combiné gratuit par génération : s'il a déjà été choisi dans celle-ci, les deux autres restent payants.
         if saved and web.as_number(saved.get("generated_ts")) == generated:
@@ -317,5 +350,5 @@ class Showcase:
             return None
         best = max(candidates, key=lambda c: web.as_number(c.get("success_probability")) or 0.0)
         view = _upcoming_view(best)
-        self._state.write("free_pick.json", {"picked_ts": now, "generated_ts": generated, "combo": view})
+        self._state.write("free_pick.json", {"picked_ts": now, "generated_ts": generated, "day": today, "combo": view})
         return _wrap_pick(view)

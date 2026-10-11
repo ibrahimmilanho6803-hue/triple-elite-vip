@@ -181,6 +181,28 @@ def test_le_service_worker_n_ajoute_rien_au_cache_apres_l_installation(env):
     assert "caches.delete" in source and "'tev-'" in source          # l'ancien cache est supprimé à l'activation
 
 
+def test_le_service_worker_ne_fait_pas_attendre_son_demarrage(env):
+    """Un service worker endormi met de 0,1 s à plus d'une seconde à repartir : la page ne doit pas l'attendre."""
+    source = text(env.client.get("/sw.js"))
+    # Chrome (« static routing ») : tant qu'il est arrêté, les demandes GET partent au réseau pendant qu'il démarre.
+    assert "addRoutes(" in source and "source: 'race-network-and-fetch-handler'" in source
+    assert "runningStatus: 'not-running'" in source and "requestMethod: 'GET'" in source       # jamais un envoi de formulaire
+    # Les autres navigateurs (« navigation preload ») : la page est demandée en même temps que le démarrage.
+    assert "navigationPreload" in source and ".enable()" in source and "event.preloadResponse" in source
+    # Une seule demande de la page : celle du navigateur si elle existe, sinon seulement alors celle du service worker.
+    assert source.count("fetch(event.request)") == 1
+    # Ces réglages sont facultatifs : jamais une condition de l'installation ni de l'activation.
+    assert source.count(".catch(function () {") >= 2 and "catch (error)" in source
+
+
+def test_les_fichiers_hors_connexion_sont_pris_au_cache_du_navigateur_avant_celui_du_service_worker(env):
+    # Le cache d'un service worker demande 20 à 100 ms et le style bloque l'affichage : le cache du navigateur d'abord, celui
+    # du service worker seulement quand le réseau manque (la page « hors connexion » reste mise en forme).
+    source = text(env.client.get("/sw.js"))
+    assert "fetch(request).catch(" in source and "caches.match(request, { ignoreVary: true })" in source
+    assert "cached || fetch(request)" not in source
+
+
 def test_le_nom_du_cache_change_quand_les_fichiers_mis_en_cache_changent(env, monkeypatch):
     def cache_name():
         return re.search(r'^var CACHE = "([^"]+)";$', text(env.client.get("/sw.js")), re.MULTILINE).group(1)

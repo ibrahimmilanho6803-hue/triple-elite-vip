@@ -74,7 +74,8 @@ SPORTSDB_API_KEY = os.environ.get("SPORTSDB_API_KEY") or "3"
 TARGET_ODDS = 2.50          # cote totale minimale d'un combiné
 MIN_CONFIDENCE = 65         # confiance minimale (%) pour qu'un pronostic soit retenu
 MAX_COMBOS_RETOURNES = 3    # nombre de combinés renvoyés au client
-MATCHS_PAR_CHAMPIONNAT = 3  # nombre de matchs à venir analysés par championnat
+MATCHS_PAR_CHAMPIONNAT = 3  # nombre de matchs du jour analysés par championnat (les combinés ne portent que sur les
+                            # matchs du JOUR, jour UTC, qui n'ont pas encore commencé)
 
 # Nombre de pronostics conservés par match au moment de composer les combinés
 # (les plus cotés parmi ceux qui atteignent la confiance minimale). Avec 15 matchs,
@@ -89,6 +90,11 @@ CACHE_MINUTES = 180
 # Plafond de générations réelles (donc d'appels à l'IA payante) par jour. Au-delà,
 # les derniers combinés disponibles restent servis.
 MAX_GENERATIONS_PAR_JOUR = 10
+
+# Générations que CHAQUE client peut lancer par jour (jour UTC). Seul le clic qui démarre réellement une analyse compte :
+# réafficher des combinés déjà prêts, un jour sans match ou une génération en échec ne consomment rien. Le compteur est
+# gardé en base (table generation_usage) : il survit aux redéploiements.
+CLIENT_GENERATIONS_PER_DAY = 2
 
 # Une génération « en cours » depuis plus longtemps est considérée comme perdue
 # (redémarrage du serveur...) et peut être relancée.
@@ -111,6 +117,25 @@ def parse_hour(raw):
 FREE_PICK_ENABLED = os.environ.get("FREE_PICK_ENABLED", "1").strip().lower() not in ("0", "false", "non", "no", "off")
 FREE_PICK_MAX_AGE_HOURS = 24      # une génération plus ancienne ne fournit plus de combiné gratuit
 FREE_PICK_MARGIN_MINUTES = 15     # ni un combiné dont un match commence dans moins de ce délai
+
+
+def parse_seconds(raw, default, maximum=600):
+    """Nombre entier de secondes (0 à `maximum`) lu dans une variable d'environnement ; `default` si absent ou invalide."""
+    try:
+        seconds = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return seconds if 0 <= seconds <= maximum else default
+
+
+# --- Rapidité de la barre de navigation du bas ---
+# Les pages publiques (accueil, résultats, combiné gratuit, conditions) sont identiques pour tout le monde : le navigateur
+# du visiteur peut les réutiliser pendant ce nombre de secondes (en-tête « Cache-Control: private, max-age=... »), et les
+# boutons de la barre préchargent discrètement leurs voisines. Un bouton touché dans la minute qui suit s'ouvre alors sans
+# attendre le réseau (~0,2 à 0,5 s gagnés par page sur une connexion mobile). Tout le reste (espace client, connexion,
+# paiement, API) n'est JAMAIS gardé. 0 = désactivé : plus de mémorisation ni de préchargement (PUBLIC_PAGE_CACHE_SECONDS=0
+# dans Render > Environment suffit, sans nouveau déploiement).
+PUBLIC_PAGE_CACHE_SECONDS = parse_seconds(os.environ.get("PUBLIC_PAGE_CACHE_SECONDS"), 60)
 
 # Génération automatique quotidienne (daily_generation.py), pour que le combiné gratuit et l'historique soient alimentés
 # même les jours où aucun abonné ne clique. DÉSACTIVÉE par défaut : chaque génération est un appel payant à l'IA.
@@ -191,7 +216,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.1"
+VERSION = "2.2"                # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente

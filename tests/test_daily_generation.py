@@ -8,7 +8,8 @@ import pytest
 import config
 import daily_generation
 from daily_generation import DailyGeneration
-from generation_service import FAILURE_COOLDOWN_SECONDS, GenerationService
+from generation_service import (FAILURE_COOLDOWN_SECONDS, MATCHDAY_CHECK_EVERY, MATCHDAY_RETRY_AFTER,
+                                GenerationService)
 from pipeline import GenerationError
 from site_fakes import sample_combos
 
@@ -26,12 +27,14 @@ class Clock:
 
 
 class Pipeline:
-    """Chaîne de génération simulée : instantanée, compte ses appels (chacun serait un appel payant)."""
+    """Chaîne de génération simulée : instantanée, compte ses appels (chacun serait un appel payant). Comme la vraie, elle
+    note le jour des matchs avec lesquels elle compose les combinés (build() lui donne l'horloge du test)."""
 
     def __init__(self, error=None, gate=None):
         self.calls = 0
         self.error = error
         self.gate = gate
+        self.clock = None
 
     def __call__(self, progress=None):
         self.calls += 1
@@ -39,13 +42,32 @@ class Pipeline:
             self.gate.wait(5)
         if self.error is not None:
             raise self.error
-        return {"combos": sample_combos(), "meta": {}}
+        day = datetime.fromtimestamp(self.clock(), tz=timezone.utc).strftime("%Y-%m-%d")
+        return {"combos": sample_combos(), "meta": {"day": day, "day_total": 9, "matches_total": 9}}
 
 
-def build(tmp_path, clock, pipeline=None, hour=6, **kwargs):
+class Matchday:
+    """Source des matchs du jour simulée : compte ses appels (chacun serait cinq appels réseau, jamais un appel payant)."""
+
+    def __init__(self, upcoming=9, total=None, complete=True, error=None):
+        self.upcoming, self.total, self.complete, self.error = upcoming, total, complete, error
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        total = self.upcoming if self.total is None else self.total
+        return {"day": "2026-10-08", "matches": [{"id": str(n)} for n in range(self.upcoming)], "total": total,
+                "complete": self.complete}
+
+
+def build(tmp_path, clock, pipeline=None, hour=6, matchday=None, **kwargs):
     pipeline = pipeline or Pipeline()
+    pipeline.clock = clock
     service = GenerationService(pipeline=pipeline, cache_dir=str(tmp_path / "cache"),
-                                results_dir=str(tmp_path / "results"), clock=clock)
+                                results_dir=str(tmp_path / "results"), clock=clock,
+                                matchday_source=matchday or Matchday())
     return DailyGeneration(service, hour, clock=clock, **kwargs), service, pipeline
 
 
@@ -171,6 +193,121 @@ def test_une_entree_de_cache_illisible_n_empeche_ni_ne_declenche_a_tort(tmp_path
     assert daily.tick() == "lancee"                                    # pas de date lisible : comme s'il n'y avait rien
     settle(service)
     assert pipeline.calls == 1
+
+
+# --------------------------------------------------------------------------
+# Les matchs du jour : pas de championnat, pas d'appel payant
+# --------------------------------------------------------------------------
+
+def test_une_generation_d_avant_les_matchs_du_jour_seulement_ne_compte_pas(tmp_path):
+    """Ses combinés portaient sur les prochains jours : elle ne dispense pas de composer ceux d'aujourd'hui."""
+    clock = Clock(ts(8, 12, 0))
+    daily, service, pipeline = build(tmp_path, clock, hour=6)
+    made = ts(8, 8, 0)                                                 # ce matin, mais sans « day » dans ses métadonnées
+    service._write("last_generation.json", {"generated_ts": made, "generated_at": "x", "combos": sample_combos(),
+                                            "meta": {"matches_total": 9}})
+    assert daily.tick() == "lancee"
+    settle(service)
+    assert pipeline.calls == 1
+    assert daily.tick() == "faite"                                     # la nouvelle porte le jour d'aujourd'hui
+
+
+def test_une_generation_composee_hier_ne_compte_pas_non_plus(tmp_path):
+    clock = Clock(ts(7, 23, 0))
+    daily, service, pipeline = build(tmp_path, clock, hour=0)
+    assert daily.tick() == "lancee"
+    settle(service)
+    assert daily._generated_on(datetime(2026, 10, 7).date()) is True
+    assert daily._generated_on(datetime(2026, 10, 8).date()) is False
+
+
+def test_le_constat_des_matchs_du_jour_est_fait_des_minuit_sans_attendre_l_heure_de_generation(tmp_path):
+    clock = Clock(ts(8, 0, 5))
+    daily, service, pipeline = build(tmp_path, clock, hour=6, matchday=Matchday(upcoming=0))
+    assert daily.tick() == "attente"
+    verdict = service.no_match_today()
+    assert verdict["reason"] == "none" and verdict["title"] == "Pas de championnat aujourd'hui"
+    assert pipeline.calls == 0 and service.generations_today() == 0
+
+
+def test_un_jour_sans_match_rien_ne_part_et_le_constat_n_est_pas_redemande_toutes_les_minutes(tmp_path):
+    clock = Clock(ts(8, 6, 0))
+    daily, service, pipeline = build(tmp_path, clock, hour=6, matchday=Matchday(upcoming=0))
+    outcomes = []
+    for _ in range(25):                                                # 25 minutes de vérifications
+        outcomes.append(daily.tick())
+        clock.now += 60
+    assert set(outcomes) == {"sans_match"}
+    assert pipeline.calls == 0 and service.generations_today() == 0     # jamais d'appel à l'IA
+    assert service.matchday_source.calls == 1                           # un seul constat dans la demi-heure
+
+
+def test_un_calendrier_qui_se_complete_dans_la_journee_fait_partir_la_generation(tmp_path):
+    clock = Clock(ts(8, 6, 0))
+    source = Matchday(upcoming=0)
+    daily, service, pipeline = build(tmp_path, clock, hour=6, matchday=source)
+    assert daily.tick() == "sans_match"
+    source.upcoming = 6                                                # TheSportsDB a complété les matchs du jour
+    clock.now += MATCHDAY_CHECK_EVERY + 1
+    assert daily.tick() == "lancee"
+    settle(service)
+    assert pipeline.calls == 1 and service.no_match_today() is None
+
+
+def test_un_jour_avec_des_matchs_le_constat_n_est_pas_refait(tmp_path):
+    clock = Clock(ts(8, 0, 10))
+    daily, service, pipeline = build(tmp_path, clock, hour=6, matchday=Matchday(upcoming=7))
+    assert daily.tick() == "attente"
+    for hour in (3, 5):
+        clock.now = ts(8, hour, 30)
+        assert daily.tick() == "attente"
+    assert service.matchday_source.calls == 1 and service.no_match_today() is None
+
+
+def test_une_reponse_incomplete_ne_fait_pas_dire_pas_de_championnat(tmp_path):
+    """Un championnat n'a pas répondu : on ne sait pas, on ne conclut rien et on réessaie un peu plus tard."""
+    clock = Clock(ts(8, 0, 10))
+    source = Matchday(upcoming=0, complete=False)
+    daily, service, pipeline = build(tmp_path, clock, hour=6, matchday=source)
+    assert daily.tick() == "attente"
+    assert service.no_match_today() is None and source.calls == 1
+    clock.now += 60
+    daily.tick()
+    assert source.calls == 1                                           # pas de nouvel essai à chaque minute
+    clock.now += MATCHDAY_RETRY_AFTER
+    daily.tick()
+    assert source.calls == 2 and service.no_match_today() is None
+
+
+def test_un_championnat_muet_n_empeche_pas_de_constater_qu_il_y_a_des_matchs(tmp_path):
+    """Des matchs aujourd'hui ailleurs suffisent : un championnat de plus ne ferait qu'en ajouter."""
+    clock = Clock(ts(8, 0, 10))
+    daily, service, _ = build(tmp_path, clock, hour=6, matchday=Matchday(upcoming=5, complete=False))
+    daily.tick()
+    assert service.no_match_today() is None
+    assert service._matchday()["upcoming"] == 5
+
+
+def test_la_panne_de_thesportsdb_ne_casse_pas_la_boucle(tmp_path, caplog):
+    clock = Clock(ts(8, 7, 0))
+    daily, service, pipeline = build(tmp_path, clock, hour=6, matchday=Matchday(error=RuntimeError("réseau coupé")))
+    with caplog.at_level(logging.WARNING, logger="generation_service"):
+        assert daily.tick() == "lancee"                                # le constat échoue, la génération suit son cours
+    settle(service)
+    assert pipeline.calls == 1 and "vérification impossible" in caplog.text
+
+
+def test_le_constat_inattendu_qui_leve_ne_casse_pas_le_tick(tmp_path, monkeypatch, caplog):
+    daily, service, pipeline = build(tmp_path, Clock(ts(8, 7, 0)), hour=6)
+
+    def broken():
+        raise ValueError("bug")
+
+    monkeypatch.setattr(service, "refresh_matchday", broken)
+    with caplog.at_level(logging.ERROR, logger="daily_generation"):
+        assert daily.tick() == "lancee"
+    settle(service)
+    assert "constat des matchs du jour en échec" in caplog.text
 
 
 # --------------------------------------------------------------------------

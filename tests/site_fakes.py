@@ -1,4 +1,5 @@
 """Faux services et données de démonstration partagés par les tests du site (Flask et navigateur)."""
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -16,9 +17,40 @@ class FakeLicenses:
         self.records = {EMAIL: {"key": KEY, "expires": license_manager._utcnow() + timedelta(days=23, hours=5), "active": True}}
         self.down = False
         self.calls = 0
+        # Générations lancées par chaque client, par jour : {(e-mail, « AAAA-MM-JJ »): n}, comme la table generation_usage.
+        self.usage = {}
+        self.usage_down = False                      # le compteur seul est injoignable (le reste de la base répond)
+        self._usage_lock = threading.Lock()
 
     def _record(self, email):
         return self.records.get(license_manager.normalize_email(email))
+
+    # Même contrat que LicenseManager.reserve_generation / release_generation / generations_used.
+    def reserve_generation(self, email, day, limit):
+        if self.usage_down:
+            raise RuntimeError("base injoignable")
+        key = (license_manager.normalize_email(email), day)
+        with self._usage_lock:
+            used = self.usage.get(key, 0)
+            if limit < 1 or used >= limit:
+                return False, used
+            self.usage[key] = used + 1
+            return True, used + 1
+
+    def release_generation(self, email, day):
+        if self.usage_down:
+            return False
+        key = (license_manager.normalize_email(email), day)
+        with self._usage_lock:
+            if self.usage.get(key, 0) > 0:
+                self.usage[key] -= 1
+        return True
+
+    def generations_used(self, email, day):
+        if self.usage_down:
+            raise RuntimeError("base injoignable")
+        with self._usage_lock:
+            return self.usage.get((license_manager.normalize_email(email), day), 0)
 
     def get_status(self, email):
         self.calls += 1
@@ -68,10 +100,12 @@ def leg(home, away, league, code, odds, conf, kickoff, source="estimee", match_i
             "probability": float(conf), "estimated_odds": odds, "odds_source": source}
 
 
-def sample_combos(now=None):
+def sample_combos(now=None, days=(2, 3)):
+    """Trois combinés de démonstration. `days` : dans combien de jours ont lieu les deux séries de matchs ((0, 0) : tous
+    dans les heures qui suivent `now`, comme ceux de la chaîne depuis « matchs du jour seulement »)."""
     now = now or datetime.now(timezone.utc)
-    sat = now + timedelta(days=2, hours=3)
-    sun = now + timedelta(days=3, hours=1)
+    sat = now + timedelta(days=days[0], hours=3)
+    sun = now + timedelta(days=days[1], hours=1)
     combos = [
         {"predictions": [
             leg("Arsenal", "Brighton", "Premier League", "1X", 1.33, 70, sat, match_id=1),
@@ -137,7 +171,7 @@ def make_pipeline(delay=0.25, combos=None, error=None):
 
     def pipeline(progress=None):
         state["calls"] += 1
-        steps = [("collecte", 5, "Collecte des derniers résultats…"), ("matchs", 15, "Recherche des prochains matchs…"),
+        steps = [("matchs", 5, "Recherche des matchs du jour…"), ("collecte", 12, "Collecte des derniers résultats…"),
                  ("analyse", 40, "Analyse des matchs par l'IA (1/5)…"), ("analyse", 80, "Analyse des matchs par l'IA (5/5)…"),
                  ("pronostics", 82, "Calcul des pronostics et des cotes…"), ("composition", 92, "Composition des combinés…")]
         for step in steps:
@@ -147,7 +181,8 @@ def make_pipeline(delay=0.25, combos=None, error=None):
         if error:
             raise error
         return {"combos": combos if combos is not None else sample_combos(),
-                "meta": {"matches_total": 15, "matches_analyzed": 15, "leagues": ["a", "b", "c", "d", "e"],
+                "meta": {"day": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "day_total": 15,
+                         "matches_total": 15, "matches_analyzed": 15, "leagues": ["a", "b", "c", "d", "e"],
                          "real_odds_legs": 3, "total_legs": 9, "duration_seconds": 18.2}}
 
     pipeline.state = state

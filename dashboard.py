@@ -43,6 +43,24 @@ MSG_RESULTS_UNAVAILABLE = "Les résultats sont momentanément indisponibles. Ré
 MSG_HISTORY_ERROR = "Impossible de charger l'historique pour le moment. Réessaie dans un instant."
 
 
+def quota_message(limit):
+    """Ce que voit un client qui a utilisé toutes ses générations du jour."""
+    if limit == 1:
+        return "Tu as utilisé ta génération d'aujourd'hui. Reviens demain pour en lancer une nouvelle."
+    return f"Tu as utilisé tes {limit} générations d'aujourd'hui. Reviens demain pour en lancer de nouvelles."
+
+
+def quota_view(used, limit):
+    """Les générations d'un client aujourd'hui, telles que le navigateur les reçoit : {"limit", "used", "left"}."""
+    used = max(0, int(used))
+    return {"limit": limit, "used": used, "left": max(0, limit - used)}
+
+
+def quota_state(used, limit):
+    """Réponse « plus de génération aujourd'hui » : le navigateur affiche le message à la place du bouton."""
+    return {"state": "quota", "message": quota_message(limit), "quota": quota_view(used, limit)}
+
+
 def renew_link(email=None):
     """Adresse de la page de paiement ; l'e-mail du client y est prérempli pour qu'un renouvellement
     ne parte pas, par faute de frappe, sur une autre adresse (donc une autre licence)."""
@@ -142,9 +160,20 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
             log.exception("résultats publics indisponibles")
             return None
 
+    def kept_briefly(page):
+        """Page publique réussie : la même pour tout le monde (aucun cookie, aucune donnée du visiteur), donc le navigateur peut
+        la réutiliser PUBLIC_PAGE_CACHE_SECONDS secondes. « private » : jamais gardée par un intermédiaire. Les barres de bouton
+        la préchargent (static/js/tabbar.js) : un bouton touché dans la minute s'ouvre sans attendre le réseau. Toute autre
+        page, et toute erreur, reste « no-store » (web_common.install_security)."""
+        response = app.make_response(page)
+        seconds = config.PUBLIC_PAGE_CACHE_SECONDS
+        if seconds > 0 and response.status_code == 200:
+            response.headers["Cache-Control"] = f"private, max-age={seconds}"
+        return response
+
     @app.get("/")
     def accueil():
-        return render_template("accueil.html", proof=public_results())
+        return kept_briefly(render_template("accueil.html", proof=public_results()))
 
     @app.get("/resultats")
     def resultats():
@@ -153,7 +182,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
             response = app.make_response(web.error_response(503, message=MSG_RESULTS_UNAVAILABLE))
             response.headers["Retry-After"] = "300"
             return response
-        return render_template("resultats.html", r=results)
+        return kept_briefly(render_template("resultats.html", r=results))
 
     @app.get("/gratuit")
     def gratuit():
@@ -165,7 +194,9 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
             log.exception("combiné gratuit indisponible")
             pick = None
         links = share_links(pick, f"{config.SITE_URL}/gratuit") if pick else None
-        return render_template("gratuit.html", pick=pick, share=links)
+        # Sans combiné : pas de championnat aujourd'hui (ou trop peu de matchs) ou simplement pas encore d'analyse.
+        no_match = None if pick else showcase.no_match_today()
+        return kept_briefly(render_template("gratuit.html", pick=pick, share=links, no_match=no_match))
 
     @app.get("/sitemap.xml")
     def sitemap():
@@ -177,7 +208,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
 
     @app.get("/conditions")
     def conditions():
-        return render_template("conditions.html")
+        return kept_briefly(render_template("conditions.html"))
 
     @app.get(pwa.START_URL)
     def lancement():
@@ -264,20 +295,82 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
         days_left, days = web.describe_remaining(expires)
         return render_template("dashboard.html", expires_label=expires.strftime("%d/%m/%Y"),
                                days_left=days_left, renew_soon=days <= 7,
-                               renew_url=renew_link(session.get("email")))
+                               renew_url=renew_link(session.get("email")),
+                               generations_per_day=config.CLIENT_GENERATIONS_PER_DAY)
+
+    # ------------------------------------------------------------------
+    # Générations : chaque client en a CLIENT_GENERATIONS_PER_DAY par jour (jour UTC). Seul le clic qui démarre vraiment
+    # une analyse en consomme une ; afficher des combinés déjà prêts, rejoindre un travail en cours, un jour sans match
+    # ou une analyse qui n'aboutit pas ne coûtent rien au client.
+    # ------------------------------------------------------------------
+
+    def quota_for(email):
+        """Les générations du client aujourd'hui ({"limit", "used", "left"}), ou None si le compteur est illisible : on ne
+        bloque alors personne (le plafond du jour, commun à tous, borne de toute façon la dépense)."""
+        try:
+            used = lm.generations_used(email, service.today())
+        except Exception:
+            log.exception("compteur de générations illisible")
+            return None
+        return quota_view(used, config.CLIENT_GENERATIONS_PER_DAY)
+
+    def with_quota(state, email):
+        """Ajoute le compteur du client aux états où il sert à l'affichage (le bouton est visible)."""
+        if state.get("state") in ("idle", "error"):
+            quota = quota_for(email)
+            if quota is not None:
+                return {**state, "quota": quota}
+        return state
 
     @app.post("/api/generate")
     @login_required
     @ajax_only
     def api_generate():
-        state = service.request_generation()
-        log.info("génération demandée par %s : %s", web.mask_email(session.get("email")), state.get("state"))
-        return jsonify(state)
+        email = session.get("email")
+        who = web.mask_email(email)
+        current = service.status()
+        if current["state"] != "idle":
+            # Combinés prêts, travail en cours, pause après un échec, pas de championnat aujourd'hui : rien à compter.
+            log.info("génération demandée par %s : %s", who, current["state"])
+            return jsonify(with_quota(current, email))
+
+        day, limit = service.today(), config.CLIENT_GENERATIONS_PER_DAY
+        reserved, used = False, None
+        try:
+            allowed, used = lm.reserve_generation(email, day, limit)
+            reserved = allowed
+        except Exception:
+            log.exception("compteur de générations indisponible : analyse autorisée sans être comptée")
+            allowed = True
+        if not allowed:
+            current = service.status()                # entre-temps, un autre clic a peut-être déjà tout réglé
+            if current["state"] != "idle":
+                return jsonify(with_quota(current, email))
+            log.info("génération refusée à %s : %d sur %d utilisées aujourd'hui", who, used, limit)
+            return jsonify(quota_state(used, limit))
+
+        # `refund` : rend ce clic si l'analyse qu'il lance n'aboutit à aucun combiné (panne, pas de match aujourd'hui).
+        refund = (lambda: lm.release_generation(email, day)) if reserved else None
+        response = service.request_generation(refund=refund)
+        if reserved and not response.get("started"):
+            lm.release_generation(email, day)         # ce clic n'a rien démarré (travail déjà lancé par un autre, plafond...)
+            used -= 1
+        if used is not None and response.get("state") != "done":
+            response["quota"] = quota_view(used, limit)
+        log.info("génération demandée par %s : %s%s", who, response.get("state"), " (lancée)" if response.get("started") else "")
+        return jsonify(response)
 
     @app.get("/api/generate/status")
     @login_required
     def api_generate_status():
-        return jsonify(service.status())
+        state = service.status()
+        if state["state"] in ("idle", "error"):
+            quota = quota_for(session.get("email"))
+            if quota is not None:
+                if state["state"] == "idle" and quota["left"] <= 0:
+                    return jsonify(quota_state(quota["used"], quota["limit"]))
+                state = {**state, "quota": quota}
+        return jsonify(state)
 
     @app.get("/api/history")
     @login_required

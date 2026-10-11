@@ -17,3 +17,18 @@ for var in ("ODDS_API_KEY", "ANTHROPIC_API_KEY", "DATABASE_URL", "PAYDUNYA_MASTE
             "EMAIL_SENDER", "BREVO_API_KEY", "SECRET_KEY", "SMTP_HOST", "SMTP_PORT"):
     os.environ.pop(var, None)
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _aucun_appel_a_thesportsdb(monkeypatch):
+    """Aucun test n'interroge TheSportsDB. Un GenerationService créé sans source de matchs injectée (matchday_source) ne
+    trouve rien, au lieu d'aller sur le réseau : refresh_matchday le prend pour une panne et n'en conclut rien."""
+    import generation_service
+
+    def refuse():
+        raise RuntimeError("accès réseau interdit pendant les tests")
+
+    monkeypatch.setattr(generation_service.GenerationService, "_real_matchday", staticmethod(refuse))

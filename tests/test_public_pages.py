@@ -45,11 +45,14 @@ def site(tmp_path):
     return s
 
 
-def publish_generation(site, combos=None, age=timedelta(hours=1)):
-    """Écrit une génération réussie dans le cache, comme le ferait un abonné qui clique sur « Générer »."""
+def publish_generation(site, combos=None, age=timedelta(hours=1), day=None):
+    """Écrit une génération réussie dans le cache, comme le ferait un abonné qui clique sur « Générer ». `day` : le jour des
+    matchs avec lesquels elle est composée (aujourd'hui, UTC, par défaut)."""
     made = datetime.now(timezone.utc) - age
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     site.service._write("last_generation.json", {"generated_ts": made.timestamp(), "generated_at": made.isoformat(),
-                                                 "combos": combos if combos is not None else sample_combos(), "meta": {}})
+                                                 "combos": combos if combos is not None else sample_combos(),
+                                                 "meta": {"day": day or today, "matches_total": 9}})
 
 
 def raw(response):
@@ -107,7 +110,8 @@ def tabbar(page):
     nav = re.search(r'<nav class="tabbar".*?</nav>', page, re.S)
     assert nav, "pas de barre du bas"
     return [(htmllib.unescape(label), htmllib.unescape(href), bool(current)) for href, current, label in re.findall(
-        r'<a class="tabbar__link" href="([^"]+)"( aria-current="page")?>.*?<span class="tabbar__label">([^<]+)</span>',
+        r'<a class="tabbar__link" href="([^"]+)" data-tab="\w+"( aria-current="page")?(?: data-prefetch)?>.*?'
+        r'<span class="tabbar__label">([^<]+)</span>',
         nav.group(0), re.S)]
 
 
@@ -381,6 +385,81 @@ def test_gratuit_disparait_apres_un_jour_ou_quand_les_matchs_ont_commence(site):
         combo["predictions"][0]["kickoff"] = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     publish_generation(site, started)
     assert "pas encore prêt" in visible(site.client.get("/gratuit"))
+
+
+def write_verdict(site, reason, day=None, total=0, upcoming=0):
+    """Le constat des matchs du jour tel que le service l'enregistre (matchday.json)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    site.service._write("matchday.json", {"day": day or today, "total": total, "upcoming": upcoming, "reason": reason,
+                                          "checked_ts": datetime.now(timezone.utc).timestamp()})
+
+
+def test_gratuit_un_jour_sans_championnat_repond_pas_de_championnat_aujourd_hui(site):
+    write_verdict(site, "none")
+    response = site.client.get("/gratuit")
+    page, text = raw(response), visible(response)
+    assert response.status_code == 200
+    assert "Pas de championnat aujourd’hui" in text                                  # apostrophe typographique, comme le reste
+    assert 'data-no-match="none"' in page and "pas encore prêt" not in text
+    assert "Voir les résultats" in text and "wa.me" not in page and "t.me" not in page   # rien à partager
+    assert "Tu veux les autres combinés" not in text and "À jouer avant le premier match" not in text
+    assert "les jours de match" in text                                              # le chapeau explique, sans promettre de combiné
+
+
+def test_gratuit_un_jour_sans_championnat_aucun_combine_meme_si_une_ancienne_generation_existe(site):
+    """Générée hier, ou avant « matchs du jour seulement » : ses combinés portaient sur d'autres jours."""
+    publish_generation(site, day="2000-01-01")
+    write_verdict(site, "none")
+    page = visible(site.client.get("/gratuit"))
+    assert "Pas de championnat aujourd’hui" in page and "Arsenal" not in page
+    legacy = {"generated_ts": datetime.now(timezone.utc).timestamp() - 3600, "generated_at": "x",
+              "combos": sample_combos(), "meta": {}}
+    site.service._write("last_generation.json", legacy)
+    page = visible(site.client.get("/gratuit"))
+    assert "Pas de championnat aujourd’hui" in page and "Arsenal" not in page
+
+
+def test_gratuit_messages_selon_le_constat(site):
+    for reason, title in (("none", "Pas de championnat aujourd’hui"),
+                          ("started", "Les matchs d’aujourd’hui ont déjà commencé"),
+                          ("few", "Trop peu de matchs aujourd’hui")):
+        write_verdict(site, reason, total=4, upcoming=1)
+        page = visible(site.client.get("/gratuit"))
+        assert title in page and "pas encore prêt" not in page, reason
+        assert "Reviens demain" in page, reason
+
+
+def test_gratuit_le_combine_du_jour_reste_visible_quand_il_ne_reste_plus_assez_de_matchs(site):
+    """Le matin, une génération a donné un combiné pour ce soir ; l'après-midi, trop peu de matchs restent pour en composer
+    d'autres. Le combiné offert, lui, est toujours valable : il ne disparaît pas derrière le message."""
+    publish_generation(site)
+    assert "Arsenal" in visible(site.client.get("/gratuit"))
+    write_verdict(site, "few", total=8, upcoming=2)
+    page = visible(site.client.get("/gratuit"))
+    assert "Arsenal" in page and "Trop peu de matchs" not in page
+
+
+def test_gratuit_un_constat_d_hier_ne_dit_rien_d_aujourd_hui(site):
+    write_verdict(site, "none", day="2000-01-01")
+    page = visible(site.client.get("/gratuit"))
+    assert "Le combiné gratuit n’est pas encore prêt" in page and "Pas de championnat" not in page
+
+
+def test_gratuit_un_jour_avec_des_matchs_mais_sans_analyse_reste_pas_encore_pret(site):
+    write_verdict(site, None, total=9, upcoming=9)                                    # constat : de quoi composer, rien généré
+    page = visible(site.client.get("/gratuit"))
+    assert "Le combiné gratuit n’est pas encore prêt" in page and "Pas de championnat" not in page
+
+
+def test_gratuit_un_jour_sans_championnat_ne_declenche_ni_appel_payant_ni_appel_reseau(site):
+    write_verdict(site, "none")
+    calls = []
+    site.service.matchday_source = lambda: calls.append(1)
+    for _ in range(25):
+        for path in ("/gratuit", "/resultats", "/"):
+            site.client.get(path)
+    assert site.pipeline.state["calls"] == 0 and calls == []
+    assert site.service.generations_today() == 0
 
 
 def test_gratuit_une_panne_ne_casse_pas_la_page(site, monkeypatch):

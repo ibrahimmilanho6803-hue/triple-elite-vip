@@ -427,6 +427,12 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
             "free_url": f"{base}/gratuit",
             "free_pick_enabled": bool(config.FREE_PICK_ENABLED),
             "pwa": pwa,
+            # L'autre site : chaque site prépare la connexion vers l'autre (<link rel="preconnect">), pour que le bouton
+            # « Abonnement VIP » (ou ceux du site client, depuis le paiement) n'attende pas DNS + TLS au moment du toucher.
+            # Le site client est celui dont les liens sont relatifs (base vide).
+            "sibling_origin": config.SITE_URL if base else config.PAIEMENT_URL,
+            # Les boutons des pages publiques de ce site sont préchargés (voir PUBLIC_PAGE_CACHE_SECONDS dans config.py).
+            "prefetch_tabs": config.PUBLIC_PAGE_CACHE_SECONDS > 0,
             "site_url": config.SITE_URL,
             "paiement_url": config.PAIEMENT_URL,
             "seller_email": config.SELLER_EMAIL,

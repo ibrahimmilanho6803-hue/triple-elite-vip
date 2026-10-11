@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -110,16 +110,100 @@ def test_une_erreur_reseau_ne_bloque_pas_les_autres_championnats(db, monkeypatch
     assert summary["Premier League"] == 0 and summary["La Liga"] >= 1
 
 
-def test_matchs_a_venir(db, monkeypatch):
-    now = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
-    future = [event(i, f"H{i}", f"A{i}", None, None, status="NS", strTimestamp=f"2026-10-{11 + i}T14:00:00",
-                    dateEvent=f"2026-10-{11 + i}", strTime="14:00:00") for i in range(1, 6)]
-    future.insert(1, event(90, "Postponed", "FC", None, None, status="PST", strTimestamp="2026-10-12T14:00:00"))
-    future.insert(0, event(91, "Already", "Started", None, None, status="NS", strTimestamp="2026-10-10T11:00:00"))
-    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": future}))
+def kickoff_event(i, day, hour, minute=0, status="NS", **extra):
+    """Un match à venir de TheSportsDB (coup d'envoi à `hour` h UTC, le `day`)."""
+    return event(i, f"H{i}", f"A{i}", None, None, status=status, day=day,
+                 strTimestamp=f"{day}T{hour:02d}:{minute:02d}:00", strTime=f"{hour:02d}:{minute:02d}:00", **extra)
+
+
+NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
+
+
+def test_matchs_du_jour_seulement(db, monkeypatch):
+    events = [kickoff_event(91, "2026-10-10", 11),                                            # a commencé : compté, pas proposé
+              kickoff_event(90, "2026-10-10", 15, status="PST"),                              # reporté : ni compté ni proposé
+              kickoff_event(92, "2026-10-10", 14), kickoff_event(93, "2026-10-10", 16, 30),
+              kickoff_event(94, "2026-10-10", 18, 30), kickoff_event(95, "2026-10-10", 20, 45),
+              kickoff_event(96, "2026-10-11", 14), kickoff_event(97, "2026-10-09", 20),       # demain et hier : jamais proposés
+              kickoff_event(92, "2026-10-10", 14)]                                            # le même match deux fois
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": events}))
     monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
-    matches = DataCollector().get_upcoming_matches(now=now)
-    assert [m["id"] for m in matches] == ["1", "2", "3"]       # 3 par championnat, sans reporté ni déjà commencé
-    assert matches[0]["kickoff"] == "2026-10-12T14:00:00+00:00"
-    assert matches[0]["league"] == "Premier League" and matches[0]["home_team"] == "H1"
-    assert matches[0]["date"] == "2026-10-12 14:00:00"
+    matchday = DataCollector().get_matchday(now=NOW)
+    assert matchday["day"] == "2026-10-10" and matchday["complete"] is True
+    assert [m["id"] for m in matchday["matches"]] == ["92", "93", "94"]      # 3 par championnat au plus
+    assert matchday["total"] == 5                                            # 91, 92, 93, 94, 95 : les matchs du jour vus
+    first = matchday["matches"][0]
+    assert first["kickoff"] == "2026-10-10T14:00:00+00:00" and first["date"] == "2026-10-10 14:00:00"
+    assert first["league"] == "Premier League" and first["home_team"] == "H92" and first["away_team"] == "A92"
+
+
+def test_get_upcoming_matches_ne_rend_que_les_matchs_du_jour_a_venir(db, monkeypatch):
+    events = [kickoff_event(1, "2026-10-10", 11), kickoff_event(2, "2026-10-10", 14), kickoff_event(3, "2026-10-12", 14)]
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": events}))
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    assert [m["id"] for m in DataCollector().get_upcoming_matches(now=NOW)] == ["2"]
+
+
+def test_un_jour_sans_match_rien_ne_vient_d_un_autre_jour(db, monkeypatch):
+    """Les prochains matchs sont dans trois jours (trêve internationale...) : aucun n'est proposé aujourd'hui."""
+    events = [kickoff_event(i, f"2026-10-{12 + i}", 14) for i in range(1, 6)]
+    events.insert(1, kickoff_event(90, "2026-10-13", 14, status="PST"))
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": events}))
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    matchday = DataCollector().get_matchday(now=NOW)
+    assert matchday == {"day": "2026-10-10", "matches": [], "total": 0, "complete": True}
+
+
+def test_un_match_sans_heure_compte_pour_son_jour(db, monkeypatch):
+    today = event(1, "H1", "A1", None, None, status="NS", day="2026-10-10")                  # ni horodatage ni heure
+    tomorrow = event(2, "H2", "A2", None, None, status="NS", day="2026-10-11")
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": [today, tomorrow]}))
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    matchday = DataCollector().get_matchday(now=NOW)
+    assert [m["id"] for m in matchday["matches"]] == ["1"] and matchday["matches"][0]["kickoff"] is None
+    assert matchday["total"] == 1
+    for broken in ("", "demain", None):                                                      # date illisible : jamais aujourd'hui
+        odd = event(3, "H3", "A3", None, None, status="NS", day=broken)
+        monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": [odd]}))
+        assert DataCollector().get_matchday(now=NOW)["total"] == 0
+
+
+def test_le_jour_est_celui_d_utc_meme_si_l_horloge_donnee_ne_l_est_pas(db, monkeypatch):
+    late = kickoff_event(1, "2026-10-10", 23, 30)
+    after_midnight = kickoff_event(2, "2026-10-11", 0, 30)
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": [late, after_midnight]}))
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    paris_after_midnight = datetime(2026, 10, 11, 0, 30, tzinfo=timezone(timedelta(hours=2)))   # 22 h 30 UTC, le 10
+    matchday = DataCollector().get_matchday(now=paris_after_midnight)
+    assert matchday["day"] == "2026-10-10" and [m["id"] for m in matchday["matches"]] == ["1"]
+
+
+def test_sans_horloge_le_jour_est_celui_d_aujourd_hui_en_utc(db, monkeypatch):
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": []}))
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    before = datetime.now(timezone.utc).date().isoformat()
+    day = DataCollector().get_matchday()["day"]
+    assert day in (before, datetime.now(timezone.utc).date().isoformat())
+
+
+def test_un_championnat_muet_rend_le_constat_incomplet_sans_perdre_les_autres(db, monkeypatch):
+    web = FakeWeb({"id=4328": OSError("réseau"), "id=4335": [kickoff_event(1, "2026-10-10", 14)]})
+    monkeypatch.setattr(data_collector.requests, "get", web)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335"})
+    matchday = DataCollector().get_matchday(now=NOW)
+    assert matchday["complete"] is False                                     # « aucun match » ne prouverait alors rien
+    assert [m["id"] for m in matchday["matches"]] == ["1"] and matchday["matches"][0]["league"] == "La Liga"
+
+
+def test_un_seul_appel_par_championnat(db, monkeypatch):
+    web = FakeWeb({"eventsnextleague": [kickoff_event(1, "2026-10-10", 14)]})
+    monkeypatch.setattr(data_collector.requests, "get", web)
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328", "La Liga": "4335", "Serie A": "4332"})
+    DataCollector().get_matchday(now=NOW)
+    assert len(web.calls) == 3 and all("eventsnextleague.php?id=" in url for url in web.calls)
+
+
+def test_event_day():
+    assert data_collector.event_day({"dateEvent": "2026-10-10"}).isoformat() == "2026-10-10"
+    for odd in ({}, {"dateEvent": None}, {"dateEvent": ""}, {"dateEvent": "10/10/2026"}):
+        assert data_collector.event_day(odd) is None

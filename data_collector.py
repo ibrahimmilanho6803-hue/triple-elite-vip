@@ -57,6 +57,14 @@ def event_start(event):
     return moment.astimezone(timezone.utc)
 
 
+def event_day(event):
+    """Jour (date) d'un évènement TheSportsDB sans heure de coup d'envoi lisible, d'après « dateEvent », ou None."""
+    try:
+        return datetime.strptime(str(event.get("dateEvent") or ""), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
 class DataCollector:
     REQUEST_TIMEOUT = 10  # secondes
 
@@ -245,10 +253,17 @@ class DataCollector:
     # Matchs à venir
     # ------------------------------------------------------------------
 
-    def get_upcoming_matches(self, now=None):
-        """Les prochains matchs de chaque championnat (MATCHS_PAR_CHAMPIONNAT par
-        championnat), hors matchs reportés/annulés et hors matchs déjà commencés."""
-        now = now or datetime.now(timezone.utc)
+    def get_matchday(self, now=None):
+        """Les matchs du JOUR (jour UTC) des championnats suivis. Un seul appel par championnat.
+
+        Renvoie {"day": "AAAA-MM-JJ", "matches": [...], "total": n, "complete": bool} :
+          - matches : ceux qui n'ont pas encore commencé (MATCHS_PAR_CHAMPIONNAT par championnat au plus, hors matchs
+            reportés ou annulés), au format attendu par la chaîne de génération ;
+          - total : tous les matchs du jour vus, commencés ou non (hors reportés ou annulés) ;
+          - complete : tous les championnats ont répondu. Quand c'est faux, « aucun match » ne prouve rien : TheSportsDB
+            était peut-être en panne, il ne faut pas en conclure qu'il n'y a pas de football aujourd'hui."""
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        today = now.date()
         urls = {name: f"{self.base_url}/eventsnextleague.php?id={league_id}"
                 for name, league_id in self.leagues.items()}
         fetched = self._fetch_many(urls)
@@ -256,17 +271,19 @@ class DataCollector:
         for league_name in self.leagues:                 # ordre stable des championnats
             count = 0
             for event in fetched.get(league_name) or []:
-                if count >= config.MATCHS_PAR_CHAMPIONNAT:
-                    break
                 match_id = event.get("idEvent")
                 if match_id in (None, "") or match_id in seen:
                     continue
                 if (event.get("strStatus") or "").strip().upper() in CALLED_OFF_STATUSES:
                     continue
                 start = event_start(event)
-                if start is not None and start <= now:
-                    continue
+                if (start.date() if start else event_day(event)) != today:
+                    continue                             # pas aujourd'hui (hier, demain...) : jamais proposé
                 seen.add(match_id)
+                if start is not None and start <= now:
+                    continue                             # déjà commencé : compté dans « total » seulement
+                if count >= config.MATCHS_PAR_CHAMPIONNAT:
+                    continue
                 upcoming.append({
                     "id": match_id,
                     "date": f"{event.get('dateEvent', '')} {event.get('strTime') or ''}".strip(),
@@ -276,4 +293,9 @@ class DataCollector:
                     "league": league_name,
                 })
                 count += 1
-        return upcoming
+        return {"day": today.isoformat(), "matches": upcoming, "total": len(seen),
+                "complete": all(events is not None for events in fetched.values())}
+
+    def get_upcoming_matches(self, now=None):
+        """Les matchs du jour qui n'ont pas encore commencé (voir get_matchday)."""
+        return self.get_matchday(now)["matches"]

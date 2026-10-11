@@ -1,16 +1,18 @@
 import json
 import logging
 import re
+import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 import config
 import dashboard
 import license_manager
-from generation_service import GenerationService
-from site_fakes import EMAIL, KEY, FakeLicenses, make_pipeline, sample_history
+from generation_service import FAILURE_COOLDOWN_SECONDS, GenerationService
+from pipeline import GenerationError, NoMatchToday
+from site_fakes import EMAIL, KEY, FakeLicenses, make_pipeline, sample_combos, sample_history
 
 AJAX = {"X-Requested-With": "fetch"}
 
@@ -95,8 +97,11 @@ def test_accueil_cartes_activees_les_mentions_de_carte_reviennent(env, monkeypat
     assert "pas encore disponible" not in page and "nous te préviendrons" not in page
 
 
+PUBLIC_PAGES = ("/", "/resultats", "/gratuit", "/conditions")          # identiques pour tous : le navigateur peut les garder un instant
+
+
 def test_en_tetes_de_securite(env):
-    for path in ("/", "/login", "/resultats", "/gratuit", "/api/generate/status", "/nope"):
+    for path in ("/", "/login", "/resultats", "/gratuit", "/conditions", "/api/generate/status", "/nope"):
         headers = env.client.get(path).headers
         csp = headers["Content-Security-Policy"]
         assert "script-src 'self'" in csp and "style-src 'self'" in csp and "'unsafe-inline'" not in csp
@@ -104,10 +109,102 @@ def test_en_tetes_de_securite(env):
         assert headers["X-Content-Type-Options"] == "nosniff"
         assert headers["X-Frame-Options"] == "DENY"
         assert headers["Referrer-Policy"]
-        assert headers["Cache-Control"] == "no-store"
+        # Aucune page n'est gardée, sauf les quatre pages publiques (voir les tests de mémorisation ci-dessous).
+        expected = f"private, max-age={config.PUBLIC_PAGE_CACHE_SECONDS}" if path in PUBLIC_PAGES else "no-store"
+        assert headers["Cache-Control"] == expected, path
     static = env.client.get("/static/css/site.css")
     assert static.status_code == 200 and "no-store" not in static.headers.get("Cache-Control", "")
     assert env.client.get("/static/favicon.svg").status_code == 200
+
+
+# --------------------------------------------------------------------------
+# Pages publiques gardées une minute par le navigateur (barre de navigation rapide)
+# --------------------------------------------------------------------------
+
+def test_les_pages_publiques_sont_gardees_une_minute_par_le_navigateur_et_par_lui_seul(env):
+    assert config.PUBLIC_PAGE_CACHE_SECONDS == 60
+    for path in PUBLIC_PAGES:
+        response = env.client.get(path)
+        assert response.status_code == 200, path
+        # « private » : ni Cloudflare ni aucun intermédiaire ne la garde ; seul le navigateur du visiteur la réutilise.
+        assert response.headers["Cache-Control"] == "private, max-age=60", path
+        # Rien qui varie selon le visiteur : ni cookie posé, ni « Vary: Cookie » (qui rendrait la copie inutilisable).
+        assert "Set-Cookie" not in response.headers and "Vary" not in response.headers, path
+
+
+def test_une_page_publique_est_identique_pour_un_visiteur_et_pour_un_client_connecte(env):
+    # C'est ce qui rend sa mémorisation sans risque : aucune donnée de la personne ne s'y trouve.
+    visitor = {path: env.client.get(path).get_data() for path in PUBLIC_PAGES}
+    assert login(env.client).status_code == 303
+    for path, html in visitor.items():
+        assert env.client.get(path).get_data() == html, path
+
+
+def test_les_autres_pages_et_les_erreurs_ne_sont_jamais_gardees(env):
+    assert env.client.get("/login").headers["Cache-Control"] == "no-store"          # (visiteur : la page de connexion s'affiche)
+    assert env.client.get("/nope").headers["Cache-Control"] == "no-store"
+    assert env.client.get("/health").headers["Cache-Control"] == "no-store"
+    login(env.client)
+    for path in ("/app", "/debut", "/api/history", "/api/generate/status", "/logout", "/login", "/hors-ligne"):
+        response = env.client.get(path)
+        assert response.headers["Cache-Control"] == "no-store", (path, response.status_code)
+
+
+def test_une_page_publique_en_panne_n_est_jamais_gardee(env, monkeypatch):
+    env.history_error = RuntimeError("historique illisible")
+    failed = env.client.get("/resultats")
+    assert failed.status_code == 503 and failed.headers["Retry-After"] == "300"
+    assert failed.headers["Cache-Control"] == "no-store"                              # la panne ne reste pas dans le navigateur
+    monkeypatch.setattr(config, "FREE_PICK_ENABLED", False)
+    closed = env.client.get("/gratuit")
+    assert closed.status_code == 404 and closed.headers["Cache-Control"] == "no-store"
+
+
+def test_la_duree_de_garde_se_regle_et_zero_la_coupe_avec_le_prechargement(env, monkeypatch):
+    monkeypatch.setattr(config, "PUBLIC_PAGE_CACHE_SECONDS", 120)
+    assert all(env.client.get(path).headers["Cache-Control"] == "private, max-age=120" for path in PUBLIC_PAGES)
+    monkeypatch.setattr(config, "PUBLIC_PAGE_CACHE_SECONDS", 0)
+    for path in PUBLIC_PAGES:
+        response = env.client.get(path)
+        assert response.headers["Cache-Control"] == "no-store", path
+        assert "data-prefetch" not in response.get_data(as_text=True), path           # rien à précharger si rien ne se garde
+
+
+def tab_links(html):
+    """Les cinq boutons de la barre : {clé: balise <a> entière}."""
+    return {re.search(r'data-tab="(\w+)"', tag).group(1): tag for tag in re.findall(r'<a class="tabbar__link"[^>]*>', html)}
+
+
+def test_seules_les_pages_publiques_du_site_sont_marquees_pour_le_prechargement(env):
+    links = tab_links(env.client.get("/").get_data(as_text=True))
+    assert list(links) == ["accueil", "gratuit", "resultats", "vip", "abonnement"]
+    assert [key for key, tag in links.items() if "data-prefetch" in tag] == ["accueil", "gratuit", "resultats"]
+    # Chaque bouton marqué mène à une page que le serveur laisse effectivement garder : rien n'est préchargé pour rien.
+    for key in ("accueil", "gratuit", "resultats"):
+        path = re.search(r'href="([^"]+)"', links[key]).group(1)
+        assert env.client.get(path).headers["Cache-Control"].startswith("private, max-age="), path
+    # La connexion / l'espace client (page personnelle) et le site de paiement (autre adresse) ne le sont jamais.
+    assert "data-prefetch" not in links["vip"] and "data-prefetch" not in links["abonnement"]
+
+
+def test_la_barre_charge_son_script_sur_toutes_les_pages_qui_la_portent(env):
+    pages = {path: env.client.get(path).get_data(as_text=True)
+             for path in ("/", "/gratuit", "/resultats", "/conditions", "/login", "/nope")}
+    login(env.client)
+    pages["/app"] = env.client.get("/app").get_data(as_text=True)
+    for path, html in pages.items():
+        assert re.search(r'<script src="/static/js/tabbar\.js\?v=\w+" defer></script>', html), path
+    assert 'src="/static/js/tabbar.js' not in env.client.get("/hors-ligne").get_data(as_text=True)    # la page hors connexion n'a pas de script
+    script = env.client.get("/static/js/tabbar.js")
+    assert script.status_code == 200 and "javascript" in script.content_type
+
+
+def test_le_site_client_prepare_la_connexion_vers_le_site_de_paiement(env):
+    for path in ("/", "/login", "/gratuit", "/nope"):
+        html = env.client.get(path).get_data(as_text=True)
+        assert f'<link rel="preconnect" href="{config.PAIEMENT_URL}">' in html, path
+        assert html.count('rel="preconnect"') == 1, path
+    assert 'rel="preconnect"' not in env.client.get("/hors-ligne").get_data(as_text=True)    # sans réseau, inutile
 
 
 def test_https_derriere_le_proxy_active_hsts(env):
@@ -132,7 +229,7 @@ def test_l_espace_client_a_la_barre_du_bas_sur_acces_vip_et_garde_la_deconnexion
     login(env.client)
     page = env.client.get("/app").get_data(as_text=True)
     nav = re.search(r'<nav class="tabbar".*?</nav>', page, re.S).group(0)
-    assert re.findall(r'<a class="tabbar__link" href="([^"]+)"( aria-current="page")?>', nav) == [
+    assert re.findall(r'<a class="tabbar__link" href="([^"]+)" data-tab="\w+"( aria-current="page")?(?: data-prefetch)?>', nav) == [
         ("/", ""), ("/gratuit", ""), ("/resultats", ""), ("/login", ' aria-current="page"'),
         (f"{config.PAIEMENT_URL}/paiement", "")]
     header = re.search(r'<header class="topbar">.*?</header>', page, re.S).group(0)
@@ -364,7 +461,7 @@ def test_anciennes_routes_supprimees(env):
 
 def test_generation_avec_suivi_puis_resultat_partage(env):
     login(env.client)
-    assert env.client.get("/api/generate/status").get_json() == {"state": "idle"}
+    assert env.client.get("/api/generate/status").get_json() == {"state": "idle", "quota": {"limit": 2, "used": 0, "left": 2}}
     started = env.client.post("/api/generate", headers=AJAX).get_json()
     assert started["state"] in ("running", "done")
     wait_for_job(env)
@@ -395,7 +492,8 @@ def test_echec_de_generation_message_lisible(env):
     env.client.post("/api/generate", headers=AJAX)
     wait_for_job(env)
     state = env.client.get("/api/generate/status").get_json()
-    assert state == {"state": "error", "error": "Aucun combiné assez fiable pour le moment. Réessaie plus tard."}
+    assert state == {"state": "error", "error": "Aucun combiné assez fiable pour le moment. Réessaie plus tard.",
+                     "quota": {"limit": 2, "used": 0, "left": 2}}                  # l'analyse n'a rien donné : clic rendu
 
 
 def test_historique(env):
@@ -412,6 +510,236 @@ def test_historique_en_erreur_ne_revele_rien(env):
     assert response.status_code == 500
     assert "hunter2" not in response.get_data(as_text=True)
     assert "Impossible de charger l’historique" in response.get_json()["error"] or "Impossible de charger l'historique" in response.get_json()["error"]
+
+
+# --------------------------------------------------------------------------
+# Générations des clients : CLIENT_GENERATIONS_PER_DAY par jour
+# --------------------------------------------------------------------------
+
+NOW = datetime(2026, 10, 8, 10, 0, tzinfo=timezone.utc)
+TODAY = "2026-10-08"
+NO_MATCH_TITLE = "Pas de championnat aujourd'hui"
+
+
+class Clock:
+    def __init__(self, now=NOW):
+        self.now = now.timestamp()
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, **delta):
+        self.now += timedelta(**delta).total_seconds()
+
+
+@pytest.fixture()
+def timed(env):
+    """Le même site, avec une horloge que le test fait avancer (un jour de championnat, 10 h UTC)."""
+    env.clock = Clock()
+    env.service.clock = env.clock
+    env.pipeline = make_pipeline(delay=0.0, combos=sample_combos(NOW))
+    env.service.pipeline = env.pipeline
+    return env
+
+
+def post_generate(env, client=None):
+    response = (client or env.client).post("/api/generate", headers=AJAX)
+    assert response.status_code == 200
+    return response.get_json()
+
+
+def status_of(env, client=None):
+    return (client or env.client).get("/api/generate/status").get_json()
+
+
+def used(env, email=EMAIL, day=TODAY):
+    return env.licenses.usage.get((email, day), 0)
+
+
+def test_chaque_client_a_deux_generations_par_jour_par_defaut():
+    assert config.CLIENT_GENERATIONS_PER_DAY == 2
+
+
+def test_le_clic_qui_demarre_une_analyse_consomme_une_generation(timed):
+    login(timed.client)
+    started = post_generate(timed)
+    assert started["state"] == "running" and started["started"] is True
+    assert started["quota"] == {"limit": 2, "used": 1, "left": 1}
+    wait_for_job(timed)
+    assert used(timed) == 1                                            # l'analyse a abouti : le clic est bien consommé
+    done = status_of(timed)
+    assert done["state"] == "done" and "quota" not in done              # les combinés s'affichent, plus de bouton
+
+
+def test_afficher_des_combines_deja_prets_ou_rejoindre_un_travail_ne_coute_rien(timed):
+    gate = threading.Event()
+
+    def slow(progress=None):
+        gate.wait(5)
+        return {"combos": sample_combos(NOW), "meta": {"day": TODAY, "day_total": 9, "matches_total": 9}}
+
+    timed.service.pipeline = slow
+    autre = dashboard_client(timed, "autre@exemple.com")
+    login(timed.client)
+    assert post_generate(timed)["started"] is True                      # le premier client lance l'analyse
+    rejoint = post_generate(timed, autre)                               # le second la rejoint : rien à lui compter
+    assert rejoint["state"] == "running" and "started" not in rejoint
+    assert used(timed, "autre@exemple.com") == 0
+    gate.set()
+    wait_for_job(timed)
+    pret = post_generate(timed, autre)                                  # puis il reçoit les mêmes combinés
+    assert pret["state"] == "done" and used(timed, "autre@exemple.com") == 0
+    assert used(timed) == 1
+
+
+def test_deux_analyses_par_jour_puis_le_message_et_aucun_appel_payant(timed):
+    login(timed.client)
+    for expected in (1, 2):
+        assert post_generate(timed)["started"] is True
+        wait_for_job(timed)
+        assert used(timed) == expected
+        timed.clock.advance(hours=4)                                   # les combinés ne sont plus frais : on peut relancer
+    calls = timed.pipeline.state["calls"]
+    assert calls == 2
+    # Plus de génération : l'état de l'espace le dit d'emblée, et le clic ne lance rien.
+    blocked = status_of(timed)
+    assert blocked["state"] == "quota" and blocked["quota"] == {"limit": 2, "used": 2, "left": 0}
+    assert blocked["message"] == ("Tu as utilisé tes 2 générations d'aujourd'hui. "
+                                  "Reviens demain pour en lancer de nouvelles.")
+    refused = post_generate(timed)
+    assert refused == blocked
+    assert timed.pipeline.state["calls"] == calls and used(timed) == 2
+    # Le lendemain, le compteur repart de zéro.
+    timed.clock.advance(hours=20)
+    assert status_of(timed) == {"state": "idle", "quota": {"limit": 2, "used": 0, "left": 2}}
+    assert post_generate(timed)["started"] is True
+    wait_for_job(timed)
+
+
+def test_chaque_client_a_ses_propres_generations(timed):
+    autre = dashboard_client(timed, "autre@exemple.com")
+    login(timed.client)
+    for _ in range(2):
+        assert post_generate(timed)["started"] is True
+        wait_for_job(timed)
+        timed.clock.advance(hours=4)
+    assert status_of(timed)["state"] == "quota"
+    deux = status_of(timed, autre)
+    assert deux["state"] == "idle" and deux["quota"] == {"limit": 2, "used": 0, "left": 2}   # l'autre n'a rien utilisé
+    assert post_generate(timed, autre)["started"] is True
+    wait_for_job(timed)
+
+
+def test_une_analyse_en_echec_rend_le_clic(timed):
+    timed.service.pipeline = make_pipeline(delay=0.0, error=GenerationError("Aucun combiné assez fiable. Réessaie."))
+    login(timed.client)
+    started = post_generate(timed)
+    assert started["started"] is True and started["quota"]["used"] == 1
+    wait_for_job(timed)
+    assert used(timed) == 0                                            # rien n'a été livré : le clic est rendu
+    failed = status_of(timed)
+    assert failed["state"] == "error" and failed["quota"] == {"limit": 2, "used": 0, "left": 2}
+    # Pendant la pause qui suit un échec, le clic ne relance rien et ne coûte rien.
+    again = post_generate(timed)
+    assert again["state"] == "error" and used(timed) == 0 and timed.service.generations_today() == 1
+    timed.clock.advance(seconds=FAILURE_COOLDOWN_SECONDS + 1)
+    assert status_of(timed)["state"] == "idle"
+
+
+def test_une_panne_inattendue_rend_aussi_le_clic(timed):
+    def boom(progress=None):
+        raise RuntimeError("détail interne")
+
+    timed.service.pipeline = boom
+    login(timed.client)
+    assert post_generate(timed)["started"] is True
+    wait_for_job(timed)
+    assert used(timed) == 0 and status_of(timed)["state"] == "error"
+
+
+def test_un_jour_sans_championnat_le_clic_est_rendu_et_le_message_est_donne(timed):
+    timed.service.pipeline = make_pipeline(delay=0.0, error=NoMatchToday(0, 0, TODAY))
+    login(timed.client)
+    assert post_generate(timed)["started"] is True                     # seul moyen de le savoir : une première analyse
+    wait_for_job(timed)
+    verdict = status_of(timed)
+    assert verdict["state"] == "no_match" and verdict["reason"] == "none" and verdict["title"] == NO_MATCH_TITLE
+    assert "quota" not in verdict
+    assert used(timed) == 0 and timed.service.generations_today() == 0   # ni le client ni le plafond du jour n'ont payé
+    # Ensuite, plus rien ne part, pour personne, et ce n'est pas une erreur.
+    autre = dashboard_client(timed, "autre@exemple.com")
+    for client in (timed.client, autre):
+        response = post_generate(timed, client)
+        assert response["state"] == "no_match" and response["title"] == NO_MATCH_TITLE
+    assert used(timed) == 0 and used(timed, "autre@exemple.com") == 0
+    assert timed.pipeline.state["calls"] == 0 and timed.service.pipeline.state["calls"] == 1    # une seule analyse
+    timed.clock.advance(days=1)                                        # le lendemain, tout repart
+    assert status_of(timed)["state"] == "idle"
+
+
+def test_les_matchs_deja_commences_ou_trop_peu_nombreux_ont_leur_propre_message(timed):
+    for total, upcoming, reason, title in ((6, 0, "started", "Les matchs d'aujourd'hui ont déjà commencé"),
+                                           (6, 2, "few", "Trop peu de matchs aujourd'hui")):
+        timed.service._write("matchday.json", {"day": TODAY, "total": total, "upcoming": upcoming, "reason": reason,
+                                               "checked_ts": timed.clock()})
+        login(timed.client)
+        state = status_of(timed)
+        assert state["state"] == "no_match" and state["reason"] == reason and state["title"] == title
+        assert post_generate(timed)["state"] == "no_match" and used(timed) == 0
+
+
+def test_un_clic_qui_ne_demarre_rien_est_rendu(timed):
+    """Plafond du jour de tous les clients atteint : l'analyse ne part pas, donc le client ne perd rien."""
+    for _ in range(config.MAX_GENERATIONS_PAR_JOUR):
+        timed.service._count_generation()
+    login(timed.client)
+    response = post_generate(timed)
+    assert response["state"] == "error" and "started" not in response
+    assert response["quota"] == {"limit": 2, "used": 0, "left": 2} and used(timed) == 0
+    assert timed.pipeline.state["calls"] == 0
+
+
+def test_un_compteur_illisible_ne_bloque_personne(timed, caplog):
+    timed.licenses.usage_down = True
+    login(timed.client)
+    assert "quota" not in status_of(timed) and status_of(timed)["state"] == "idle"
+    with caplog.at_level(logging.ERROR):
+        started = post_generate(timed)
+    assert started["state"] == "running" and started["started"] is True and "quota" not in started
+    wait_for_job(timed)
+    assert status_of(timed)["state"] == "done"
+    assert "compteur de générations indisponible" in caplog.text
+
+
+def test_le_message_de_limite_s_accorde_avec_le_nombre_de_generations():
+    assert dashboard.quota_message(1) == "Tu as utilisé ta génération d'aujourd'hui. Reviens demain pour en lancer une nouvelle."
+    assert "tes 5 générations" in dashboard.quota_message(5)
+    assert dashboard.quota_view(7, 2) == {"limit": 2, "used": 7, "left": 0}
+    assert dashboard.quota_view(-1, 2) == {"limit": 2, "used": 0, "left": 2}
+
+
+def test_la_limite_se_regle_dans_la_configuration(timed, monkeypatch):
+    monkeypatch.setattr(config, "CLIENT_GENERATIONS_PER_DAY", 1)
+    login(timed.client)
+    assert post_generate(timed)["quota"] == {"limit": 1, "used": 1, "left": 0}
+    wait_for_job(timed)
+    timed.clock.advance(hours=4)
+    blocked = status_of(timed)
+    assert blocked["state"] == "quota" and blocked["message"].startswith("Tu as utilisé ta génération")
+
+
+def test_l_espace_annonce_les_generations_du_jour(timed):
+    login(timed.client)
+    html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ")
+    assert "Tu peux lancer 2 générations par jour." in html and 'id="generate-quota"' in html
+    assert "matchs du jour" in html and "jusqu’à trois combinés" in html and 'id="no-match"' in html
+
+
+def test_les_reponses_de_generation_ne_sont_pas_mises_en_cache(timed):
+    login(timed.client)
+    for response in (timed.client.get("/api/generate/status"), timed.client.post("/api/generate", headers=AJAX)):
+        assert response.headers["Cache-Control"] == "no-store"
+    wait_for_job(timed)
 
 
 # --------------------------------------------------------------------------

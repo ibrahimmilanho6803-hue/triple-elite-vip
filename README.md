@@ -1,7 +1,9 @@
 # Triple Elite VIP
 
 Site d'abonnement qui analyse les cinq grands championnats de football (Premier League, La Liga, Bundesliga,
-Ligue 1, Serie A) avec l'IA Claude et compose **trois combinés de trois matchs**, de cote totale d'au moins 2,50.
+Ligue 1, Serie A) avec l'IA Claude et compose **trois combinés de trois matchs**, de cote totale d'au moins 2,50, avec les
+**matchs du jour** (moins de combinés les petits jours ; aucun un jour sans championnat : « Pas de championnat aujourd'hui »,
+voir « Matchs du jour et générations des clients »).
 Les clients paient par Mobile Money (PayDunya ; la carte bancaire viendra quand PayDunya l'aura activée sur le compte,
 voir « Moyens de paiement annoncés aux clients »), reçoivent une clé de licence, et se connectent à leur espace.
 
@@ -47,7 +49,8 @@ Avant d'acheter, un visiteur peut consulter les résultats réels et un combiné
 5. Un client qui renouvelle **avant** la fin de son abonnement garde sa clé ; la durée achetée s'ajoute au temps restant.
    Après expiration, une nouvelle clé est délivrée. Le pass compte 7 jours, un mois 30 jours, un an 365 jours.
 6. Il se connecte sur le site avec son e-mail et sa clé, puis génère ses combinés (un seul calcul en arrière-plan pour
-   tous les clients, réutilisé pendant 3 heures) et consulte l'historique avec le score de chaque match.
+   tous les clients, réutilisé pendant 3 heures ; **2 générations par jour et par client**) et consulte l'historique avec le
+   score de chaque match.
 7. Il peut installer le site sur son téléphone comme une application (voir « Application installable »).
 
 ## Pages publiques : résultats et combiné gratuit
@@ -58,8 +61,9 @@ paiement. L'accueil (section « Nos résultats sont publics »), la barre de nav
 - `/resultats` : le bilan réel (combinés gagnés sur joués, pronostics gagnés sur joués, chance annoncée en moyenne face à la
   réussite constatée) et le détail des 12 derniers combinés **entièrement joués**, gagnés comme perdus, avec le score de chaque
   match. Il se met à jour tout seul à mesure que les scores arrivent.
-- `/gratuit` : **un seul** combiné offert (celui de plus haute chance estimée dans la dernière génération), avec cote, confiance de
-  chaque pronostic et chance estimée, et des boutons WhatsApp, Telegram et « Copier le lien ».
+- `/gratuit` : **un seul** combiné offert, de trois matchs du jour (celui de plus haute chance estimée dans la génération du jour),
+  avec cote, confiance de chaque pronostic et chance estimée, et des boutons WhatsApp, Telegram et « Copier le lien ». Un jour sans
+  championnat il n'y en a pas, et la page répond « Pas de championnat aujourd'hui ».
 
 Règles qui commandent le code (`showcase.py` ; vérifiées par `tests/test_showcase.py`, `tests/test_public_pages.py` et les tests
 navigateur `TestResultatsEtCombineGratuit`) :
@@ -78,21 +82,26 @@ navigateur `TestResultatsEtCombineGratuit`) :
    gagnés ou perdus, jamais des gains en argent (les cotes sont souvent estimées : un « bénéfice » serait inventé). Un pronostic
    présent dans plusieurs combinés compte une fois ; les matchs reportés ou annulés ne comptent pas. Le pied de page garde
    l'avertissement sur les paris et l'interdiction aux moins de 18 ans.
-4. **Le combiné gratuit est stable.** Il est choisi une fois par génération et enregistré (`free_pick.json`, dossier de cache) : si
-   une autre génération sort dans la journée, le lien partagé le matin montre toujours le même coupon le soir. Il disparaît 15
-   minutes avant le premier match, ou 24 heures après avoir été choisi. Il faut alors une **nouvelle génération** pour en avoir un
-   autre : les deux autres combinés de l'ancienne ne prennent pas sa place.
+4. **Le combiné gratuit est stable, et du jour.** Il est choisi une fois par génération et enregistré (`free_pick.json`, dossier
+   de cache) : si une autre génération sort dans la journée, le lien partagé le matin montre toujours le même coupon le soir. Il
+   ne vient que d'une génération composée avec les matchs d'**aujourd'hui** (jour UTC, champ `day` de ses métadonnées) : celle
+   d'hier, ou d'avant « matchs du jour seulement », n'en fournit plus. Il disparaît 15 minutes avant le premier match, et au plus
+   tard à minuit UTC. Il faut alors une **nouvelle génération** pour en avoir un autre : les deux autres combinés de l'ancienne
+   ne prennent pas sa place.
 
-**La page « Combiné gratuit » est vide** quand aucune génération récente n'existe (personne n'a cliqué sur « Générer » depuis 24
-heures, ou tous les matchs ont commencé) : elle l'explique au visiteur et renvoie vers les résultats. Pour qu'elle soit alimentée
-même les jours calmes, activer la génération automatique.
+**La page « Combiné gratuit » est vide** tant qu'aucune génération n'a été faite avec les matchs d'aujourd'hui (personne n'a
+cliqué sur « Générer » depuis minuit UTC, ou tous les matchs ont commencé) : elle l'explique au visiteur et renvoie vers les
+résultats. Quand la vérification des matchs du jour a conclu qu'il n'y a rien à composer, elle affiche à la place « Pas de
+championnat aujourd'hui » (ou « Les matchs d'aujourd'hui ont déjà commencé », « Trop peu de matchs aujourd'hui »). Pour qu'elle
+soit alimentée chaque jour de match sans attendre un abonné, activer la génération automatique.
 
 **Génération automatique quotidienne (désactivée par défaut)** : `AUTO_GENERATE_HOUR=6` (Render > service dashboard > Environment ;
-heure **UTC**, de 0 à 23) lance chaque jour, à partir de cette heure, une génération s'il n'y en a pas déjà eu une ce jour-là
-(`daily_generation.py`). C'est un appel payant à l'IA (de l'ordre de 0,2 $ l'unité, à vérifier sur la console Anthropic : environ 6 $
-par mois à raison d'une par jour). Elle passe par les mêmes garde-fous que le bouton « Générer » (un travail à la fois, combinés
-encore frais réutilisés, plafond de 10 par jour, pause après un échec) et s'arrête après 3 tentatives dans la journée. Supprimer la
-variable la désactive.
+heure **UTC**, de 0 à 23) lance chaque jour, à partir de cette heure, une génération s'il n'y en a pas déjà eu une pour les matchs
+de ce jour-là (`daily_generation.py`). C'est un appel payant à l'IA (de l'ordre de 0,2 $ l'unité, à vérifier sur la console Anthropic :
+environ 6 $ par mois à raison d'une par jour de match). Un jour sans match (ou avec moins de trois matchs à venir) elle ne lance rien
+et ne coûte rien. Elle passe par les mêmes garde-fous que le bouton « Générer » (un travail à la fois, combinés encore frais
+réutilisés, plafond de 10 par jour, pause après un échec) et s'arrête après 3 tentatives dans la journée. Supprimer la variable la
+désactive.
 
 **Couper le combiné gratuit** : `FREE_PICK_ENABLED=0` (Render > Environment ; Render redémarre le service quand une variable change)
 retire `/gratuit` (erreur 404), ses liens et son entrée du plan du site. Valeur par défaut : activé.
@@ -109,6 +118,57 @@ du site dans la Search Console de Google (facultatif).
 
 **Quand on modifie les coupons de l'espace client** (`static/js/dashboard.js`), reporter le changement dans
 `templates/_coupon.html`, leur copie côté serveur pour les pages publiques : la feuille de style est commune.
+
+## Matchs du jour et générations des clients
+
+**Les combinés ne portent que sur les matchs d'aujourd'hui** : ceux de nos cinq championnats dont le coup d'envoi tombe dans le
+jour **UTC** en cours (minuit UTC = 1 h du matin à Lagos, minuit à Abidjan) et qui n'ont pas encore commencé, trois au plus par
+championnat (`MATCHS_PAR_CHAMPIONNAT`). `DataCollector.get_matchday()` les cherche en cinq appels gratuits à TheSportsDB (un par
+championnat) ; c'est la première étape de la chaîne (`pipeline.run_pipeline`), avant toute collecte et tout appel payant à l'IA.
+
+Il faut au moins **3 matchs à venir** (`pipeline.MIN_MATCHES`). En dessous, rien n'est généré, l'IA n'est pas appelée, et le site
+répond, dans l'espace client comme sur `/gratuit` :
+
+| Situation | Message |
+| --- | --- |
+| Aucun match de nos cinq championnats aujourd'hui | « Pas de championnat aujourd'hui » |
+| Des matchs, mais tous ont déjà commencé | « Les matchs d'aujourd'hui ont déjà commencé » |
+| Un ou deux matchs encore à venir | « Trop peu de matchs aujourd'hui » |
+
+- **Un constat gardé pour la journée** (`matchday.json`, dossier de cache). Le nombre de matchs vus ne baisse jamais dans la journée
+  (TheSportsDB ne liste plus un match commencé) : c'est lui qui distingue « pas de championnat » de « tous ont commencé ». Un
+  constat négatif est revérifié au plus toutes les 30 minutes (un calendrier peut se compléter), après une panne de TheSportsDB au
+  bout de 5 minutes. **Jamais de « pas de championnat » sur une réponse incomplète** : si un championnat n'a pas répondu, c'est une
+  panne à réessayer (« Les matchs du jour sont momentanément indisponibles »), pas un verdict.
+- **Qui fait ce constat.** La boucle quotidienne (`daily_generation.py`, active seulement si `AUTO_GENERATE_HOUR` est définie) le fait
+  dès minuit UTC, avant l'heure de génération : « Pas de championnat aujourd'hui » s'affiche sans attendre personne. Sans elle, il se
+  fait au premier clic d'un abonné sur « Générer » (qui ne lui coûte rien) ; d'ici là `/gratuit` dit seulement que le combiné n'est
+  pas encore prêt.
+- **Pour le client** : le bouton « Générer les combinés » est remplacé par le message (`/api/generate` répond `no_match`). Rien n'est
+  compté, ni dans le plafond de 10 générations par jour (commun à tous les clients), ni dans les générations du client.
+- **Moins de trois combinés** : un petit jour de championnat (trois ou quatre matchs) peut ne donner qu'un ou deux combinés. Le site
+  en affiche autant qu'il en trouve.
+
+**Deux générations par jour et par client.** `CLIENT_GENERATIONS_PER_DAY = 2` (`config.py`), par e-mail et par jour UTC.
+
+- Le compteur est une table PostgreSQL, `generation_usage` (`email`, `day`, `used`), créée toute seule au démarrage (les lignes de plus
+  de 30 jours y sont effacées) : il survit aux redéploiements. La réservation est **atomique** (`INSERT … ON CONFLICT … WHERE used <
+  limite`) : deux clics simultanés, ou deux onglets, ne dépassent jamais la limite.
+- **Seul le clic qui démarre vraiment une analyse en consomme une.** Ne coûtent rien : réafficher des combinés encore frais (3 h),
+  rejoindre une analyse déjà lancée par quelqu'un d'autre, un jour sans match, et une analyse qui n'aboutit à aucun combiné (panne de
+  l'IA, rien d'assez fiable) : le clic est alors **rendu** (`release_generation`). Tant que des combinés frais existent, un client qui a
+  épuisé ses générations les voit quand même.
+- Le client lit « Tu peux lancer 2 générations par jour », puis « Il te reste 1 génération aujourd'hui (2 par jour) » ; une fois
+  épuisées, le bouton est grisé avec « Tu as utilisé tes 2 générations d'aujourd'hui. Reviens demain pour en lancer de nouvelles. »
+- **Si la base est injoignable**, personne n'est bloqué à tort : l'analyse est autorisée sans être comptée (le plafond du jour, commun à
+  tous, borne de toute façon la dépense).
+- Changer la limite : `CLIENT_GENERATIONS_PER_DAY` dans `config.py` (textes et décompte suivent), puis envoyer sur `main`. Voir ou
+  remettre à zéro le compteur d'un client (geste commercial), depuis le Shell de la base (jour UTC, e-mail en minuscules) :
+
+```sql
+SELECT email, used FROM generation_usage WHERE day = '2026-10-12';
+DELETE FROM generation_usage WHERE email = 'client@exemple.com' AND day = '2026-10-12';
+```
 
 ## Barre de navigation du bas
 
@@ -135,6 +195,37 @@ style : section « barre de navigation du bas » de `static/css/site.css`) :
   tenir sur deux lignes sans couper de mot dès 320 px de large (« Abonnement » est le plus long) ; les tests navigateur
   (`TestBarreDeNavigation`) le vérifient.
 
+### Rapidité des boutons
+
+Un toucher doit répondre tout de suite, même sur une connexion mobile lente. Mesuré sur le site réel en octobre 2026, un toucher
+coûtait environ 0,3 s pour réveiller le service worker, puis 0,2 à 0,5 s d'aller-retour réseau par page (le serveur, lui, répond en
+quelques millisecondes). Ce qui a été fait :
+
+1. **Le service worker ne retarde plus rien** (`templates/sw.js`). Il s'arrête après quelques secondes d'inactivité ; avant, chaque
+   toucher attendait son redémarrage AVANT que la page soit demandée. Maintenant : « static routing » (Chrome 123 et suivants, donc
+   Chrome sur Android : tant qu'il dort, la page est demandée au réseau pendant qu'il démarre), « navigation preload » pour les
+   autres navigateurs (la page est demandée en même temps que le démarrage), et les fichiers de la page « Pas de connexion » servis
+   par le cache du navigateur d'abord (celui du service worker ne sert que sans réseau). Une seule demande part vers le serveur.
+2. **Pages publiques gardées une minute** (`PUBLIC_PAGE_CACHE_SECONDS`, 60 par défaut). L'accueil, les résultats, le combiné gratuit
+   et les conditions sont les mêmes pour tout le monde : le serveur les envoie avec `Cache-Control: private, max-age=60` (réponses 200
+   seulement). Une fois la page affichée, `static/js/tabbar.js` demande discrètement les autres pages publiques (`rel=prefetch`) —
+   seulement si le navigateur annonce l'état de la connexion (Chrome, Edge, Samsung Internet), hors mode « économiser les données » et
+   hors 2G — et un bouton touché dans la minute s'ouvre sans réseau. Conséquence à connaître : un nouveau résultat ou un nouveau combiné
+   gratuit peut mettre jusqu'à une minute à apparaître chez quelqu'un qui revient sur la page. L'espace client, la connexion, le
+   paiement et l'API ne sont **jamais** gardés (`no-store`). **Tout couper** : `PUBLIC_PAGE_CACHE_SECONDS=0` dans Render > Environment
+   (plus de mémorisation ni de préchargement), sans changer le code.
+3. **« Accès VIP » droit sur l'espace.** Pour un client connecté, la page de connexion ne fait que le renvoyer vers `/app` : un
+   aller-retour de plus. Quand l'appareil a déjà montré l'espace (repère `tev-espace` dans `localStorage`, aucune donnée personnelle),
+   le bouton mène directement à `/app` ; si la session a expiré, `/app` renvoie à la connexion comme avant et le repère s'efface.
+4. **Connexion anticipée** vers l'autre site (`<link rel="preconnect">`) : « Abonnement VIP » ne paie plus l'établissement d'une
+   connexion sécurisée au moment du toucher (et inversement depuis le site de paiement).
+5. **Réponse visible au toucher.** Le bouton touché prend aussitôt l'aspect « page affichée » (doré, trait en haut qui pulse) et
+   l'ancien le perd. Le lien n'est jamais détourné (Ctrl + clic, nouvel onglet restent normaux) ; si la page ne vient pas (10 s, retour
+   en arrière, application cachée), l'aspect d'origine revient.
+
+Vérifier : les tests navigateur `TestRapiditeDesBoutons` et `TestServiceWorkerSansRetard` (service worker lent à démarrer simulé : la
+page s'ouvre en moins de 1,2 s alors que le démarrage en prend 2 ; mode sans connexion, service worker arrêté ou non).
+
 ## Les fichiers
 
 | Fichier | Rôle |
@@ -142,15 +233,15 @@ style : section « barre de navigation du bas » de `static/css/site.css`) :
 | `dashboard.py` | Site des clients : accueil, résultats, combiné gratuit, plan du site, conditions, connexion, espace client, API de génération et d'historique |
 | `showcase.py`, `daily_generation.py` | Pages publiques : bilan et combiné gratuit (ce qui a le droit d'être montré) ; génération automatique quotidienne, facultative |
 | `paiement.py`, `paydunya.py` | Site de paiement et client de l'API PayDunya |
-| `license_manager.py` | Licences et commandes dans PostgreSQL (délivrance atomique, renouvellements cumulés) |
+| `license_manager.py` | Licences et commandes dans PostgreSQL (délivrance atomique, renouvellements cumulés), compteur de générations par client (`generation_usage`) |
 | `email_sender.py` | Envoi de la clé : Brevo (HTTPS) ou Gmail (SMTP), avec nouvelles tentatives |
-| `generation_service.py`, `pipeline.py` | Génération en arrière-plan : une à la fois, cache, plafond quotidien, avancement |
-| `data_collector.py`, `analyzerv2.py` | Données TheSportsDB, analyse IA (modèles de repli si un nom de modèle n'existe pas) |
+| `generation_service.py`, `pipeline.py` | Génération en arrière-plan : une à la fois, cache, plafond quotidien, avancement ; matchs du jour et constat « pas de championnat » (`matchday.json`) |
+| `data_collector.py`, `analyzerv2.py` | Données TheSportsDB (matchs du jour, résultats récents), analyse IA (modèles de repli si un nom de modèle n'existe pas) |
 | `probabilities.py`, `markets.py`, `combo_generator.py` | Probabilités, catalogue des paris et verdicts, composition des combinés et cotes |
 | `combo_history.py` | Historique : résultats réels des matchs joués, bilan |
 | `web_common.py`, `privacy.py` | Sécurité commune (en-têtes, anti-CSRF, limitation d'essais), gabarits, e-mails masqués dans les journaux |
 | `config.py` | Réglages non secrets ; lit aussi un fichier `.env` en local |
-| `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site ; `templates/_coupon.html` (coupons des pages publiques), `_meta.html` (aperçu de partage), `_tabbar.html` (barre de navigation du bas), `static/js/public.js`, `static/images/partage.png` |
+| `templates/`, `static/` | Pages et styles (sans script ni style en ligne), JavaScript du site ; `templates/_coupon.html` (coupons des pages publiques), `_meta.html` (aperçu de partage), `_tabbar.html` (barre de navigation du bas), `static/js/public.js`, `static/js/tabbar.js` (barre : réponse au toucher, préchargement), `static/images/partage.png` |
 | `pwa.py`, `templates/sw.js`, `static/js/pwa.js`, `static/icons/` | Application installable : manifeste, service worker, page « hors connexion », bouton d'installation, icônes |
 | `main.py`, `generate_keys.py`, `scripts/send_test_email.py` | Outils en ligne de commande (voir plus bas) |
 | `scripts/make_icons.py`, `scripts/make_share_image.py` | Fabrication des icônes de l'application et de l'image d'aperçu de partage (Playwright) |
@@ -173,6 +264,7 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
 | `FREE_PICK_ENABLED` | dashboard | Facultatif. `0` (ou `non`, `false`, `off`) retire le combiné gratuit : `/gratuit` et ses liens disparaissent. Par défaut : activé |
 | `AUTO_GENERATE_HOUR` | dashboard | Facultatif. Heure UTC (0 à 23) à partir de laquelle une génération automatique part chaque jour s'il n'y en a pas eu. **Appel payant à l'IA** ; absente = désactivée (voir « Pages publiques ») |
+| `PUBLIC_PAGE_CACHE_SECONDS` | dashboard | Facultatif. Secondes pendant lesquelles le navigateur garde les pages publiques et les précharge (60 par défaut) ; `0` coupe les deux (voir « Rapidité des boutons ») |
 | `PAYDUNYA_MASTER_KEY`, `PAYDUNYA_PRIVATE_KEY`, `PAYDUNYA_TOKEN` | paiement | Clés API PayDunya |
 | `PAYDUNYA_MODE`, `PAYDUNYA_TEST_PRIVATE_KEY`, `PAYDUNYA_TEST_TOKEN`, `PAYDUNYA_TEST_MASTER_KEY`, `PAYDUNYA_TEST_EMAILS` | paiement | Facultatif, **mode test seulement** : interrupteur, clés de test et adresses autorisées à commander (voir « Essayer le paiement sans argent ») |
 | `LICENSE_SECRET_KEY` | paiement | Sel de fabrication des nouvelles clés (en changer n'invalide aucune clé existante) |
@@ -200,7 +292,7 @@ avec de fausses données.
 ```bash
 python -m pytest tests -q                 # tests de la logique et des deux sites (sans réseau, sans clé)
 python -m playwright install chromium     # une seule fois, pour les tests de navigateur
-python -m pytest tests/e2e -q             # parcours réels dans Chromium : connexion, génération, historique, pages publiques, paiement, application installable
+python -m pytest tests/e2e -q             # parcours réels dans Chromium : connexion, génération, historique, pages publiques, paiement, application installable, rapidité de la barre
 ```
 
 Les tests ne contactent jamais TheSportsDB, PayDunya, Anthropic ni un serveur d'e-mail : tout est simulé. Les tests
@@ -358,7 +450,8 @@ l'invitation à installer ; `static/icons/` contient les icônes. Le site de pai
   s'affiche jamais quand le site est déjà ouvert comme une application.
 - **Sans connexion** : le téléphone affiche « Pas de connexion » avec un bouton « Réessayer ». Le service worker ne garde
   **que** cette page et ses fichiers (style, polices, icône) : jamais une page de l'espace client ni une réponse de
-  l'API (données privées, téléphone parfois prêté). Tout le reste passe par le réseau, comme sans service worker.
+  l'API (données privées, téléphone parfois prêté). Tout le reste passe par le réseau, comme sans service worker, et sans jamais
+  attendre son démarrage (voir « Rapidité des boutons »).
 - Le lancement de l'application ouvre `/debut` (`pwa.START_URL`, route `lancement` de `dashboard.py`), qui n'affiche rien :
   un client connecté arrive dans son espace, un visiteur sur l'accueil (offres, fonctionnement), pas sur un formulaire de
   connexion qu'il ne peut pas remplir. Un abonnement expiré est traité par l'espace, qui renvoie vers la connexion avec son
@@ -444,9 +537,11 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | « Service momentanément indisponible » à la connexion | La base PostgreSQL est injoignable ou a expiré (offre gratuite) : Render > Postgres |
 | « E-mail ou clé de licence incorrect » alors que le client a bien sa clé | Le visiteur voit toujours ce même message ; le motif exact est dans les logs du service client : `connexion refusée : j***@… (motif)`. `e-mail inconnu` : aucune licence à cette adresse **dans la base de ce service** (faute de frappe dans l'adresse, ou les deux services ne pointent pas vers la même `DATABASE_URL` : au démarrage, chaque service écrit `Base de données des licences initialisée (base <nom>, N licence(s))`, et `python generate_keys.py` l'affiche en tête ; le nom doit être identique des deux côtés). `clé différente (N caractères saisis, 16 attendus)` : clé mal recopiée (le site accepte déjà espaces, majuscules, caractères invisibles, la lettre O pour 0 et I ou L pour 1). Vérifier avec `python generate_keys.py` puis `2` (liste des licences) depuis le Shell du service client, et renvoyer la clé par e-mail avec l'option proposée après `1`. `N lignes pour cet e-mail` à la fin du motif : doublons hérités (`Client@…` et `client@…`) ; la bonne clé fonctionne malgré tout, mais nettoyer avec `4` (supprimer) puis `1` (recréer) |
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
-| Pas assez de matchs à venir | Trêve internationale ou calendrier incomplet chez TheSportsDB ; les cinq championnats compensent en général. Réessayer plus tard |
+| « Pas de championnat aujourd'hui », « Trop peu de matchs aujourd'hui » ou « Les matchs d'aujourd'hui ont déjà commencé » | Pas une panne : les combinés ne portent que sur les matchs du jour (UTC) qui n'ont pas commencé, il en faut 3. Logs du service client : `matchs du jour (AAAA-MM-JJ) : N à venir sur M`. Trêve internationale, ou calendrier de TheSportsDB incomplet : le constat est revérifié toutes les 30 minutes. « Les matchs du jour sont momentanément indisponibles » : un championnat n'a pas répondu chez TheSportsDB, réessayer |
+| Un client ne peut plus générer (« Tu as utilisé tes 2 générations ») | Normal : 2 par jour UTC et par client (voir « Matchs du jour et générations des clients »). Lui en rendre une : `DELETE FROM generation_usage WHERE email = '…' AND day = '…'`. Log `compteur de générations illisible` : la base ne répond pas, personne n'est bloqué pour autant |
 | Les cotes sont toutes précédées de « ≈ » | `ODDS_API_KEY` absente, ou quota de the-odds-api atteint : c'est normal, ce sont des cotes estimées |
-| La page « Combiné gratuit » est vide | Normal tant qu'aucune génération récente n'existe (voir « Pages publiques ») : générer depuis l'espace client, ou activer `AUTO_GENERATE_HOUR`. Si une génération récente existe et que la page reste vide : tous ses combinés ont un match qui commence dans moins de 15 minutes, ou `FREE_PICK_ENABLED=0` |
+| La page « Combiné gratuit » est vide | Normal tant qu'aucune génération n'a été faite avec les matchs d'aujourd'hui (voir « Pages publiques ») : générer depuis l'espace client, ou activer `AUTO_GENERATE_HOUR`. Si une génération du jour existe et que la page reste vide : tous ses combinés ont un match qui commence dans moins de 15 minutes, ou `FREE_PICK_ENABLED=0` |
+| Une page publique (résultats, combiné gratuit) paraît un peu ancienne | Le navigateur les garde 60 secondes (voir « Rapidité des boutons ») : actualiser la page, ou mettre `PUBLIC_PAGE_CACHE_SECONDS=0` sur Render |
 | `/resultats` répond « momentanément indisponibles » | Les fichiers d'historique sont illisibles (disque `DATA_DIR`) : logs du service client, ligne `vitrine : bilan public impossible à calculer`. La page revient seule dès que l'historique est lisible ; un bilan déjà calculé reste affiché malgré une panne |
 | Les résultats n'avancent pas | Les scores sont récupérés chez TheSportsDB en arrière-plan, au plus tous les quarts d'heure et 12 matchs à la fois ; un match dont le score n'est pas encore publié est revérifié toutes les 30 minutes. Tant que le score manque, le combiné reste « en attente » et n'est pas détaillé. Cherche `vitrine : récupération des scores impossible` dans les logs |
 | L'aperçu d'un lien collé dans WhatsApp est vieux ou absent | Les messageries gardent l'aperçu en mémoire un moment. L'image `og:image` doit répondre 200 (`/static/images/partage.png`). Une nouvelle image reçoit seule une nouvelle adresse (empreinte) |
@@ -468,6 +563,7 @@ dans les journaux ; messages d'erreur sans détail technique ; licence revérifi
 - Les résultats publics valent ce que valent les scores disponibles chez TheSportsDB : un match dont le score n'est jamais publié
   garde son combiné « en attente » (il n'est ni compté ni affiché), et le bilan lit les 1000 dernières générations (la page dit « depuis le … »).
 - La qualité des pronostics dépend des données de TheSportsDB (calendriers parfois incomplets) et de l'estimation de
-  l'IA ; le site affiche donc des probabilités, pas des certitudes.
+  l'IA ; le site affiche donc des probabilités, pas des certitudes. Le verdict « Pas de championnat aujourd'hui » vaut ce que vaut
+  ce calendrier, et le « jour » est le jour UTC : un match à 23 h 30 UTC est déjà celui du lendemain à Lagos (UTC+1).
 - Les conditions du site (`/conditions`) décrivent le service tel qu'il est ; les conditions générales de vente, les
   mentions légales et la politique de remboursement doivent être relues par un juriste avant de vendre à grande échelle.

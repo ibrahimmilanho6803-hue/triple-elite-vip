@@ -31,25 +31,34 @@ class Clock:
 
 
 class FakeService:
-    """Ce que Showcase lit d'un GenerationService : le dossier de cache et la dernière génération (jamais rien d'autre)."""
+    """Ce que Showcase lit d'un GenerationService : le dossier de cache, la dernière génération et le constat des matchs du
+    jour (jamais rien d'autre)."""
 
-    def __init__(self, cache_dir, entry=None):
+    def __init__(self, cache_dir, entry=None, verdict=None):
         self.cache_dir = str(cache_dir)
         self.entry = entry
+        self.verdict = verdict
         self.reads = 0
 
     def latest(self):
         self.reads += 1
         return self.entry
 
+    def no_match_today(self):
+        if isinstance(self.verdict, Exception):
+            raise self.verdict
+        return self.verdict
+
     def __getattr__(self, name):                    # tout autre appel (génération...) serait un défaut du module
         raise AssertionError(f"la vitrine ne doit jamais appeler service.{name}")
 
 
-def generation(now=NOW, age=timedelta(hours=1), combos=None):
+def generation(now=NOW, age=timedelta(hours=1), combos=None, day=None):
+    """Une génération faite il y a `age`, avec les matchs du jour où elle a été faite (`day` : AAAA-MM-JJ, pour une autre)."""
     made = now - age
     return {"generated_ts": made.timestamp(), "generated_at": made.isoformat(),
-            "combos": combos if combos is not None else sample_combos(now), "meta": {}}
+            "combos": combos if combos is not None else sample_combos(now),
+            "meta": {"day": day or made.strftime("%Y-%m-%d"), "matches_total": 9}}
 
 
 def make(tmp_path, entry=None, clock=None, cache="cache", **kwargs):
@@ -189,10 +198,84 @@ def test_pas_de_combine_gratuit_sans_heure_de_match_lisible(tmp_path):
 def test_pas_de_combine_gratuit_sans_generation_ou_trop_ancienne(tmp_path):
     assert make(tmp_path, None, cache="a")[0].free_pick() is None
     assert make(tmp_path, generation(age=timedelta(hours=25)), cache="b")[0].free_pick() is None
-    assert make(tmp_path, generation(age=timedelta(hours=23)), cache="c")[0].free_pick() is not None
+    assert make(tmp_path, generation(age=timedelta(hours=9)), cache="c")[0].free_pick() is not None     # à 01 h ce matin
+    assert make(tmp_path, generation(age=timedelta(hours=11)), cache="e")[0].free_pick() is None        # hier à 23 h : un autre jour
     broken = generation()
     broken["generated_ts"] = "hier"
     assert make(tmp_path, broken, cache="d")[0].free_pick() is None
+
+
+# --------------------------------------------------------------------------
+# Combiné gratuit : les matchs d'AUJOURD'HUI seulement
+# --------------------------------------------------------------------------
+
+def test_le_combine_gratuit_porte_sur_les_matchs_d_aujourd_hui(tmp_path):
+    entry = generation(combos=sample_combos(NOW, days=(0, 0)))
+    pick = make(tmp_path, entry)[0].free_pick()
+    assert pick is not None
+    assert {leg["kickoff"][:10] for leg in pick["combo"]["predictions"]} == {"2026-10-08"}
+    assert pick["first_kickoff"].startswith("2026-10-08")
+
+
+def test_une_generation_sans_les_matchs_du_jour_ne_donne_aucun_combine_gratuit(tmp_path):
+    """Générée hier, ou avant « matchs du jour seulement » (pas de jour dans ses métadonnées) : rien d'offert aujourd'hui."""
+    assert make(tmp_path, generation(day="2026-10-07"), cache="a")[0].free_pick() is None
+    legacy = generation()
+    del legacy["meta"]["day"]
+    assert make(tmp_path, legacy, cache="b")[0].free_pick() is None
+    legacy["meta"] = None
+    assert make(tmp_path, legacy, cache="c")[0].free_pick() is None
+    del legacy["meta"]
+    assert make(tmp_path, legacy, cache="d")[0].free_pick() is None
+    legacy["meta"] = {"day": 20261008}                                  # n'importe quoi d'autre qu'un jour lisible
+    assert make(tmp_path, legacy, cache="e")[0].free_pick() is None
+    assert make(tmp_path, generation(), cache="f")[0].free_pick() is not None
+
+
+def test_un_combine_choisi_un_autre_jour_ou_avant_les_matchs_du_jour_ne_revient_pas(tmp_path):
+    shown, service, clock = make(tmp_path, generation())
+    first = shown.free_pick()["combo"]
+    path = tmp_path / "cache" / "free_pick.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["day"] == "2026-10-08"
+    service.entry = None                                                # plus de génération : seul le fichier reste
+    for day in (None, "2026-10-07"):                                    # sans jour (d'avant) ou d'hier : ignoré
+        saved["day"] = day
+        if day is None:
+            del saved["day"]
+        path.write_text(json.dumps(saved), encoding="utf-8")
+        assert Showcase(service, loader=lambda refresh: history_with(), clock=clock, pick_ttl=0).free_pick() is None
+    saved["day"] = "2026-10-08"
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    assert Showcase(service, loader=lambda refresh: history_with(), clock=clock, pick_ttl=0).free_pick()["combo"] == first
+
+
+def test_le_combine_gratuit_du_jour_n_est_plus_offert_le_lendemain(tmp_path):
+    shown, service, clock = make(tmp_path, generation(combos=sample_combos(NOW, days=(0, 0))))
+    assert shown.free_pick() is not None
+    service.entry = None
+    clock.advance(hours=15)                                             # 01 h le lendemain, moins de 24 h plus tard
+    assert shown.free_pick() is None
+
+
+# --------------------------------------------------------------------------
+# Pas de championnat aujourd'hui : le constat du service, relayé tel quel
+# --------------------------------------------------------------------------
+
+def test_le_constat_des_matchs_du_jour_est_relaye_sans_rien_declencher(tmp_path):
+    verdict = {"reason": "none", "title": "Pas de championnat aujourd'hui", "message": "Reviens demain."}
+    service = FakeService(tmp_path / "cache", None, verdict=verdict)
+    shown = Showcase(service, loader=lambda refresh: history_with(), clock=Clock(), pick_ttl=0)
+    assert shown.no_match_today() == verdict
+    assert service.reads == 0                                           # lecture seule : aucune génération consultée
+
+
+def test_sans_constat_ou_si_le_service_echoue_il_n_y_a_pas_de_message_de_jour_sans_match(tmp_path):
+    shown = Showcase(FakeService(tmp_path / "cache"), loader=lambda refresh: history_with(), clock=Clock(), pick_ttl=0)
+    assert shown.no_match_today() is None
+    broken = Showcase(FakeService(tmp_path / "cache", verdict=RuntimeError("disque")),
+                      loader=lambda refresh: history_with(), clock=Clock(), pick_ttl=0)
+    assert broken.no_match_today() is None
 
 
 def test_pas_de_combine_gratuit_quand_tous_les_combines_ont_commence(tmp_path):

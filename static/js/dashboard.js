@@ -24,6 +24,8 @@
   var MSG_TOO_LONG = 'L’analyse prend plus de temps que prévu. Réessaie dans quelques minutes.';
   var MSG_EXPIRED = 'Ces combinés ne sont plus d’actualité (un match a commencé ou ils datent de plus de ' +
     Math.round(CACHE_MINUTES / 60) + NBSP + 'h). Génère-en de nouveaux.';
+  var MSG_NO_MATCH = 'Pas de championnat aujourd’hui';
+  var MSG_QUOTA = 'Tu as utilisé tes générations d’aujourd’hui. Reviens demain pour en lancer de nouvelles.';
 
   function $(id) { return document.getElementById(id); }
 
@@ -230,7 +232,7 @@
 
   // ------------------------------------------------------------------ génération
 
-  var gen = { busy: false, failures: 0, startedAt: 0, pollTimer: null, expiryTimer: null };
+  var gen = { busy: false, blocked: false, failures: 0, startedAt: 0, pollTimer: null, expiryTimer: null };
 
   function clearNotice() { $('notice').textContent = ''; }
 
@@ -242,42 +244,90 @@
       h('p', null, typo(text))));
   }
 
-  function showIdle(message) {
+  // Générations qui restent au client aujourd'hui : c'est le serveur qui compte, ici on n'affiche que son décompte.
+  function setQuota(quota) {
+    var box = $('generate-quota');
+    if (!quota || typeof quota.left !== 'number') { return; }
+    box.hidden = quota.left <= 0;
+    box.textContent = 'Il te reste ' + quota.left + NBSP + 'génération' + (quota.left > 1 ? 's' : '') +
+      ' aujourd’hui (' + quota.limit + NBSP + 'par jour).';
+  }
+
+  function showIdle(message, quota) {
     gen.busy = false;
+    gen.blocked = false;
     clearTimeout(gen.pollTimer);
     $('progress').hidden = true;
     $('results').hidden = true;
+    $('no-match').hidden = true;
     $('generate').hidden = false;
     $('btn-generate').disabled = false;
     $('btn-generate').textContent = 'Générer les combinés';
+    setQuota(quota);
     if (message) { setNotice('info', message); }
+  }
+
+  // Pas de championnat aujourd'hui (ou trop peu de matchs) : rien à générer, et le clic n'a rien coûté.
+  function showNoMatch(d) {
+    gen.busy = false;
+    gen.blocked = true;
+    clearTimeout(gen.pollTimer);
+    $('progress').hidden = true;
+    $('results').hidden = true;
+    $('generate').hidden = true;
+    clearNotice();
+    $('no-match-title').textContent = typo(d.title || MSG_NO_MATCH);
+    $('no-match-text').textContent = typo(d.message || '');
+    $('no-match').hidden = false;
+  }
+
+  // Les générations du jour sont toutes utilisées : le bouton est grisé, le message dit quand revenir.
+  function showQuota(d) {
+    gen.busy = false;
+    gen.blocked = true;
+    clearTimeout(gen.pollTimer);
+    $('progress').hidden = true;
+    $('results').hidden = true;
+    $('no-match').hidden = true;
+    $('generate').hidden = false;
+    $('btn-generate').disabled = true;
+    $('btn-generate').textContent = 'Générer les combinés';
+    $('generate-quota').hidden = true;
+    setNotice('info', d.message || MSG_QUOTA);
   }
 
   function showProgress(progress) {
     var percent = Math.max(1, Math.min(100, parseInt(progress && progress.percent, 10) || 1));
+    gen.blocked = false;
     $('generate').hidden = true;
     $('results').hidden = true;
+    $('no-match').hidden = true;
     $('progress').hidden = false;
     $('progress-msg').textContent = typo((progress && progress.message) || 'Analyse en cours…');
     $('progress-bar').value = percent;
   }
 
-  function showError(message) {
+  function showError(message, quota) {
     gen.busy = false;
+    gen.blocked = false;
     clearTimeout(gen.pollTimer);
     $('progress').hidden = true;
     $('results').hidden = true;
+    $('no-match').hidden = true;
     $('generate').hidden = false;
     $('btn-generate').disabled = false;
     $('btn-generate').textContent = 'Réessayer';
+    setQuota(quota);
     setNotice('erreur', message || MSG_GENERIC);
   }
 
   function showResults(data) {
     gen.busy = false;
+    gen.blocked = false;
     clearTimeout(gen.pollTimer);
     $('progress').hidden = true;
     $('generate').hidden = true;
+    $('no-match').hidden = true;
     clearNotice();
     if (data.stale && data.notice) { setNotice('info', data.notice); }
 
@@ -331,9 +381,12 @@
     request('GET', '/api/generate/status').then(function (r) {
       if (sessionLost(r)) { return; }
       var d = r.data || {};
+      var hadResults = !$('results').hidden;
       if (d.state === 'done') { showResults(d); }
       else if (d.state === 'running') { adoptRunning(d); }
-      else { showIdle(MSG_EXPIRED); }
+      else if (d.state === 'no_match') { showNoMatch(d); }
+      else if (d.state === 'quota') { showQuota(d); }
+      else { showIdle(hadResults ? MSG_EXPIRED : '', d.quota); }
     }, function () { gen.expiryTimer = setTimeout(refreshStatus, 60000); });
   }
 
@@ -354,8 +407,12 @@
       schedulePoll();
     } else if (d.state === 'done') {
       showResults(d);
+    } else if (d.state === 'no_match') {
+      showNoMatch(d);
+    } else if (d.state === 'quota') {
+      showQuota(d);
     } else if (d.state === 'error') {
-      showError(d.error || MSG_GENERIC);
+      showError(d.error || MSG_GENERIC, d.quota);
     } else if (d.state === 'idle' && fromPoll) {
       showError(MSG_LOST);
     } else {
@@ -497,7 +554,7 @@
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') { return; }
     if (gen.busy) { clearTimeout(gen.pollTimer); poll(); }
-    else if (!$('results').hidden) { refreshStatus(); }
+    else if (!$('results').hidden || gen.blocked) { refreshStatus(); }    // le jour a pu changer : verdict et décompte aussi
   });
 
   // ------------------------------------------------------------------ démarrage
@@ -507,8 +564,11 @@
     var d = r.data || {};
     if (d.state === 'running') { adoptRunning(d); }
     else if (d.state === 'done') { showResults(d); }
-    else if (d.state === 'error') { showError(d.error || MSG_GENERIC); }
+    else if (d.state === 'no_match') { showNoMatch(d); }
+    else if (d.state === 'quota') { showQuota(d); }
+    else if (d.state === 'error') { showError(d.error || MSG_GENERIC, d.quota); }
     else if (!r.ok) { showError(d.error || MSG_GENERIC); }
+    else { setQuota(d.quota); }
   }, function () { setNotice('erreur', MSG_NETWORK); });
 
   if (window.location.hash === '#historique') { selectTab('history', false); }

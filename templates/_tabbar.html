@@ -1,10 +1,12 @@
 {# Barre de navigation du bas, sur tous les sites et toutes les pages (sauf « Pas de connexion »). Cinq boutons de même largeur ;
    « Combiné gratuit » disparaît quand la page est coupée (FREE_PICK_ENABLED). La page courante est repérée par la variable
    « active_nav », fixée en tête de chaque page : accueil, gratuit, resultats, vip ou abonnement (rien pour les autres pages).
-   L'accès VIP mène à la page de connexion, qui renvoie tout de suite à l'espace un client déjà connecté. #}
-{% macro tab(key, href, label) %}
+   L'accès VIP mène à la page de connexion, qui renvoie tout de suite à l'espace un client déjà connecté.
+   « public » : le bouton mène à une page publique de ce site, que le navigateur peut garder une minute (voir
+   PUBLIC_PAGE_CACHE_SECONDS) : static/js/tabbar.js la précharge discrètement. Jamais pour l'autre site, la connexion ni l'espace client. #}
+{% macro tab(key, href, label, public=False) %}
     <li>
-      <a class="tabbar__link" href="{{ href }}"{% if active_nav == key %} aria-current="page"{% endif %}>
+      <a class="tabbar__link" href="{{ href }}" data-tab="{{ key }}"{% if active_nav == key %} aria-current="page"{% endif %}{% if public and prefetch_tabs and href.startswith("/") %} data-prefetch{% endif %}>
         <svg class="tabbar__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{{ caller() }}</svg>
         <span class="tabbar__label">{{ label }}</span>
       </a>
@@ -12,17 +14,17 @@
 {% endmacro %}
 <nav class="tabbar" aria-label="Menu principal">
   <ul class="tabbar__list">
-    {% call tab("accueil", home_url, "Accueil") %}
+    {% call tab("accueil", home_url, "Accueil", public=True) %}
       <path d="M3 11.2 12 4l9 7.2"/><path d="M5.5 9.8V20h13V9.8"/><path d="M10 20v-5.5h4V20"/>
     {% endcall %}
     {% if free_pick_enabled %}
-    {% call tab("gratuit", free_url, "Combiné gratuit") %}
+    {% call tab("gratuit", free_url, "Combiné gratuit", public=True) %}
       <rect x="3.5" y="8.5" width="17" height="4" rx="1"/><path d="M5 12.5V20h14v-7.5"/><path d="M12 8.5V20"/>
       <path d="M12 8.5C10 8.5 7.5 8 7.5 6c0-1.5 1.5-2 2.5-1.4 1 .6 2 2.4 2 3.9z"/>
       <path d="M12 8.5c2 0 4.5-.5 4.5-2.5 0-1.5-1.5-2-2.5-1.4-1 .6-2 2.4-2 3.9z"/>
     {% endcall %}
     {% endif %}
-    {% call tab("resultats", results_url, "Résultats combinés") %}
+    {% call tab("resultats", results_url, "Résultats combinés", public=True) %}
       <path d="M4 20.5h16"/><rect x="5" y="12" width="3.4" height="8.5" rx=".8"/>
       <rect x="10.3" y="5.5" width="3.4" height="15" rx=".8"/><rect x="15.6" y="9" width="3.4" height="11.5" rx=".8"/>
     {% endcall %}
@@ -34,3 +36,4 @@
     {% endcall %}
   </ul>
 </nav>
+<script src="{{ asset('js/tabbar.js') }}" defer></script>

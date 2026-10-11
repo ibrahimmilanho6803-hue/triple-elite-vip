@@ -51,6 +51,10 @@ def watch(page):
 
     def on_response(response):
         if response.status >= 400 and response.request.resource_type in ASSET_TYPES:
+            # Page voisine préchargée en tâche de fond (barre de navigation) : si elle est en panne, ce n'est pas un défaut de la
+            # page affichée, et le navigateur ne garde pas une réponse en erreur (voir TestRapiditeDesBoutons).
+            if (response.request.headers.get("sec-purpose") or "").startswith("prefetch"):
+                return
             problems.append(f"ressource en échec : HTTP {response.status} {response.url}")
 
     page.on("console", on_console)

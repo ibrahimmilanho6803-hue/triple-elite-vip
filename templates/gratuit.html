@@ -17,7 +17,9 @@
   <header class="pagehead">
     <h1 class="pagehead__title">Le combiné gratuit du jour</h1>
     {% if pick %}
-    <p class="lead">Un des combinés de notre dernière analyse des cinq grands championnats, offert. Tu vois la cote, la confiance de chaque pronostic et la chance de réussite estimée.</p>
+    <p class="lead">Un des combinés de notre analyse du jour des cinq grands championnats, offert. Tu vois la cote, la confiance de chaque pronostic et la chance de réussite estimée.</p>
+    {% elif no_match %}
+    <p class="lead">Un combiné de notre analyse des cinq grands championnats est offert les jours de match, avec sa cote, la confiance de chaque pronostic et sa chance de réussite estimée.</p>
     {% else %}
     <p class="lead">Un combiné de notre analyse des cinq grands championnats est offert dès qu’elle est prête, avec sa cote, la confiance de chaque pronostic et sa chance de réussite estimée.</p>
     {% endif %}
@@ -57,6 +59,13 @@
           </div>
         </section>
       </div>
+    </div>
+
+    {% elif no_match %}
+    <div class="empty" data-no-match="{{ no_match.reason }}">
+      <p class="empty__title">{{ no_match.title|typo }}</p>
+      <p>{{ no_match.message|typo }}</p>
+      <a class="btn btn--or" href="{{ results_url }}">Voir les résultats</a>
     </div>
 
     {% else %}

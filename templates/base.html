@@ -7,6 +7,8 @@
   <meta name="description" content="{% block description %}Triple Elite VIP : trois combinés de football par génération, cote 2,50 minimum, avec la chance de réussite estimée affichée pour chacun.{% endblock %}">
   <meta name="theme-color" content="#0A0F2C">
   <meta name="color-scheme" content="dark">
+  {# Connexion anticipée vers l'autre site (client <-> paiement) : DNS et TLS sont faits avant que le bouton soit touché. #}
+  {% block preconnect %}<link rel="preconnect" href="{{ sibling_origin }}">{% endblock %}
   {% block robots %}<meta name="robots" content="noindex, nofollow">{% endblock %}
   <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
   {% if pwa %}

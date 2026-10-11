@@ -112,6 +112,15 @@ class LicenseManager:
                         processed BOOLEAN DEFAULT FALSE
                     )
                 ''')
+                # Générations lancées par chaque client, par jour UTC (« AAAA-MM-JJ ») : le plafond quotidien par client.
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS generation_usage (
+                        email TEXT NOT NULL,
+                        day TEXT NOT NULL,
+                        used INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (email, day)
+                    )
+                ''')
                 conn.commit()
                 # Colonnes ajoutées après coup (bases déjà en service) : la clé délivrée et
                 # le fait qu'il s'agisse d'un renouvellement, pour pouvoir les réafficher au
@@ -124,6 +133,7 @@ class LicenseManager:
                         conn.commit()
                     except Exception:
                         conn.rollback()      # colonne déjà présente
+                self._purge_generation_usage(conn)
             log.info("Base de données des licences initialisée (%s)", self.describe_db())
             extra = self.duplicate_count()
             if extra:
@@ -132,6 +142,22 @@ class LicenseManager:
                             "(python generate_keys.py, option 4).", extra)
         except Exception as e:
             log.error("Base de données des licences indisponible : %s", e)
+
+    @staticmethod
+    def _purge_generation_usage(conn, keep_days=30):
+        """Efface les compteurs de générations de plus de `keep_days` jours : seul celui du jour compte, le reste n'est
+        qu'un reliquat qui grossirait la table pour rien. Au démarrage ; sans conséquence si cela échoue."""
+        try:
+            cutoff = (_utcnow() - datetime.timedelta(days=keep_days)).strftime("%Y-%m-%d")
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM generation_usage WHERE day < %s", (cutoff,))
+            conn.commit()
+        except Exception as e:
+            log.warning("nettoyage des anciens compteurs de générations impossible : %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
     def _license_counts(self):
         """(nombre de lignes, nombre d'e-mails distincts à la casse près), ou None si la base est illisible."""
@@ -366,6 +392,58 @@ class LicenseManager:
         except Exception as e:
             log.error("liste des licences impossible : %s", e)
             return []
+
+    # ------------------------------------------------------------------
+    # Générations des clients : un plafond par client et par jour (utilisé par dashboard.py)
+    # ------------------------------------------------------------------
+
+    def reserve_generation(self, email, day, limit):
+        """Réserve une génération du jour (`day` : « AAAA-MM-JJ », UTC) pour ce client, de façon ATOMIQUE : deux clics
+        simultanés ne dépassent jamais la limite. Renvoie (True, n) avec n = générations utilisées, celle-ci comprise, ou
+        (False, n) quand le client a déjà utilisé ses `limit` générations du jour.
+        Lève une exception si la base est injoignable : à l'appelant de décider (ne pas bloquer un client à tort)."""
+        email, limit = normalize_email(email), int(limit)
+        if limit < 1:
+            return False, self.generations_used(email, day)
+        with self._db() as conn:
+            cursor = conn.cursor()
+            # Première génération du jour : la ligne est créée. Suivantes : +1 tant que la limite n'est pas atteinte ; une
+            # fois atteinte, la condition du WHERE est fausse, rien n'est modifié et RETURNING ne renvoie aucune ligne.
+            cursor.execute(
+                "INSERT INTO generation_usage (email, day, used) VALUES (%s, %s, 1) "
+                "ON CONFLICT (email, day) DO UPDATE SET used = generation_usage.used + 1 "
+                "WHERE generation_usage.used < %s RETURNING used", (email, day, limit))
+            row = cursor.fetchone()
+            conn.commit()
+            if row:
+                return True, int(row[0])
+            cursor.execute("SELECT used FROM generation_usage WHERE email = %s AND day = %s", (email, day))
+            current = cursor.fetchone()
+        return False, int(current[0]) if current else limit
+
+    def release_generation(self, email, day):
+        """Rend une génération réservée (l'analyse n'a pas eu lieu, ou n'a donné aucun combiné). Jamais sous zéro. Ne lève
+        jamais : un oubli de remboursement ne doit pas casser la réponse faite au client. Renvoie True si c'est fait."""
+        try:
+            with self._db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE generation_usage SET used = used - 1 WHERE email = %s AND day = %s AND used > 0",
+                               (normalize_email(email), day))
+                conn.commit()
+            return True
+        except Exception as e:
+            log.error("génération du client non rendue : %s", e)
+            return False
+
+    def generations_used(self, email, day):
+        """Générations déjà utilisées par ce client ce jour-là (0 si aucune).
+        Lève une exception si la base est injoignable."""
+        with self._db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT used FROM generation_usage WHERE email = %s AND day = %s",
+                           (normalize_email(email), day))
+            row = cursor.fetchone()
+        return int(row[0]) if row else 0
 
     # ------------------------------------------------------------------
     # Commandes en attente de paiement (utilisées par paiement.py)

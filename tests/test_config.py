@@ -84,7 +84,8 @@ def test_les_adresses_publiques_peuvent_etre_changees_par_variable_d_environneme
 
 def read_config(expression, **environment):
     """Valeur d'une expression de config lue par un Python neuf (config lit l'environnement au chargement)."""
-    env = {k: v for k, v in os.environ.items() if k not in ("FREE_PICK_ENABLED", "AUTO_GENERATE_HOUR")}
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("FREE_PICK_ENABLED", "AUTO_GENERATE_HOUR", "PUBLIC_PAGE_CACHE_SECONDS")}
     env.update(TEV_NO_DOTENV="1", **environment)
     code = f"import sys; sys.path.insert(0, '.'); import config; print(repr({expression}))"
     result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parent.parent, env=env,
@@ -113,3 +114,18 @@ def test_le_combine_gratuit_est_actif_par_defaut_et_se_coupe_par_variable_d_envi
         assert read_config("config.FREE_PICK_ENABLED", FREE_PICK_ENABLED=off) == "False", off
     for on in ("1", "oui", "true"):
         assert read_config("config.FREE_PICK_ENABLED", FREE_PICK_ENABLED=on) == "True", on
+
+
+def test_duree_en_secondes_lue_dans_un_texte():
+    for raw, expected in ((None, 60), ("", 60), ("  ", 60), ("abc", 60), ("-1", 60), ("601", 60), ("6.5", 60),
+                          ("0", 0), ("30", 30), (" 90 ", 90), ("600", 600)):
+        assert config.parse_seconds(raw, 60) == expected, raw
+    assert config.parse_seconds("7", 60, maximum=5) == 60
+
+
+def test_les_pages_publiques_sont_gardees_une_minute_et_cela_se_coupe_par_variable_d_environnement():
+    # Sans réglage : 60 s. PUBLIC_PAGE_CACHE_SECONDS=0 (Render > Environment) retire mémorisation et préchargement.
+    assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS") == "60"
+    assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS", PUBLIC_PAGE_CACHE_SECONDS="0") == "0"
+    assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS", PUBLIC_PAGE_CACHE_SECONDS="120") == "120"
+    assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS", PUBLIC_PAGE_CACHE_SECONDS="longtemps") == "60"

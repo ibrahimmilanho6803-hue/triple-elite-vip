@@ -11,7 +11,15 @@ tous les clients) et le navigateur interroge ensuite son avancement.
 - un seul travail à la fois : des clics répétés ne multiplient pas les appels payants ;
 - plafond quotidien (MAX_GENERATIONS_PAR_JOUR) : au-delà, les derniers combinés
   restent servis ;
-- après un échec, une courte pause évite de relancer aussitôt toute la chaîne.
+- après un échec, une courte pause évite de relancer aussitôt toute la chaîne ;
+- les combinés ne portent que sur les matchs du jour : un jour sans match (ou avec
+  trop peu de matchs), la chaîne s'arrête avant tout appel à l'IA, le service garde
+  ce constat pour la journée (matchday.json) et répond « no_match » à tout le monde,
+  sans rien compter ni dans le plafond du jour ni dans les générations d'un client.
+  Le constat peut aussi être fait sans génération (refresh_matchday : cinq appels
+  gratuits à TheSportsDB, jamais d'IA) : c'est ce que fait la boucle quotidienne dès le
+  début de la journée, pour que « Pas de championnat aujourd'hui » s'affiche sans attendre
+  le premier clic d'un client.
 
 L'état est écrit dans CACHE_DIR (fichiers JSON) pour rester cohérent même si le
 serveur lance plusieurs processus.
@@ -24,11 +32,13 @@ import time
 from datetime import datetime, timezone
 
 import config
-from pipeline import GenerationError, run_pipeline
+from pipeline import NO_MATCH_TEXTS, GenerationError, NoMatchToday, no_match_reason, run_pipeline
 
 log = logging.getLogger(__name__)
 
 FAILURE_COOLDOWN_SECONDS = 120
+MATCHDAY_CHECK_EVERY = 1800      # secondes entre deux vérifications des matchs du jour, tant que le constat est négatif
+MATCHDAY_RETRY_AFTER = 300       # secondes avant de réessayer quand TheSportsDB n'a pas répondu
 
 MSG_DAILY_LIMIT = ("La limite d'analyses du jour est atteinte. Voici les derniers combinés disponibles ; "
                    "de nouveaux seront générés demain.")
@@ -50,12 +60,17 @@ def _iso(timestamp):
 
 
 class GenerationService:
-    def __init__(self, pipeline=run_pipeline, cache_dir=None, results_dir=None, clock=time.time):
+    def __init__(self, pipeline=run_pipeline, cache_dir=None, results_dir=None, clock=time.time, matchday_source=None):
+        """matchday_source : fonction sans argument qui renvoie les matchs du jour (DataCollector.get_matchday) ; sert à
+        refresh_matchday. Par défaut, le vrai collecteur (jamais créé avant d'en avoir besoin)."""
         self.pipeline = pipeline
         self.cache_dir = cache_dir or config.CACHE_DIR
         self.results_dir = results_dir or config.RESULTS_DIR
         self.clock = clock
+        self.matchday_source = matchday_source or self._real_matchday
         self._lock = threading.Lock()
+        self._matchday_lock = threading.Lock()
+        self._matchday_failed_at = None
         self._thread = None
         self._progress = {"step": "", "percent": 0, "message": ""}
         # Copie en mémoire de ce que ce processus a écrit : sert de secours si le
@@ -140,12 +155,92 @@ class GenerationService:
     def _today(self):
         return datetime.fromtimestamp(self.clock(), tz=timezone.utc).strftime("%Y-%m-%d")
 
+    def today(self):
+        """Le jour (UTC, « AAAA-MM-JJ ») selon l'horloge du service : celui des matchs, du plafond et des quotas clients."""
+        return self._today()
+
     def generations_today(self):
         usage = self._read("usage.json") or {}
         return int(usage.get("count", 0)) if usage.get("date") == self._today() else 0
 
     def _count_generation(self):
         self._write("usage.json", {"date": self._today(), "count": self.generations_today() + 1})
+
+    def _uncount_generation(self):
+        """Une analyse arrêtée avant tout appel à l'IA (pas de match aujourd'hui) ne compte pas dans le plafond du jour."""
+        count = self.generations_today()
+        if count > 0:
+            self._write("usage.json", {"date": self._today(), "count": count - 1})
+
+    # ------------------------------------------------------------------
+    # Les matchs du jour : constat gardé pour la journée
+    # ------------------------------------------------------------------
+
+    def _matchday(self):
+        """Le constat enregistré pour AUJOURD'HUI ({"day", "total", "upcoming", "reason", "checked_ts"}), ou None."""
+        record = self._read("matchday.json")
+        if isinstance(record, dict) and record.get("day") == self._today():
+            return record
+        return None
+
+    def _note_matchday(self, total, upcoming):
+        """Enregistre ce que la dernière vérification a vu : `total` matchs aujourd'hui (commencés ou non), `upcoming` encore
+        à venir. Le total ne baisse jamais dans la journée : TheSportsDB ne liste plus les matchs déjà commencés, et c'est ce
+        total qui distingue « pas de championnat aujourd'hui » de « les matchs du jour ont déjà commencé »."""
+        previous = self._matchday() or {}
+        total = max(int(previous.get("total") or 0), int(total or 0), int(upcoming or 0))
+        self._write("matchday.json", {"day": self._today(), "total": total, "upcoming": int(upcoming or 0),
+                                      "reason": no_match_reason(total, int(upcoming or 0)), "checked_ts": self.clock()})
+
+    def no_match_today(self):
+        """{"reason", "title", "message"} quand la vérification d'aujourd'hui a conclu qu'aucun combiné n'est possible
+        (voir pipeline.NO_MATCH_TEXTS), sinon None. Lecture seule : aucun appel réseau, aucun travail lancé."""
+        record = self._matchday()
+        reason = record.get("reason") if record else None
+        if reason not in NO_MATCH_TEXTS:
+            return None
+        title, message = NO_MATCH_TEXTS[reason]
+        return {"reason": reason, "title": title, "message": message}
+
+    @staticmethod
+    def _real_matchday():
+        from data_collector import DataCollector
+        return DataCollector().get_matchday()
+
+    def refresh_matchday(self):
+        """Vérifie les matchs d'aujourd'hui et garde le constat (cinq appels gratuits à TheSportsDB, jamais d'appel à l'IA).
+
+        Appelée par la boucle quotidienne (daily_generation.py), jamais par une requête de visiteur. Sans effet quand le
+        constat du jour est déjà « de quoi composer des combinés », et tant que le dernier constat négatif a moins de
+        MATCHDAY_CHECK_EVERY secondes (un calendrier peut se compléter dans la journée). Ne conclut jamais « pas de match »
+        sur une réponse incomplète : si un championnat n'a pas répondu, rien n'est enregistré et on réessaie dans
+        MATCHDAY_RETRY_AFTER secondes. Renvoie True quand un constat vient d'être enregistré. Ne lève jamais."""
+        with self._matchday_lock:
+            now = self.clock()
+            record = self._matchday()
+            if record is not None:
+                if record.get("reason") is None:
+                    return False
+                try:
+                    if now - float(record.get("checked_ts") or 0) < MATCHDAY_CHECK_EVERY:
+                        return False
+                except (TypeError, ValueError):
+                    pass
+            if self._matchday_failed_at is not None and now - self._matchday_failed_at < MATCHDAY_RETRY_AFTER:
+                return False
+            try:
+                matchday = self.matchday_source()
+                upcoming = len(matchday["matches"])
+                if no_match_reason(matchday.get("total", 0), upcoming) is not None and not matchday.get("complete", True):
+                    raise RuntimeError("réponse incomplète de TheSportsDB")
+            except Exception as e:
+                self._matchday_failed_at = now
+                log.warning("matchs du jour : vérification impossible (%s)", e)
+                return False
+            self._matchday_failed_at = None
+            self._note_matchday(matchday.get("total", 0), upcoming)
+            log.info("matchs du jour (%s) : %d à venir sur %d", self._today(), upcoming, matchday.get("total", 0))
+            return True
 
     # ------------------------------------------------------------------
     # Travail en arrière-plan
@@ -174,32 +269,56 @@ class GenerationService:
             job.update(self._progress)
             self._write("job.json", job)
 
-    def _run(self):
+    @staticmethod
+    def _give_back(refund):
+        """Rend au client le clic qui avait lancé cette analyse, quand elle n'a donné aucun combiné. Ne lève jamais."""
+        if refund is None:
+            return
+        try:
+            refund()
+        except Exception:
+            log.exception("génération du client non rendue")
+
+    def _run(self, refund=None):
+        # Ordre voulu pour chaque issue : constat du jour, clics rendus, et SEULEMENT ENSUITE l'état final du travail (dès
+        # qu'il change, le navigateur du client peut relancer : son clic rendu doit déjà l'être).
         try:
             result = self.pipeline(progress=self._set_progress)
             combos = result["combos"]
             now = self.clock()
             self._save_history(combos)
+            meta = result.get("meta", {})
             self._write("last_generation.json", {
                 "generated_ts": now, "generated_at": _iso(now),
-                "combos": combos, "meta": result.get("meta", {}),
+                "combos": combos, "meta": meta,
             })
+            if meta.get("matches_total") is not None:
+                self._note_matchday(meta.get("day_total"), meta["matches_total"])
             self._write("job.json", {"state": "done", "finished_ts": now})
+        except NoMatchToday as e:
+            log.log(e.level, "génération sans objet : %s (%d match(s) aujourd'hui, %d à venir)",
+                    e.user_message, e.total, e.upcoming)
+            self._note_matchday(e.total, e.upcoming)
+            self._uncount_generation()
+            self._give_back(refund)
+            self._write("job.json", {"state": "no_match", "finished_ts": self.clock()})
         except GenerationError as e:
             log.log(e.level, "génération sans résultat : %s", e.user_message)
+            self._give_back(refund)
             self._write("job.json", {"state": "error", "message": e.user_message,
                                      "finished_ts": self.clock()})
         except Exception:
             log.exception("génération en échec")
+            self._give_back(refund)
             self._write("job.json", {"state": "error", "message": MSG_GENERIC_ERROR,
                                      "finished_ts": self.clock()})
 
-    def _start(self):
+    def _start(self, refund=None):
         self._progress = {"step": "demarrage", "percent": 1, "message": "Démarrage de l'analyse…"}
         self._write("job.json", {"state": "running", "pid": os.getpid(), "started_ts": self.clock(),
                                  **self._progress})
         self._count_generation()
-        self._thread = threading.Thread(target=self._run, name="generation", daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(refund,), name="generation", daemon=True)
         self._thread.start()
 
     # ------------------------------------------------------------------
@@ -226,10 +345,18 @@ class GenerationService:
         if job and job.get("state") == "error" \
                 and self.clock() - float(job.get("finished_ts", 0)) < FAILURE_COOLDOWN_SECONDS:
             return {"state": "error", "error": job.get("message", MSG_GENERIC_ERROR)}
+        verdict = self.no_match_today()
+        if verdict:
+            return {"state": "no_match", **verdict}
         return {"state": "idle"}
 
-    def request_generation(self):
-        """Clic du client : sert le cache s'il est frais, sinon démarre (ou rejoint) le travail."""
+    def request_generation(self, refund=None):
+        """Clic du client : sert le cache s'il est frais, sinon démarre (ou rejoint) le travail.
+
+        Quand CE clic démarre une analyse, la réponse porte "started": True. `refund` : fonction appelée (sans argument) si
+        cette analyse n'aboutit à aucun combiné (panne, pas de match aujourd'hui) : elle rend au client le clic qui l'a
+        lancée. Les clics qui ne démarrent rien (combinés déjà prêts, travail déjà en cours, pause, pas de match) n'ont rien
+        à rendre : l'appelant ne les compte pas."""
         with self._lock:
             current = self.status()
             if current["state"] != "idle":
@@ -239,5 +366,5 @@ class GenerationService:
                 if entry:
                     return self._result("done", entry, cached=True, stale=True, notice=MSG_DAILY_LIMIT)
                 return {"state": "error", "error": MSG_DAILY_LIMIT_EMPTY}
-            self._start()
-            return {"state": "running", "progress": dict(self._progress)}
+            self._start(refund)
+            return {"state": "running", "progress": dict(self._progress), "started": True}

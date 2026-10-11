@@ -7,6 +7,7 @@ Ce que ces tests attrapent et que les tests Flask ne voient pas : un script bloq
 un formulaire refusé par le navigateur (en-têtes Origin/Referer), une page qui déborde sur téléphone,
 un bouton qui ne réagit pas, une erreur JavaScript.
 """
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from playwright.sync_api import expect  # noqa: E402
 import config  # noqa: E402
 import license_manager  # noqa: E402
 from paydunya import PayDunyaError  # noqa: E402
-from pipeline import GenerationError  # noqa: E402
+from pipeline import GenerationError, NoMatchToday  # noqa: E402
 from site_fakes import EMAIL, KEY, history_with, make_pipeline  # noqa: E402
 
 def norm(text):
@@ -228,6 +229,142 @@ class TestGenerationEtHistorique:
         expect(page.locator("#tab-history")).to_have_attribute("aria-selected", "true")
 
 
+def forget_combos(site):
+    """Les combinés générés ne sont plus d'actualité (cache écoulé) : la prochaine demande relance une analyse."""
+    site.service._mem.pop("last_generation.json", None)
+    site.service._mem.pop("job.json", None)
+    for name in ("last_generation.json", "job.json"):
+        path = os.path.join(site.service.cache_dir, name)
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def used_today(site):
+    return site.licenses.usage.get((EMAIL, site.service.today()), 0)
+
+
+class TestGenerationsDuJourEtJourSansChampionnat:
+    """Chaque client a deux générations par jour ; un jour sans championnat, le site répond « Pas de championnat
+    aujourd'hui » et ne compte rien."""
+
+    def test_l_espace_annonce_les_generations_du_jour_et_les_matchs_du_jour(self, page, site):
+        enter(page, site)
+        assert "matchs du jour" in norm(page.locator("#generate-intro").inner_text())
+        assert "jusqu’à trois combinés" in norm(page.locator("#generate-intro").inner_text())
+        expect(page.locator("#generate-quota")).to_be_visible()
+        assert norm(page.locator("#generate-quota").inner_text()) == "Il te reste 2 générations aujourd’hui (2 par jour)."
+        expect(page.locator("#btn-generate")).to_be_enabled()
+        expect(page.locator("#no-match")).to_be_hidden()
+
+    def test_il_reste_une_generation_au_singulier(self, page, site):
+        site.licenses.usage[(EMAIL, site.service.today())] = 1
+        enter(page, site)
+        assert norm(page.locator("#generate-quota").inner_text()) == "Il te reste 1 génération aujourd’hui (2 par jour)."
+
+    def test_la_generation_est_comptee_puis_la_deuxieme_aussi_et_la_troisieme_est_refusee(self, page, site):
+        enter(page, site)
+        page.click("#btn-generate")
+        expect(page.locator("#results")).to_be_visible()
+        assert used_today(site) == 1
+        forget_combos(site)
+        page.reload()
+        expect(page.locator("#generate")).to_be_visible()
+        assert norm(page.locator("#generate-quota").inner_text()) == "Il te reste 1 génération aujourd’hui (2 par jour)."
+        page.click("#btn-generate")
+        expect(page.locator("#results")).to_be_visible()
+        assert used_today(site) == 2 and site.pipeline.state["calls"] == 2
+        forget_combos(site)
+        page.reload()
+        # Plus de génération : le bouton est grisé et le message dit quand revenir. Aucune analyse ne part.
+        expect(page.locator("#notice .notice--info")).to_contain_text("Tu as utilisé tes 2 générations d’aujourd’hui")
+        expect(page.locator("#notice")).to_contain_text("Reviens demain pour en lancer de nouvelles")
+        expect(page.locator("#btn-generate")).to_be_disabled()
+        expect(page.locator("#generate-quota")).to_be_hidden()
+        expect(page.locator("#results")).to_be_hidden()
+        assert site.pipeline.state["calls"] == 2 and used_today(site) == 2
+
+    def test_une_page_restee_ouverte_apprend_que_la_limite_est_atteinte_au_clic(self, page, site):
+        enter(page, site)                                              # la page affiche un bouton actif...
+        site.licenses.usage[(EMAIL, site.service.today())] = 2         # ...mais les deux générations ont été utilisées ailleurs
+        page.click("#btn-generate")
+        expect(page.locator("#notice .notice--info")).to_contain_text("Tu as utilisé tes 2 générations d’aujourd’hui")
+        expect(page.locator("#btn-generate")).to_be_disabled()
+        expect(page.locator("#progress")).to_be_hidden()
+        assert site.pipeline.state["calls"] == 0
+
+    def test_une_analyse_en_echec_ne_coute_rien_au_client(self, page, start_site):
+        site = start_site(pipeline=make_pipeline(delay=0.05, error=GenerationError("L'IA ne répond pas. Réessaie plus tard.")))
+        enter(page, site)
+        page.click("#btn-generate")
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("L’IA ne répond pas")
+        expect(page.locator("#btn-generate")).to_have_text("Réessayer")
+        assert norm(page.locator("#generate-quota").inner_text()) == "Il te reste 2 générations aujourd’hui (2 par jour)."
+        assert used_today(site) == 0
+
+    def test_un_jour_sans_championnat_l_espace_le_dit_des_l_ouverture(self, page, site):
+        site.service._note_matchday(0, 0)                              # le constat que fait la boucle quotidienne, dès minuit
+        enter(page, site)
+        expect(page.locator("#no-match")).to_be_visible()
+        expect(page.locator("#no-match-title")).to_have_text("Pas de championnat aujourd’hui")
+        assert "Reviens demain" in norm(page.locator("#no-match-text").inner_text())
+        expect(page.locator("#generate")).to_be_hidden()
+        expect(page.locator("#btn-generate")).to_be_hidden()
+        expect(page.locator("#results")).to_be_hidden()
+        expect(page.locator("#progress")).to_be_hidden()
+        assert site.pipeline.state["calls"] == 0 and used_today(site) == 0
+
+    def test_un_clic_un_jour_sans_championnat_donne_le_message_et_ne_compte_rien(self, page, start_site):
+        site = start_site(pipeline=make_pipeline(delay=0.05, error=NoMatchToday(0, 0, "2026-10-11")))
+        enter(page, site)
+        page.click("#btn-generate")
+        expect(page.locator("#no-match-title")).to_have_text("Pas de championnat aujourd’hui")
+        expect(page.locator("#no-match")).to_be_visible()
+        expect(page.locator("#progress")).to_be_hidden()
+        expect(page.locator("#notice .notice")).to_have_count(0)       # pas d'erreur rouge : ce n'est pas une panne
+        assert used_today(site) == 0 and site.service.generations_today() == 0
+        page.reload()                                                  # le constat est gardé : plus d'analyse du tout
+        expect(page.locator("#no-match-title")).to_have_text("Pas de championnat aujourd’hui")
+        assert site.pipeline.state["calls"] == 1
+
+    def test_trop_peu_de_matchs_et_matchs_commences_ont_leur_propre_message(self, page, site):
+        site.service._note_matchday(8, 0)
+        enter(page, site)
+        expect(page.locator("#no-match-title")).to_have_text("Les matchs d’aujourd’hui ont déjà commencé")
+        site.service._note_matchday(8, 2)
+        page.reload()
+        expect(page.locator("#no-match-title")).to_have_text("Trop peu de matchs aujourd’hui")
+
+    def test_l_onglet_historique_reste_disponible_un_jour_sans_championnat(self, page, site):
+        site.service._note_matchday(0, 0)
+        enter(page, site)
+        page.click("#tab-history")
+        expect(page.locator("#history-content")).to_be_visible()
+        page.click("#tab-combos")
+        expect(page.locator("#no-match")).to_be_visible()
+
+    def test_la_page_gratuite_dit_pas_de_championnat_aujourd_hui(self, page, site):
+        site.service._note_matchday(0, 0)
+        page.goto(site.url + "/gratuit")
+        expect(page.locator(".empty__title")).to_have_text("Pas de championnat aujourd’hui")
+        expect(page.locator(".empty")).to_have_attribute("data-no-match", "none")
+        expect(page.locator(".free")).to_have_count(0)                 # aucun combiné, aucun partage
+        expect(page.locator("a[href^='https://wa.me/']")).to_have_count(0)
+        page.get_by_role("link", name="Voir les résultats").first.click()
+        expect(page).to_have_url(re.compile(r"/resultats$"))
+        assert site.pipeline.state["calls"] == 0
+
+    @pytest.mark.parametrize("path", ["/gratuit", "/app"])
+    def test_le_message_tient_dans_l_ecran_d_un_telephone(self, phone_page, site, path):
+        site.service._note_matchday(0, 0)
+        if path == "/app":
+            enter(phone_page, site)
+            expect(phone_page.locator("#no-match")).to_be_visible()
+        else:
+            phone_page.goto(site.url + path)
+            expect(phone_page.locator(".empty__title")).to_be_visible()
+        assert no_horizontal_overflow(phone_page)
+
+
 class TestPagesPubliques:
     def test_accueil(self, page, site):
         response = page.goto(site.url + "/")
@@ -428,6 +565,7 @@ def test_espace_client_sans_debordement_sur_telephone(phone_page, site):
 
 BARRE = ["Accueil", "Combiné gratuit", "Résultats combinés", "Accès VIP", "Abonnement VIP"]
 DORE = "rgb(227, 179, 65)"                                              # --or de la feuille de style
+CRAIE = "rgb(165, 173, 208)"                                            # --craie : texte d'un bouton qui n'est pas la page affichée
 TITRES = {"/": "Trois combinés", "/gratuit": "Le combiné gratuit du jour", "/resultats": "Nos résultats, gagnés et perdus",
           "/login": "Connexion"}
 
@@ -562,6 +700,302 @@ class TestBarreDeNavigation:
                              config.SITE_URL + "/login"]                            # pages de l'autre site : adresses complètes
         assert boutons(phone_page)[0][3] == pytest.approx(844, abs=1)
         assert no_horizontal_overflow(phone_page)
+
+
+# ======================================================================================================
+# Rapidité des boutons de la barre : réponse au toucher, pages voisines préchargées, service worker qui ne retarde rien
+# ======================================================================================================
+
+def slow_start(inner, environ, start_response, milliseconds):
+    """Réponse de /sw.js précédée d'une attente de `milliseconds` : le service worker met ce temps à démarrer, comme sur un
+    téléphone modeste (sur le site réel, mesuré à plus de 300 ms sur un ordinateur)."""
+    captured = {}
+
+    def capture(status, headers, exc_info=None):
+        captured["status"] = status
+        captured["headers"] = [(name, value) for name, value in headers if name.lower() != "content-length"]
+        return lambda data: None
+
+    body = b"".join(inner(environ, capture))
+    body = f"var __t = Date.now(); while (Date.now() - __t < {milliseconds}) {{}}\n".encode() + body
+    start_response(captured["status"], captured["headers"] + [("Content-Length", str(len(body)))])
+    return [body]
+
+
+class Journal:
+    """Ce que reçoit le site, page par page (chemin, « Sec-Purpose » du préchargement, en-tête du préchargement de navigation),
+    avec un réseau simulé : `delays` = {chemin: secondes d'attente avant de répondre} ; `sw_boot_ms` : démarrage lent du service
+    worker. Les fichiers statiques ne sont pas comptés."""
+
+    def __init__(self, site, delays=None, sw_boot_ms=0):
+        self.requests, self.delays = [], delays or {}
+        inner = site.app.wsgi_app
+
+        def serve(environ, start_response):
+            path = environ.get("PATH_INFO", "")
+            if path == "/sw.js" and sw_boot_ms:
+                return slow_start(inner, environ, start_response, sw_boot_ms)
+            if not path.startswith("/static/"):
+                self.requests.append({"path": path, "purpose": environ.get("HTTP_SEC_PURPOSE", ""),
+                                      "preload": environ.get("HTTP_SERVICE_WORKER_NAVIGATION_PRELOAD", "")})
+                time.sleep(self.delays.get(path, 0))
+            return inner(environ, start_response)
+
+        site.app.wsgi_app = serve
+
+    def paths(self, start=0, purpose=None):
+        return [r["path"] for r in self.requests[start:] if purpose is None or r["purpose"] == purpose]
+
+    def prefetched(self):
+        return sorted(set(self.paths(purpose="prefetch")))
+
+
+def wait_for_prefetch(page, journal, expected, seconds=10):
+    """Attend que le navigateur ait demandé en tâche de fond les pages `expected`, puis qu'il ait fini de les recevoir."""
+    deadline = time.monotonic() + seconds
+    while journal.prefetched() != sorted(expected):
+        assert time.monotonic() < deadline, f"Délai dépassé : préchargement de {expected} (reçu : {journal.prefetched()})"
+        page.wait_for_timeout(100)
+    page.wait_for_timeout(400)
+
+
+def bouton(page, name):
+    return page.locator("nav.tabbar").get_by_role("link", name=name)
+
+
+# Playwright n'exécute plus rien dans une page dont la navigation est en cours : pour voir ce que montre la barre PENDANT
+# l'attente d'une vraie page, ce script (ajouté à toutes les pages) note l'état à chaque changement et le garde dans
+# sessionStorage, que la page suivante rend lisible.
+ENREGISTREUR_DE_LA_BARRE = """
+addEventListener('click', () => sessionStorage.setItem('__clic', String(performance.now())), true);
+addEventListener('DOMContentLoaded', () => {
+  const bar = document.querySelector('nav.tabbar');
+  if (!bar) { return; }
+  const journal = [];
+  new MutationObserver(() => {
+    const touched = bar.querySelector('.is-pending'), old = bar.querySelector('[aria-current=page]');
+    journal.push({ at: performance.now(), bar: bar.className, touched: touched && touched.dataset.tab,
+                   touchedColor: touched && getComputedStyle(touched).color,
+                   oldColor: old && getComputedStyle(old).color, oldMark: old && getComputedStyle(old, '::before').display });
+    sessionStorage.setItem('__barre', JSON.stringify(journal));
+  }).observe(bar, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  addEventListener('pagehide', () => sessionStorage.setItem('__quitte', String(performance.now())));
+});
+"""
+
+# Empêche la navigation d'un bouton de la barre APRÈS que le script de la barre a réagi (il s'exécute avant, en remontant
+# l'arbre) : la page reste là, ce qui permet de lire son état sans attendre une navigation.
+SANS_NAVIGATION = """document.addEventListener('click', e => { if (e.target.closest('a.tabbar__link')) { e.preventDefault(); } })"""
+
+
+def with_connection(effective_type, save_data=False):
+    """Script qui fait croire à la page qu'elle est sur une connexion de ce type (Chromium sans écran en annonce toujours une bonne)."""
+    return ("Object.defineProperty(navigator, 'connection', { configurable: true, value: "
+            f"{{ effectiveType: '{effective_type}', saveData: {str(save_data).lower()} }} }})")
+
+
+class TestRapiditeDesBoutons:
+    # ---------------------------------------------------------------- réponse au toucher
+    def test_le_bouton_touche_prend_tout_de_suite_l_aspect_de_la_page_affichee(self, phone_page, site, monkeypatch):
+        monkeypatch.setattr(config, "PUBLIC_PAGE_CACHE_SECONDS", 0)               # rien de préchargé : la page est vraiment attendue
+        Journal(site, delays={"/resultats": 1.5})
+        phone_page.add_init_script(ENREGISTREUR_DE_LA_BARRE)
+        phone_page.goto(site.url + "/")
+        bouton(phone_page, "Résultats combinés").click(no_wait_after=True)
+        expect(phone_page).to_have_url(site.url + "/resultats")                   # 1,5 s plus tard
+        expect(phone_page.locator("nav.tabbar a[aria-current=page]")).to_have_text("Résultats combinés")
+        expect(phone_page.locator("nav.tabbar")).not_to_have_class(re.compile("tabbar--pending"))     # page neuve : état d'origine
+        seen = phone_page.evaluate("""() => ({ log: JSON.parse(sessionStorage.getItem('__barre')),
+            click: Number(sessionStorage.getItem('__clic')), left: Number(sessionStorage.getItem('__quitte')) })""")
+        first = seen["log"][0]
+        assert first["touched"] == "resultats" and "tabbar--pending" in first["bar"]
+        assert first["at"] - seen["click"] < 150, seen                             # tout de suite, pas après la réponse du serveur
+        assert seen["left"] - first["at"] > 1200, seen                             # et l'aspect est tenu pendant toute l'attente
+        assert first["touchedColor"] == DORE and first["oldColor"] == CRAIE and first["oldMark"] == "none"  # le doré a changé de bouton, sans fondu
+
+    def test_le_bouton_reagit_des_que_le_doigt_se_pose(self, phone_page, site):
+        phone_page.goto(site.url + "/")
+        link = bouton(phone_page, "Résultats combinés")
+        before = link.evaluate("e => getComputedStyle(e).backgroundColor")
+        box = link.bounding_box()
+        phone_page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 20)
+        phone_page.mouse.down()
+        pressed = link.evaluate("e => getComputedStyle(e).backgroundColor")                        # aussitôt, sans fondu
+        phone_page.wait_for_timeout(500)
+        settled = link.evaluate("e => getComputedStyle(e).backgroundColor")
+        phone_page.mouse.move(5, 100)                                                              # le doigt glisse ailleurs : pas de clic
+        phone_page.mouse.up()
+        assert pressed == settled != before, (before, pressed, settled)
+
+    def test_un_clic_avec_une_touche_enfoncee_laisse_la_barre_telle_quelle(self, page, site):
+        page.goto(site.url + "/")
+        link = bouton(page, "Résultats combinés")
+        link.click(modifiers=["Control"], no_wait_after=True)               # ouvre un autre onglet : cette page ne bouge pas
+        page.wait_for_timeout(300)
+        expect(link).not_to_have_class(re.compile("is-pending"))
+        expect(page.locator("nav.tabbar")).not_to_have_class(re.compile("tabbar--pending"))
+        expect(page).to_have_url(site.url + "/")
+
+    @pytest.mark.parametrize("how", ["delai", "retour-en-arriere", "application-cachee"])
+    def test_le_bouton_retrouve_son_aspect_quand_la_page_ne_vient_pas(self, phone_page, site, how):
+        phone_page.clock.install()
+        phone_page.goto(site.url + "/")
+        phone_page.evaluate(SANS_NAVIGATION)                                       # la page « n'arrive jamais »
+        link, home = bouton(phone_page, "Résultats combinés"), bouton(phone_page, "Accueil")
+        link.click()
+        expect(link).to_have_class(re.compile("is-pending"))
+        assert home.evaluate("e => getComputedStyle(e).color") == CRAIE            # l'ancien bouton s'éteint aussitôt, sans fondu
+        if how == "delai":
+            phone_page.clock.run_for(9000)
+            expect(link).to_have_class(re.compile("is-pending"))                   # 9 s : on attend encore
+            phone_page.clock.run_for(1500)
+        elif how == "retour-en-arriere":                                          # page rendue telle quelle par le navigateur (bfcache)
+            phone_page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))")
+        else:                                                                     # autre application ouverte par-dessus (Android)
+            phone_page.evaluate("""Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+                                   document.dispatchEvent(new Event('visibilitychange'))""")
+        expect(link).not_to_have_class(re.compile("is-pending"))
+        expect(phone_page.locator("nav.tabbar")).not_to_have_class(re.compile("tabbar--pending"))
+        expect(home).to_have_css("color", DORE)                                    # la page affichée reprend sa place (fondu de 0,15 s)
+
+    def test_un_nouveau_toucher_remplace_le_precedent(self, phone_page, site):
+        phone_page.goto(site.url + "/")
+        phone_page.evaluate(SANS_NAVIGATION)
+        bouton(phone_page, "Résultats combinés").click()
+        bouton(phone_page, "Accès VIP").click()
+        expect(phone_page.locator("nav.tabbar .is-pending")).to_have_count(1)
+        expect(bouton(phone_page, "Accès VIP")).to_have_class(re.compile("is-pending"))
+
+    # ---------------------------------------------------------------- pages voisines préchargées
+    def test_les_pages_voisines_sont_preparees_puis_s_ouvrent_sans_aller_au_reseau(self, phone_page, site):
+        make_free_pick(site)
+        journal = Journal(site)
+        phone_page.goto(site.url + "/")
+        # Les deux autres pages publiques, et elles seules : ni la page affichée, ni la connexion, ni le site de paiement.
+        wait_for_prefetch(phone_page, journal, ["/gratuit", "/resultats"])
+        assert journal.paths(purpose="prefetch").count("/gratuit") == journal.paths(purpose="prefetch").count("/resultats") == 1
+        assert "/login" not in journal.paths() and "/app" not in journal.paths()
+        mark = len(journal.requests)
+        bouton(phone_page, "Résultats combinés").click()
+        expect(phone_page.locator("h1")).to_contain_text(TITRES["/resultats"])
+        expect(phone_page.locator("nav.tabbar a[aria-current=page]")).to_have_text("Résultats combinés")
+        assert "/resultats" not in journal.paths(mark), journal.paths(mark)          # servie par le navigateur, pas par le site
+
+    def test_la_page_preparee_est_redemandee_quand_le_delai_est_passe(self, phone_page, site, monkeypatch):
+        monkeypatch.setattr(config, "PUBLIC_PAGE_CACHE_SECONDS", 1)
+        journal = Journal(site)
+        phone_page.goto(site.url + "/")
+        wait_for_prefetch(phone_page, journal, ["/gratuit", "/resultats"])
+        phone_page.wait_for_timeout(2300)                                         # la copie a plus d'une seconde : périmée
+        mark = len(journal.requests)
+        bouton(phone_page, "Résultats combinés").click()
+        expect(phone_page.locator("h1")).to_contain_text(TITRES["/resultats"])
+        assert journal.paths(mark).count("/resultats") == 1                       # une vraie demande, donc une page à jour
+
+    @pytest.mark.parametrize("effective_type, save_data, prefetched", [
+        ("4g", False, True), ("3g", False, True), ("2g", False, False), ("slow-2g", False, False), ("4g", True, False)])
+    def test_le_prechargement_respecte_la_connexion_de_la_personne(self, make_page, site, effective_type, save_data, prefetched):
+        make_free_pick(site)
+        journal = Journal(site)
+        page = make_page(**CHROME_ANDROID)
+        page.add_init_script(with_connection(effective_type, save_data))
+        page.goto(site.url + "/")
+        if prefetched:
+            wait_for_prefetch(page, journal, ["/gratuit", "/resultats"])
+        else:
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(1500)
+            assert journal.prefetched() == []                                       # économie de données ou 2G : aucun transfert en plus
+
+    def test_sans_information_sur_la_connexion_rien_n_est_precharge(self, make_page, site):
+        # Safari et Firefox ne savent pas réutiliser une page préchargée : du transfert pour rien.
+        journal = Journal(site)
+        page = make_page(**CHROME_ANDROID)
+        page.add_init_script("Object.defineProperty(navigator, 'connection', { configurable: true, value: undefined })")
+        page.goto(site.url + "/")
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1500)
+        assert journal.prefetched() == []
+        expect(bouton(page, "Résultats combinés")).to_be_visible()                  # et la barre fonctionne comme d'habitude
+
+    def test_la_duree_zero_coupe_le_prechargement_et_la_memorisation(self, phone_page, site, monkeypatch):
+        monkeypatch.setattr(config, "PUBLIC_PAGE_CACHE_SECONDS", 0)
+        journal = Journal(site)
+        phone_page.goto(site.url + "/")
+        phone_page.wait_for_load_state("networkidle")
+        phone_page.wait_for_timeout(1500)
+        assert journal.prefetched() == []
+        bouton(phone_page, "Résultats combinés").click()
+        expect(phone_page.locator("h1")).to_contain_text(TITRES["/resultats"])
+        assert journal.paths().count("/resultats") == 1
+
+    def test_une_page_voisine_en_panne_n_est_pas_gardee(self, phone_page, start_site):
+        site = start_site(history_error=RuntimeError("base de résultats illisible"))
+        journal = Journal(site)
+        phone_page.goto(site.url + "/")
+        wait_for_prefetch(phone_page, journal, ["/gratuit", "/resultats"])           # /resultats répond 503 : sans effet sur l'accueil
+        expect(phone_page.locator("h1")).to_contain_text(TITRES["/"])
+        mark = len(journal.requests)
+        bouton(phone_page, "Résultats combinés").click()
+        expect(phone_page.locator("body")).to_contain_text("momentanément indisponibles")
+        # La page d'erreur (aucun bouton doré) prépare à son tour les deux autres pages publiques, jamais elle-même.
+        wait_for(phone_page, "document.querySelectorAll('head link[rel=prefetch]').length > 0", "la page d'erreur prépare ses voisines")
+        hints = phone_page.eval_on_selector_all("head link[rel=prefetch]", "els => els.map(e => new URL(e.href).pathname)")
+        assert sorted(hints) == ["/", "/gratuit"], hints
+        assert journal.paths(mark).count("/resultats") == 1                          # l'erreur n'a pas été gardée : vraie demande, une seule
+
+    # ---------------------------------------------------------------- « Accès VIP » droit sur l'espace
+    def test_acces_vip_va_droit_a_l_espace_apres_une_visite_de_l_espace_puis_retrouve_la_connexion(self, page, site):
+        journal = Journal(site)
+        enter(page, site)                                                          # l'espace s'affiche : l'appareil le retient
+        assert page.evaluate("localStorage.getItem('tev-espace')") == "1"
+        page.goto(site.url + "/")
+        vip = bouton(page, "Accès VIP")
+        expect(vip).to_have_attribute("href", "/app")
+        mark = len(journal.requests)
+        vip.click()
+        expect(page).to_have_url(site.url + "/app")
+        expect(page.locator("#app")).to_contain_text("Abonnement actif jusqu’au")
+        assert "/login" not in journal.paths(mark), journal.paths(mark)             # pas de détour par la page de connexion
+        page.click("text=Déconnexion")
+        expect(page).to_have_url(re.compile(r"/login\?raison=deconnecte$"))
+        assert page.evaluate("localStorage.getItem('tev-espace')") is None          # la page de connexion efface le repère
+        page.goto(site.url + "/")
+        expect(bouton(page, "Accès VIP")).to_have_attribute("href", "/login")
+
+    def test_un_repere_perime_ne_trompe_personne(self, page, site):
+        page.goto(site.url + "/login")
+        page.evaluate("localStorage.setItem('tev-espace', '1')")                    # repère resté d'une session finie
+        page.goto(site.url + "/")
+        vip = bouton(page, "Accès VIP")
+        expect(vip).to_have_attribute("href", "/app")
+        vip.click()
+        expect(page).to_have_url(re.compile(r"/login\?raison=session$"))            # /app renvoie à la connexion, comme avant
+        expect(page.locator(".notice")).to_contain_text("session a expiré")
+        assert page.evaluate("localStorage.getItem('tev-espace')") is None          # et le repère disparaît
+        page.goto(site.url + "/")
+        expect(bouton(page, "Accès VIP")).to_have_attribute("href", "/login")
+
+    def test_sans_stockage_le_bouton_acces_vip_reste_un_simple_lien(self, make_page, site):
+        page = make_page(**CHROME_ANDROID)
+        page.add_init_script("""Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('bloqué'); } })""")
+        page.goto(site.url + "/")
+        expect(bouton(page, "Accès VIP")).to_have_attribute("href", "/login")
+        bouton(page, "Accès VIP").click()
+        expect(page).to_have_url(site.url + "/login")
+
+    # ---------------------------------------------------------------- site de paiement
+    def test_le_site_de_paiement_a_le_meme_retour_au_toucher_sans_rien_precharger(self, phone_page, pay_site):
+        phone_page.goto(pay_site.url + "/paiement")
+        phone_page.wait_for_load_state("networkidle")
+        phone_page.wait_for_timeout(1000)
+        expect(phone_page.locator("nav.tabbar a[data-prefetch]")).to_have_count(0)
+        phone_page.evaluate(SANS_NAVIGATION)                                       # (les pages de l'autre site ne sont pas appelées)
+        link = bouton(phone_page, "Accueil")
+        link.click()
+        expect(link).to_have_class(re.compile("is-pending"))
+        assert link.evaluate("e => getComputedStyle(e).color") == DORE
+        assert bouton(phone_page, "Abonnement VIP").evaluate("e => getComputedStyle(e).color") == CRAIE          # l'ancien s'éteint
 
 
 # ======================================================================================================
@@ -842,6 +1276,91 @@ class TestApplication:
         propose_install(page)
         expect(page.locator("[data-install]")).to_be_visible()
         assert no_horizontal_overflow(page)
+
+
+# ======================================================================================================
+# Le service worker ne doit jamais retarder l'ouverture d'une page
+# ======================================================================================================
+
+def stop_service_workers(page):
+    """Arrête le service worker, comme le navigateur le fait après quelques secondes d'inactivité : le toucher suivant
+    doit le redémarrer (de 0,1 s à plus d'une seconde sur un téléphone modeste)."""
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("ServiceWorker.enable")
+    cdp.send("ServiceWorker.stopAllWorkers")
+    page.wait_for_timeout(200)
+
+
+# Note l'instant du toucher (page quittée), puis, sur la page suivante, les instants d'arrivée de la réponse et de la page prête.
+ENREGISTREUR_DU_TOUCHER = "addEventListener('click', () => sessionStorage.setItem('__clic', String(Date.now())), true)"
+DELAIS_DE_LA_PAGE = """() => {
+    const nav = performance.getEntriesByType('navigation')[0], origin = performance.timeOrigin;
+    return { clic: Number(sessionStorage.getItem('__clic')), reponse: origin + nav.responseStart,
+             prete: origin + nav.domContentLoadedEventEnd };
+}"""
+DEMARRAGE_LENT_MS = 2000                 # le service worker met 2 s à démarrer
+SEUIL_MS = 1200                          # une page qui s'ouvre sans l'attendre arrive bien avant
+
+
+class TestServiceWorkerSansRetard:
+    def test_le_service_worker_prepare_la_page_en_meme_temps_qu_il_demarre(self, page, site):
+        page.goto(site.url + "/")
+        wait_for_service_worker(page)
+        state = page.evaluate("navigator.serviceWorker.ready.then(registration => registration.navigationPreload.getState())")
+        assert state["enabled"] is True, state
+
+    @pytest.mark.parametrize("name, path, hits", [("Résultats combinés", "/resultats", 0), ("Accès VIP", "/login", 1)],
+                             ids=["page-preparee", "page-demandee"])
+    def test_un_service_worker_arrete_et_lent_a_demarrer_ne_retarde_pas_la_page(self, phone_page, site, name, path, hits):
+        journal = Journal(site, delays={"/login": 0.15}, sw_boot_ms=DEMARRAGE_LENT_MS)
+        phone_page.add_init_script(ENREGISTREUR_DU_TOUCHER)
+        phone_page.goto(site.url + "/")
+        wait_for_service_worker(phone_page)
+        wait_for_prefetch(phone_page, journal, ["/gratuit", "/resultats"])
+        stop_service_workers(phone_page)
+        mark = len(journal.requests)
+        bouton(phone_page, name).click(no_wait_after=True)
+        expect(phone_page).to_have_url(site.url + path)
+        phone_page.wait_for_load_state("domcontentloaded")
+        times = phone_page.evaluate(DELAIS_DE_LA_PAGE)
+        assert times["prete"] - times["clic"] < SEUIL_MS, times               # sans le réglage : plus de 2 000 ms
+        assert journal.paths(mark).count(path) == hits, journal.paths(mark)   # et une seule demande au site, jamais deux
+
+    def test_un_service_worker_en_marche_ne_demande_la_page_qu_une_fois(self, phone_page, site):
+        journal = Journal(site, delays={"/login": 0.15})
+        phone_page.goto(site.url + "/")
+        wait_for_service_worker(phone_page)
+        phone_page.wait_for_timeout(300)
+        mark = len(journal.requests)
+        bouton(phone_page, "Accès VIP").click(no_wait_after=True)
+        expect(phone_page).to_have_url(site.url + "/login")
+        asked = [r for r in journal.requests[mark:] if r["path"] == "/login"]
+        assert len(asked) == 1 and asked[0]["preload"] == "true", asked         # la demande du navigateur sert, pas de doublon
+
+    def test_sans_connexion_un_service_worker_arrete_affiche_quand_meme_la_page_hors_connexion(self, page, site):
+        page.goto(site.url + "/")
+        wait_for_service_worker(page)
+        go_offline(page)
+        stop_service_workers(page)                  # dans cet ordre : Playwright ne sait plus couper le réseau d'un service worker arrêté
+        page.goto(site.url + "/conditions")         # le réseau échoue d'abord, puis le service worker démarre et répond
+        expect(page.locator("h1")).to_have_text("Pas de connexion")
+        expect(page.get_by_role("link", name="Réessayer")).to_be_visible()
+
+    def test_sans_connexion_ni_cache_du_navigateur_la_page_hors_connexion_garde_son_style(self, page, site):
+        page.goto(site.url + "/")
+        wait_for_service_worker(page)
+        # Le réseau refuse aussi les fichiers du site (et Playwright ne garde plus de cache HTTP pour eux) : seul le cache du
+        # service worker peut les fournir.
+        page.context.route("**/static/**", lambda route: route.abort())
+        go_offline(page)
+        stop_service_workers(page)
+        page.goto(site.url + "/conditions")
+        expect(page.locator("h1")).to_have_text("Pas de connexion")
+        expect(page.locator("body")).to_have_css("background-color", "rgb(10, 15, 44)")
+        families = page.evaluate("""async () => { await document.fonts.ready;
+            return [...document.fonts].filter(font => font.status === 'loaded').map(font => font.family.replaceAll('"', '')); }""")
+        assert {"Onest", "Big Shoulders Display"} <= set(families), families
+        page.problems.clear()                                                    # (les fichiers refusés à dessein)
 
 
 # ======================================================================================================

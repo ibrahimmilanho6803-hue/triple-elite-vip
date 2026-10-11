@@ -9,7 +9,7 @@ import pytest
 import config
 import generation_service
 from generation_service import GenerationService
-from pipeline import GenerationError
+from pipeline import GenerationError, NoMatchToday
 
 
 class Clock:
@@ -240,3 +240,253 @@ def test_disque_inaccessible_le_service_continue_en_memoire(tmp_path):
     done = service.status()
     assert done["state"] == "done" and len(done["combos"]) == 1       # résultat gardé en mémoire
     assert service.request_generation()["state"] == "done"
+
+
+# --------------------------------------------------------------------------
+# Les matchs du jour : « Pas de championnat aujourd'hui »
+# --------------------------------------------------------------------------
+
+NO_MATCH_TITLE = "Pas de championnat aujourd'hui"
+
+
+class Refunds:
+    """Le « clic rendu » d'un client : compte les appels et note l'état du travail au moment où il est rendu."""
+
+    def __init__(self, service):
+        self.service, self.calls, self.states = service, 0, []
+
+    def __call__(self):
+        self.calls += 1
+        self.states.append((self.service._read("job.json") or {}).get("state"))
+
+
+def test_la_reponse_porte_started_seulement_pour_le_clic_qui_lance_l_analyse(dirs):
+    pipeline = Pipeline()
+    pipeline.gate.clear()
+    service = make(dirs, pipeline)
+    first = service.request_generation()
+    assert first["state"] == "running" and first["started"] is True
+    joined = service.request_generation()
+    assert joined["state"] == "running" and "started" not in joined
+    pipeline.gate.set()
+    wait(service)
+    assert "started" not in service.request_generation()                     # combinés frais : rien de lancé
+
+
+def test_le_clic_n_est_pas_rendu_quand_l_analyse_aboutit(dirs):
+    service = make(dirs, Pipeline())
+    refunds = Refunds(service)
+    service.request_generation(refund=refunds)
+    wait(service)
+    assert service.status()["state"] == "done" and refunds.calls == 0
+
+
+@pytest.mark.parametrize("error", [GenerationError("L'IA est en panne."), RuntimeError("bug")])
+def test_le_clic_est_rendu_quand_l_analyse_n_aboutit_a_rien(dirs, error):
+    service = make(dirs, Pipeline(error=error))
+    refunds = Refunds(service)
+    service.request_generation(refund=refunds)
+    wait(service)
+    assert refunds.calls == 1
+    assert refunds.states == ["running"]          # rendu AVANT que l'état final ne soit visible du navigateur
+    assert service.status()["state"] == "error"
+    assert service.generations_today() == 1       # l'analyse payante a bien eu lieu : elle reste dans le plafond du jour
+
+
+def test_un_jour_sans_match_le_clic_est_rendu_et_le_plafond_du_jour_aussi(dirs):
+    pipeline = Pipeline(error=NoMatchToday(0, 0, "2026-10-08"))
+    service = make(dirs, pipeline)
+    refunds = Refunds(service)
+    service.request_generation(refund=refunds)
+    wait(service)
+    assert refunds.calls == 1 and refunds.states == ["running"]
+    assert service.generations_today() == 0       # arrêtée avant l'IA : rien de payé, rien de compté
+    state = service.status()
+    assert state["state"] == "no_match" and state["reason"] == "none" and state["title"] == NO_MATCH_TITLE
+    assert "Reviens demain" in state["message"]
+
+
+def test_un_jour_sans_match_personne_ne_relance_rien(dirs):
+    pipeline = Pipeline(error=NoMatchToday(0, 0, "2026-10-08"))
+    service = make(dirs, pipeline)
+    service.request_generation()
+    wait(service)
+    for _ in range(5):                            # cinq clics de plus, de n'importe quels clients
+        answer = service.request_generation()
+        assert answer["state"] == "no_match" and "started" not in answer
+    assert pipeline.calls == 1 and service.generations_today() == 0
+
+
+def test_le_constat_est_celui_de_la_journee_et_repart_le_lendemain(dirs):
+    clock = Clock()
+    service = make(dirs, Pipeline(error=NoMatchToday(0, 0, "x")), clock)
+    service.request_generation()
+    wait(service)
+    assert service.no_match_today()["reason"] == "none"
+    clock.now += 3 * 3600
+    assert service.status()["state"] == "no_match"            # toujours le même jour
+    clock.now += 24 * 3600
+    assert service.no_match_today() is None and service.status() == {"state": "idle"}
+
+
+def test_des_matchs_vus_plus_tot_font_dire_qu_ils_ont_commence_et_non_qu_il_n_y_en_a_pas(dirs):
+    """TheSportsDB ne liste plus les matchs commencés : un total à 0 en soirée ne doit pas effacer ceux de l'après-midi."""
+    service = make(dirs, Pipeline(error=NoMatchToday(6, 0, "x")))
+    service.request_generation()
+    wait(service)
+    assert service.no_match_today()["reason"] == "started"
+    service._note_matchday(0, 0)                                # une vérification plus tardive ne voit plus rien
+    verdict = service.no_match_today()
+    assert verdict["reason"] == "started" and verdict["title"] == "Les matchs d'aujourd'hui ont déjà commencé"
+
+
+def test_trop_peu_de_matchs_a_venir_a_son_propre_message(dirs):
+    service = make(dirs, Pipeline(error=NoMatchToday(5, 2, "x")))
+    service.request_generation()
+    wait(service)
+    state = service.status()
+    assert state["state"] == "no_match" and state["reason"] == "few" and state["title"] == "Trop peu de matchs aujourd'hui"
+
+
+def test_une_generation_reussie_note_qu_il_y_a_de_quoi_composer_des_combines(dirs):
+    service = make(dirs, Pipeline())
+    service.request_generation()
+    wait(service)
+    assert service.no_match_today() is None
+    assert service._matchday()["upcoming"] == 15 and service._matchday()["reason"] is None
+
+
+def test_une_generation_qui_aboutit_corrige_un_constat_negatif_arrive_pendant_qu_elle_tournait(dirs):
+    pipeline = Pipeline()
+    pipeline.gate.clear()
+    service = make(dirs, pipeline)
+    service.request_generation()
+    service._note_matchday(0, 0)                                # la boucle quotidienne constate « rien » pendant ce temps
+    assert service.no_match_today()["reason"] == "none"
+    pipeline.gate.set()
+    wait(service)
+    assert service.no_match_today() is None and service.status()["state"] == "done"
+
+
+def test_des_combines_frais_priment_sur_un_constat_negatif(dirs):
+    service = make(dirs, Pipeline())
+    service.request_generation()
+    wait(service)
+    service._note_matchday(9, 1)                                # plus que 1 match à venir : pas de NOUVEAU combiné
+    state = service.status()
+    assert state["state"] == "done" and len(state["combos"]) == 1
+
+
+def test_le_constat_illisible_ou_inconnu_est_ignore(dirs):
+    service = make(dirs, Pipeline())
+    assert service.no_match_today() is None
+    service._write("matchday.json", {"day": service.today(), "reason": "n'importe quoi"})
+    assert service.no_match_today() is None                     # raison inconnue : pas de message inventé
+    service._write("matchday.json", {"day": service.today(), "reason": None})
+    assert service.no_match_today() is None
+    service._write("matchday.json", {"reason": "none"})        # sans jour : celui d'un autre jour
+    assert service.no_match_today() is None
+
+
+def test_un_refund_qui_leve_ne_casse_rien(dirs, caplog):
+    service = make(dirs, Pipeline(error=GenerationError("panne")))
+
+    def broken():
+        raise RuntimeError("base injoignable")
+
+    with caplog.at_level(logging.ERROR):
+        service.request_generation(refund=broken)
+        wait(service)
+    assert service.status()["state"] == "error" and "génération du client non rendue" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Le constat gratuit des matchs du jour (refresh_matchday)
+# --------------------------------------------------------------------------
+
+class Matchday:
+    def __init__(self, upcoming=6, total=None, complete=True, error=None):
+        self.upcoming, self.total, self.complete, self.error, self.calls = upcoming, total, complete, error, 0
+
+    def __call__(self):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return {"day": "x", "matches": [{"id": n} for n in range(self.upcoming)],
+                "total": self.upcoming if self.total is None else self.total, "complete": self.complete}
+
+
+def make_checking(dirs, source, clock=None):
+    return GenerationService(pipeline=Pipeline(), cache_dir=dirs[0], results_dir=dirs[1], clock=clock or Clock(),
+                             matchday_source=source)
+
+
+def test_le_constat_enregistre_un_jour_sans_match_sans_aucune_generation(dirs):
+    source = Matchday(upcoming=0)
+    service = make_checking(dirs, source)
+    assert service.refresh_matchday() is True
+    assert service.no_match_today()["title"] == NO_MATCH_TITLE
+    assert service.status()["state"] == "no_match"
+    assert service.generations_today() == 0 and service.pipeline.calls == 0         # aucun appel payant, aucun travail
+    assert service.request_generation()["state"] == "no_match" and service.pipeline.calls == 0
+
+
+def test_le_constat_d_un_jour_de_match_est_garde_sans_etre_refait(dirs):
+    source = Matchday(upcoming=7, total=7)
+    service = make_checking(dirs, source)
+    assert service.refresh_matchday() is True
+    assert service.no_match_today() is None and service._matchday()["upcoming"] == 7
+    for _ in range(5):
+        assert service.refresh_matchday() is False
+    assert source.calls == 1
+
+
+def test_un_constat_negatif_est_refait_toutes_les_demi_heures(dirs):
+    clock, source = Clock(), Matchday(upcoming=0)
+    service = make_checking(dirs, source, clock)
+    service.refresh_matchday()
+    clock.now += generation_service.MATCHDAY_CHECK_EVERY - 1
+    assert service.refresh_matchday() is False and source.calls == 1
+    clock.now += 2
+    source.upcoming = 4                                         # le calendrier s'est complété
+    assert service.refresh_matchday() is True and source.calls == 2
+    assert service.no_match_today() is None
+
+
+def test_une_reponse_incomplete_ou_en_panne_ne_conclut_rien_et_reessaie_plus_tard(dirs):
+    clock = Clock()
+    for source in (Matchday(upcoming=0, complete=False), Matchday(error=OSError("réseau"))):
+        service = make_checking((dirs[0] + str(id(source)), dirs[1]), source, clock)
+        assert service.refresh_matchday() is False
+        assert service.no_match_today() is None and service._read("matchday.json") is None
+        assert service.refresh_matchday() is False and source.calls == 1        # pas de nouvel essai aussitôt
+        clock.now += generation_service.MATCHDAY_RETRY_AFTER
+        service.refresh_matchday()
+        assert source.calls == 2
+
+
+def test_une_reponse_incomplete_mais_avec_assez_de_matchs_suffit(dirs):
+    service = make_checking(dirs, Matchday(upcoming=5, complete=False))
+    assert service.refresh_matchday() is True and service.no_match_today() is None
+
+
+def test_sans_source_injectee_le_service_utilise_le_collecteur_reel_en_dernier_recours(dirs, monkeypatch):
+    """(L'installation de tests interdit le réseau : la source réelle y est remplacée par un refus.)"""
+    service = GenerationService(pipeline=Pipeline(), cache_dir=dirs[0], results_dir=dirs[1], clock=Clock())
+    assert service.matchday_source == service._real_matchday
+    assert service.refresh_matchday() is False and service.no_match_today() is None
+
+
+def test_le_vrai_collecteur_est_appele_sans_argument(dirs, monkeypatch):
+    import data_collector
+    monkeypatch.undo()                                          # rend sa vraie source au service, le temps de ce test
+    calls = []
+
+    class Collector:
+        def get_matchday(self):
+            calls.append(1)
+            return {"day": "x", "matches": [], "total": 0, "complete": True}
+
+    monkeypatch.setattr(data_collector, "DataCollector", Collector)
+    assert GenerationService._real_matchday() == {"day": "x", "matches": [], "total": 0, "complete": True}
+    assert calls == [1]

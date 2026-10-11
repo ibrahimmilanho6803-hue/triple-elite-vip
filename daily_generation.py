@@ -2,7 +2,13 @@
 
 Sans elle, une génération n'existe que si un abonné clique sur « Générer » : les jours calmes, la page « Combiné gratuit »
 reste vide et l'historique public n'avance pas. Avec elle, une génération part chaque jour à l'heure choisie (variable
-AUTO_GENERATE_HOUR, heure UTC), si personne n'en a déjà fait une ce jour-là.
+AUTO_GENERATE_HOUR, heure UTC), si personne n'en a déjà fait une ce jour-là, c'est-à-dire composée avec les matchs de CE
+jour. Un jour sans match (ou avec trop peu de matchs), elle le constate sans appeler l'IA et n'insiste pas : « Pas de
+championnat aujourd'hui », sur la page « Combiné gratuit » comme chez les abonnés.
+
+La boucle fait aussi, dès le début de chaque journée et AVANT l'heure de génération, le constat des matchs du jour
+(GenerationService.refresh_matchday : gratuit, aucun appel à l'IA). C'est lui qui permet d'afficher « Pas de championnat
+aujourd'hui » dès minuit, sans attendre la génération ni le clic d'un abonné.
 
 DÉSACTIVÉE par défaut : une génération est un appel payant à l'IA (de l'ordre de 0,2 $). Elle passe par
 GenerationService.request_generation, donc par les mêmes garde-fous que le clic d'un abonné : un seul travail à la fois,
@@ -32,34 +38,43 @@ class DailyGeneration:
         self._thread = None
 
     def _generated_on(self, day):
-        """Une génération réussie existe-t-elle déjà pour ce jour (UTC) ?"""
+        """Une génération réussie existe-t-elle déjà pour ce jour (UTC) ? Il faut qu'elle ait été composée avec les matchs
+        de CE jour (« day » dans ses métadonnées) : une génération d'avant le passage aux matchs du jour seulement, qui
+        portait sur les prochains jours, ne compte pas."""
         entry = self.service.latest()
+        meta = entry.get("meta") if isinstance(entry, dict) else None
+        return isinstance(meta, dict) and meta.get("day") == day.isoformat()
+
+    def _watch_matchday(self):
+        """Le constat des matchs du jour : gratuit, et fait même avant l'heure de génération. Ne lève jamais."""
         try:
-            stamp = float(entry["generated_ts"]) if entry else None
-        except (KeyError, TypeError, ValueError):
-            return False
-        return stamp is not None and datetime.fromtimestamp(stamp, tz=timezone.utc).date() == day
+            self.service.refresh_matchday()
+        except Exception:
+            log.exception("génération automatique : constat des matchs du jour en échec")
 
     def tick(self):
         """Une vérification. Renvoie ce qui s'est passé (pour les journaux et les tests) :
-        'attente' (trop tôt), 'faite' (déjà une génération aujourd'hui), 'abandon' (trop de tentatives),
+        'attente' (trop tôt), 'faite' (déjà une génération aujourd'hui), 'sans_match' (pas de match aujourd'hui, ou trop
+        peu : rien à générer, et on ne redemande pas toutes les minutes), 'abandon' (trop de tentatives),
         'lancee' (un travail a démarré), ou l'état renvoyé par le service ('running', 'done', 'error')."""
         now = datetime.fromtimestamp(self.clock(), tz=timezone.utc)
         if self._day != now.date():
             self._day, self._attempts = now.date(), 0
+        self._watch_matchday()
         if now.hour < self.hour:
             return "attente"
         if self._generated_on(now.date()):
             return "faite"
+        if self.service.no_match_today():
+            return "sans_match"
         if self._attempts >= self.max_attempts:
             return "abandon"
-        before = self.service.generations_today()
-        state = self.service.request_generation().get("state")
-        if self.service.generations_today() > before:       # un nouveau travail a vraiment démarré (et non rejoint)
+        response = self.service.request_generation()
+        if response.get("started"):                          # un nouveau travail a vraiment démarré (et non rejoint)
             self._attempts += 1
             log.info("génération automatique lancée (tentative %d/%d)", self._attempts, self.max_attempts)
             return "lancee"
-        return state
+        return response.get("state")
 
     def _loop(self):
         while True:

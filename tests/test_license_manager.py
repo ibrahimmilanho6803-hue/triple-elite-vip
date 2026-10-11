@@ -537,3 +537,105 @@ def test_le_renouvellement_previent_dans_les_journaux_quand_il_y_a_des_doublons(
     caplog.set_level("WARNING", logger="license_manager")
     lm.issue_license("client@exemple.com", 1)
     assert "2 lignes de licence pour c***@exemple.com" in caplog.text and "client@exemple.com" not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Générations des clients : un plafond par client et par jour (generation_usage)
+# --------------------------------------------------------------------------
+
+DAY = "2026-10-08"
+
+
+def test_les_generations_sont_comptees_jusqu_a_la_limite(lm):
+    assert lm.generations_used("client@exemple.com", DAY) == 0
+    assert lm.reserve_generation("client@exemple.com", DAY, 2) == (True, 1)
+    assert lm.reserve_generation("client@exemple.com", DAY, 2) == (True, 2)
+    for _ in range(3):
+        assert lm.reserve_generation("client@exemple.com", DAY, 2) == (False, 2)       # jamais au-delà de la limite
+    assert lm.generations_used("client@exemple.com", DAY) == 2
+
+
+def test_chaque_client_et_chaque_jour_ont_leur_compteur(lm):
+    lm.reserve_generation("a@b.com", DAY, 2)
+    lm.reserve_generation("a@b.com", DAY, 2)
+    assert lm.reserve_generation("c@d.com", DAY, 2) == (True, 1)                       # un autre client
+    assert lm.reserve_generation("a@b.com", "2026-10-09", 2) == (True, 1)              # le lendemain
+    assert lm.generations_used("a@b.com", DAY) == 2 and lm.generations_used("a@b.com", "2026-10-09") == 1
+
+
+def test_l_adresse_est_comptee_sans_tenir_compte_de_la_casse_ni_des_espaces(lm):
+    assert lm.reserve_generation("  Client@Exemple.COM ", DAY, 2) == (True, 1)
+    assert lm.reserve_generation("client@exemple.com", DAY, 2) == (True, 2)
+    assert lm.reserve_generation("CLIENT@exemple.com ", DAY, 2) == (False, 2)
+    assert lm.generations_used("Client@exemple.com", DAY) == 2
+
+
+def test_une_generation_rendue_peut_etre_reprise_et_jamais_sous_zero(lm):
+    assert lm.release_generation("a@b.com", DAY) is True                               # rien à rendre : sans effet
+    assert lm.generations_used("a@b.com", DAY) == 0
+    lm.reserve_generation("a@b.com", DAY, 2)
+    lm.reserve_generation("a@b.com", DAY, 2)
+    assert lm.release_generation("A@b.com", DAY) is True
+    assert lm.generations_used("a@b.com", DAY) == 1
+    assert lm.reserve_generation("a@b.com", DAY, 2) == (True, 2)
+    for _ in range(4):
+        lm.release_generation("a@b.com", DAY)
+    assert lm.generations_used("a@b.com", DAY) == 0                                    # jamais négatif
+
+
+def test_une_limite_nulle_ne_laisse_rien_passer(lm):
+    assert lm.reserve_generation("a@b.com", DAY, 0) == (False, 0)
+    assert lm.reserve_generation("a@b.com", DAY, -3) == (False, 0)
+    assert lm.generations_used("a@b.com", DAY) == 0
+
+
+def test_deux_clics_simultanes_ne_depassent_jamais_la_limite(lm):
+    results, barrier = [], threading.Barrier(12)
+
+    def click():
+        barrier.wait()
+        results.append(lm.reserve_generation("a@b.com", DAY, 2))
+
+    threads = [threading.Thread(target=click) for _ in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(20)
+    assert len(results) == 12
+    assert sorted(ok for ok, _ in results) == [False] * 10 + [True] * 2               # exactement deux réussites
+    assert sorted(n for ok, n in results if ok) == [1, 2]
+    assert lm.generations_used("a@b.com", DAY) == 2
+
+
+def test_une_base_injoignable_se_signale_pour_la_reservation_mais_pas_pour_le_remboursement(caplog):
+    def broken():
+        raise OSError("connexion refusée")
+
+    lm = LicenseManager(db_url="x", connect=broken)
+    with pytest.raises(OSError):
+        lm.reserve_generation("a@b.com", DAY, 2)               # à l'appelant de décider (le site ne bloque alors personne)
+    with pytest.raises(OSError):
+        lm.generations_used("a@b.com", DAY)
+    with caplog.at_level(logging.ERROR, logger="license_manager"):
+        assert lm.release_generation("a@b.com", DAY) is False  # jamais d'exception : la réponse au client ne casse pas
+    assert "génération du client non rendue" in caplog.text
+
+
+def test_les_compteurs_de_plus_de_trente_jours_sont_effaces_au_demarrage(path):
+    first = sqlite_license_manager(path)
+    today = license_manager._utcnow().strftime("%Y-%m-%d")
+    old = (license_manager._utcnow() - datetime.timedelta(days=45)).strftime("%Y-%m-%d")
+    recent = (license_manager._utcnow() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+    for day in (today, recent, old):
+        first.reserve_generation("a@b.com", day, 2)
+    sqlite_license_manager(path)                               # un nouveau démarrage
+    assert first.generations_used("a@b.com", old) == 0
+    assert first.generations_used("a@b.com", recent) == 1 and first.generations_used("a@b.com", today) == 1
+
+
+def test_la_table_est_creee_sur_une_base_deja_en_service(path):
+    sqlite_license_manager(path).issue_license("a@b.com", 1)
+    raw(path, "DROP TABLE generation_usage")                   # une base d'avant ce plafond
+    upgraded = sqlite_license_manager(path)
+    assert upgraded.reserve_generation("a@b.com", DAY, 2) == (True, 1)
+    assert upgraded.verify_license("a@b.com", upgraded.list_licenses()[0]["key"])[0] is True    # le reste n'a pas bougé
