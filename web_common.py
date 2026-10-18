@@ -117,6 +117,16 @@ def join_fr(items):
     return ", ".join(items[:-1]) + " et " + items[-1]
 
 
+_NUMBER_WORDS = ("zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix", "onze", "douze",
+                 "treize", "quatorze", "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf", "vingt")
+
+
+def number_word(number):
+    """Un petit nombre en toutes lettres (« onze »), pour que les textes suivent config.LEAGUES au lieu de répéter un nombre
+    écrit à la main. Au-delà de vingt : les chiffres."""
+    return _NUMBER_WORDS[number] if isinstance(number, int) and 0 <= number < len(_NUMBER_WORDS) else str(number)
+
+
 # Formats des pages publiques écrites côté serveur (static/js/dashboard.js fait la même chose dans le navigateur, avec Intl).
 _JOURS = ("lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim.")
 _MOIS = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
@@ -444,6 +454,10 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
             # Moyens de paiement annoncés (voir config.py) : lus à chaque requête, donc faciles à tester.
             "cards_enabled": bool(config.CARDS_ENABLED),
             "payment_countries": join_fr(config.PAYMENT_COUNTRIES),
+            # Les compétitions suivies (voir config.LEAGUES) : leur nombre en toutes lettres, leurs noms, et de quoi les lister.
+            "league_count": number_word(len(config.LEAGUES)),
+            "league_names": join_fr([config.LEAGUE_CARDS[name][0] for name in config.LEAGUES]),
+            "league_cards": [config.LEAGUE_CARDS[name] for name in config.LEAGUES],
             "target_odds": f"{config.TARGET_ODDS:.2f}".replace(".", ","),
             "min_confidence": config.MIN_CONFIDENCE,
             "cache_minutes": config.CACHE_MINUTES,

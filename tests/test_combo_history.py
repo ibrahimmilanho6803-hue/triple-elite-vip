@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 
 import pytest
 import requests
@@ -43,8 +44,10 @@ def leg(match_id, code, home=None, away=None, **extra):
     return base
 
 
-def write(e, stamp, combos):
-    with open(os.path.join(e.results, f"combo_{stamp}.json"), "w", encoding="utf-8") as f:
+def write(e, stamp, combos, owner=None):
+    """Écrit un fichier de l'historique. `owner` : l'identifiant opaque du client qui l'a généré (rien : génération automatique)."""
+    name = f"combo_{stamp}.json" if owner is None else f"combo_{stamp}_{owner}.json"
+    with open(os.path.join(e.results, name), "w", encoding="utf-8") as f:
         json.dump(combos, f)
 
 
@@ -262,3 +265,99 @@ def test_dossier_et_base_absents(tmp_path, monkeypatch):
     data = load_history(str(tmp_path / "rien"), db_path=str(tmp_path / "absente.db"), refresh=False)
     assert data["combos"] == [] and data["summary"]["won"] == 0
     assert summarize([])["leg_win_rate"] is None
+
+
+# --------------------------------------------------------------------------
+# Chaque client voit SES combinés : ceux des autres ne s'affichent qu'une fois tous leurs matchs commencés
+# --------------------------------------------------------------------------
+
+ALICE, BOB, CAROL = "a1b2c3d4e5f60718", "0123456789abcdef", "fedcba9876543210"
+NOON = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc).timestamp()
+
+
+def at(hour, day="2026-10-10"):
+    return f"{day}T{hour:02d}:00:00+00:00"
+
+
+def trio(first, kickoff=at(20), types=("V1", "V1", "V1")):
+    """Un combiné de trois matchs consécutifs à partir de `first`, tous au même coup d'envoi."""
+    return combo(*[leg(first + n, code, kickoff=kickoff) for n, code in enumerate(types)])
+
+
+def history_for(env, viewer):
+    return load_history(env.results, db_path=env.db, refresh=False, viewer=viewer, now=NOON)
+
+
+def teams(data):
+    return sorted(l["home_team"] for c in data["combos"] for l in c["predictions"])
+
+
+def test_un_client_voit_ses_combines_a_venir_et_pas_ceux_des_autres(env, monkeypatch):
+    no_network(monkeypatch)
+    write(env, "20261010_080000", [trio(1)], owner=ALICE)
+    write(env, "20261010_081000", [trio(4)], owner=BOB)
+    write(env, "20261010_060000", [trio(7)])                                      # génération automatique de 6 h
+    assert teams(history_for(env, ALICE)) == ["H1", "H2", "H3"]
+    assert teams(history_for(env, BOB)) == ["H4", "H5", "H6"]
+    assert teams(history_for(env, CAROL)) == []                                    # ni les combinés des autres, ni ceux de la maison
+    assert len(history_for(env, None)["combos"]) == 3                              # sans identifiant (pages publiques) : tout
+
+
+def test_les_combines_des_autres_apparaissent_quand_tous_leurs_matchs_ont_commence(env, monkeypatch):
+    no_network(monkeypatch)
+    write(env, "20261010_080000", [trio(1, kickoff=at(9))], owner=ALICE)             # commencés à 9 h
+    write(env, "20261010_081000", [combo(leg(4, "V1", kickoff=at(9)), leg(5, "V1", kickoff=at(9)),
+                                         leg(6, "V1", kickoff=at(20)))], owner=BOB)   # un match encore à jouer à 20 h
+    write(env, "20261010_060000", [trio(7, kickoff=at(11))])
+    assert teams(history_for(env, CAROL)) == ["H1", "H2", "H3", "H7", "H8", "H9"]      # le combiné de Bob reste caché
+    assert teams(history_for(env, BOB)) == ["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9"]   # le sien, il le voit toujours
+    assert teams(history_for(env, ALICE)) == ["H1", "H2", "H3", "H7", "H8", "H9"]
+
+
+def test_un_combine_recu_par_plusieurs_clients_est_visible_pour_chacun_une_seule_fois(env, monkeypatch):
+    no_network(monkeypatch)
+    write(env, "20261010_080000", [trio(1)], owner=ALICE)
+    write(env, "20261010_081000", [trio(1)], owner=BOB)                              # exactement le même combiné
+    for viewer in (ALICE, BOB):
+        assert teams(history_for(env, viewer)) == ["H1", "H2", "H3"], viewer
+    assert teams(history_for(env, CAROL)) == []
+    assert len(history_for(env, None)["combos"]) == 1                                  # une seule ligne dans l'historique public
+
+
+def test_un_combine_de_la_maison_regenere_par_un_client_le_reste_pour_les_deux(env, monkeypatch):
+    no_network(monkeypatch)
+    write(env, "20261010_060000", [trio(1)])
+    write(env, "20261010_090000", [trio(1)], owner=ALICE)
+    assert teams(history_for(env, ALICE)) == ["H1", "H2", "H3"] and teams(history_for(env, BOB)) == []
+
+
+def test_le_bilan_ne_compte_que_les_combines_montres(env, monkeypatch):
+    no_network(monkeypatch)
+    for match_id in (1, 2, 3, 7, 8, 9):
+        final(env, match_id, f"H{match_id}", f"A{match_id}", 2, 0)
+    write(env, "20261009_080000", [trio(1, kickoff=at(20, "2026-10-09"))], owner=BOB)       # joué hier, gagné : visible pour tous
+    write(env, "20261010_080000", [trio(4)], owner=ALICE)                                   # le sien, pas encore joué
+    write(env, "20261010_081000", [trio(7)], owner=BOB)                                     # celui de Bob, à venir (score déjà en base)
+    mine = history_for(env, ALICE)
+    assert len(mine["combos"]) == 2 and (mine["summary"]["won"], mine["summary"]["pending"]) == (1, 1)
+    other = history_for(env, CAROL)
+    assert len(other["combos"]) == 1 and (other["summary"]["won"], other["summary"]["pending"]) == (1, 0)
+    public = history_for(env, None)
+    assert len(public["combos"]) == 3 and public["summary"]["won"] == 2
+
+
+def test_un_match_sans_heure_est_juge_par_le_jour_de_la_generation(env, monkeypatch):
+    no_network(monkeypatch)
+    nohour = combo(leg(1, "V1", kickoff=None), leg(2, "V1", kickoff=None), leg(3, "V1", kickoff=None))
+    write(env, "20261009_080000", [nohour], owner=ALICE)                             # généré hier : le jour est passé
+    nohour_today = combo(leg(4, "V1", kickoff=None), leg(5, "V1", kickoff=None), leg(6, "V1", kickoff=None))
+    write(env, "20261010_080000", [nohour_today], owner=ALICE)                       # généré aujourd'hui : pas fini
+    assert teams(history_for(env, BOB)) == ["H1", "H2", "H3"]
+    assert teams(history_for(env, ALICE)) == ["H1", "H2", "H3", "H4", "H5", "H6"]
+
+
+def test_les_fichiers_aux_noms_inconnus_sont_ignores_sans_fausser_les_proprietaires(env, monkeypatch):
+    no_network(monkeypatch)
+    write(env, "20261010_080000", [trio(1)], owner="PAS-UN-IDENTIFIANT")                # nom invalide : pas un fichier de l'historique
+    write(env, "20261010_081000", [trio(4)], owner=ALICE)
+    assert teams(history_for(env, ALICE)) == ["H4", "H5", "H6"] and teams(history_for(env, None)) == ["H4", "H5", "H6"]

@@ -11,6 +11,7 @@ import config
 import dashboard
 import license_manager
 from generation_service import FAILURE_COOLDOWN_SECONDS, GenerationService
+from helpers import join_jobs
 from pipeline import GenerationError, NoMatchToday
 from site_fakes import EMAIL, KEY, FakeLicenses, make_pipeline, sample_combos, sample_history
 
@@ -29,8 +30,10 @@ def env(tmp_path):
     e.service = GenerationService(pipeline=e.pipeline, cache_dir=str(tmp_path / "cache"), results_dir=str(tmp_path / "results"))
     e.history = sample_history()
     e.history_error = None
+    e.history_viewers = []                  # pour qui l'historique a été demandé
 
-    def load_history():
+    def load_history(viewer=None):
+        e.history_viewers.append(viewer)
         if e.history_error:
             raise e.history_error
         return e.history
@@ -47,8 +50,7 @@ def login(client, email=EMAIL, key=KEY, **kwargs):
 
 
 def wait_for_job(env):
-    if env.service._thread:
-        env.service._thread.join(10)
+    join_jobs(env.service, 10)
 
 
 # --------------------------------------------------------------------------
@@ -459,7 +461,7 @@ def test_anciennes_routes_supprimees(env):
 # Génération et historique
 # --------------------------------------------------------------------------
 
-def test_generation_avec_suivi_puis_resultat_partage(env):
+def test_generation_avec_suivi_puis_resultat_personnel(env):
     login(env.client)
     assert env.client.get("/api/generate/status").get_json() == {"state": "idle", "quota": {"limit": 2, "used": 0, "left": 2}}
     started = env.client.post("/api/generate", headers=AJAX).get_json()
@@ -469,11 +471,16 @@ def test_generation_avec_suivi_puis_resultat_partage(env):
     assert done["state"] == "done" and len(done["combos"]) == 3 and done["meta"]["matches_total"] == 15
     leg = done["combos"][0]["predictions"][0]
     assert {"type_name", "estimated_odds", "odds_source", "confidence", "kickoff", "home_team"} <= set(leg)
-    # Un autre abonné ne relance rien : il reçoit les mêmes combinés.
+    # Un autre abonné ne voit RIEN de ces combinés, seulement le bouton : les siens viendront de sa propre génération.
     other = dashboard_client(env, "autre@exemple.com")
-    assert other.get("/api/generate/status").get_json()["combos"] == done["combos"]
-    other.post("/api/generate", headers=AJAX)
+    assert other.get("/api/generate/status").get_json() == {"state": "idle", "quota": {"limit": 2, "used": 0, "left": 2}}
     assert env.pipeline.state["calls"] == 1
+    assert other.post("/api/generate", headers=AJAX).get_json()["started"] is True
+    wait_for_job(env)
+    assert env.pipeline.state["calls"] == 2                                           # son propre travail, pas celui du premier
+    mine = other.get("/api/generate/status").get_json()
+    assert mine["state"] == "done" and len(mine["combos"]) == 3
+    assert env.client.get("/api/generate/status").get_json()["combos"] == done["combos"]    # et le premier garde les siens
 
 
 def dashboard_client(env, email):
@@ -501,6 +508,47 @@ def test_historique(env):
     data = env.client.get("/api/history").get_json()
     assert data == json.loads(json.dumps(env.history))
     assert data["summary"]["combos_settled"] == 5 and len(data["combos"]) == 4
+
+
+def test_l_historique_est_demande_pour_le_client_connecte(env):
+    login(env.client)
+    other = dashboard_client(env, "autre@exemple.com")
+    assert env.client.get("/api/history").status_code == 200 and other.get("/api/history").status_code == 200
+    assert env.history_viewers == [GenerationService.scope_of(EMAIL), GenerationService.scope_of("autre@exemple.com")]
+    assert env.history_viewers[0] != env.history_viewers[1]
+
+
+def renumbered(combos, offset):
+    for combo in combos:
+        for item in combo["predictions"]:
+            item["match_id"] = str(int(item["match_id"]) + offset)
+    return combos
+
+
+def test_l_historique_reel_ne_montre_que_les_combines_du_client_connecte(env, monkeypatch, tmp_path):
+    """Le vrai chargeur d'historique sur de vrais fichiers : les combinés à venir qu'un autre abonné a générés n'y sont pas."""
+    import combo_history
+    monkeypatch.setattr(config, "RESULTS_DIR", env.service.results_dir)
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "scores.db"))
+    monkeypatch.setattr(combo_history, "refresh_pending_results", lambda *args, **kwargs: False)       # jamais de réseau
+    app = dashboard.create_app(lm=env.licenses, service=env.service)
+    app.config["TESTING"] = True
+    alice, bob = app.test_client(), app.test_client()
+    login(alice)
+    env.licenses.records["bob@exemple.com"] = {"key": "fedcba9876543210", "active": True,
+                                               "expires": license_manager._utcnow() + timedelta(days=5)}
+    login(bob, email="bob@exemple.com", key="fedcba9876543210")
+    assert alice.get("/api/history").get_json()["combos"] == []
+    alice.post("/api/generate", headers=AJAX)
+    wait_for_job(env)
+    env.service.pipeline = make_pipeline(delay=0.0, combos=renumbered(sample_combos(), 100))       # d'autres matchs pour Bob
+    bob.post("/api/generate", headers=AJAX)
+    wait_for_job(env)
+    for client in (alice, bob):
+        history = client.get("/api/history").get_json()
+        assert len(history["combos"]) == 3 and history["summary"]["pending"] == 3, "ni plus, ni les combinés de l'autre"
+    anonymous = app.test_client().get("/api/history")
+    assert anonymous.status_code in (401, 403)
 
 
 def test_historique_en_erreur_ne_revele_rien(env):
@@ -571,25 +619,48 @@ def test_le_clic_qui_demarre_une_analyse_consomme_une_generation(timed):
     assert done["state"] == "done" and "quota" not in done              # les combinés s'affichent, plus de bouton
 
 
-def test_afficher_des_combines_deja_prets_ou_rejoindre_un_travail_ne_coute_rien(timed):
+def test_afficher_ses_combines_deja_prets_ou_rejoindre_son_travail_ne_coute_rien(timed):
     gate = threading.Event()
 
-    def slow(progress=None):
+    def slow(progress=None, variety=None):
+        gate.wait(5)
+        return {"combos": sample_combos(NOW), "meta": {"day": TODAY, "day_total": 9, "matches_total": 9}}
+
+    timed.service.pipeline = slow
+    login(timed.client)
+    assert post_generate(timed)["started"] is True                      # le client lance l'analyse
+    rejoint = post_generate(timed)                                      # un second clic (autre onglet) la rejoint : rien à compter
+    assert rejoint["state"] == "running" and "started" not in rejoint
+    assert used(timed) == 1
+    gate.set()
+    wait_for_job(timed)
+    pret = post_generate(timed)                                         # puis il retrouve ses combinés, toujours sans rien compter
+    assert pret["state"] == "done" and used(timed) == 1
+
+
+def test_chaque_client_a_son_propre_travail_en_cours(timed):
+    """Pendant qu'un client attend ses combinés, le clic d'un autre ne rejoint PAS ce travail : il lance le sien, qui lui coûte
+    sa propre génération. Aucun ne reçoit les combinés de l'autre."""
+    gate = threading.Event()
+    calls = []
+
+    def slow(progress=None, variety=None):
+        calls.append(variety)
         gate.wait(5)
         return {"combos": sample_combos(NOW), "meta": {"day": TODAY, "day_total": 9, "matches_total": 9}}
 
     timed.service.pipeline = slow
     autre = dashboard_client(timed, "autre@exemple.com")
     login(timed.client)
-    assert post_generate(timed)["started"] is True                      # le premier client lance l'analyse
-    rejoint = post_generate(timed, autre)                               # le second la rejoint : rien à lui compter
-    assert rejoint["state"] == "running" and "started" not in rejoint
-    assert used(timed, "autre@exemple.com") == 0
+    assert post_generate(timed)["started"] is True
+    second = post_generate(timed, autre)
+    assert second["state"] == "running" and second["started"] is True       # son propre travail
+    assert used(timed) == 1 and used(timed, "autre@exemple.com") == 1
+    assert status_of(timed)["state"] == "running" and status_of(timed, autre)["state"] == "running"
     gate.set()
     wait_for_job(timed)
-    pret = post_generate(timed, autre)                                  # puis il reçoit les mêmes combinés
-    assert pret["state"] == "done" and used(timed, "autre@exemple.com") == 0
-    assert used(timed) == 1
+    assert len(calls) == 2
+    assert status_of(timed)["state"] == "done" and status_of(timed, autre)["state"] == "done"
 
 
 def test_deux_analyses_par_jour_puis_le_message_et_aucun_appel_payant(timed):
@@ -647,7 +718,7 @@ def test_une_analyse_en_echec_rend_le_clic(timed):
 
 
 def test_une_panne_inattendue_rend_aussi_le_clic(timed):
-    def boom(progress=None):
+    def boom(progress=None, variety=None):
         raise RuntimeError("détail interne")
 
     timed.service.pipeline = boom
@@ -726,6 +797,14 @@ def test_la_limite_se_regle_dans_la_configuration(timed, monkeypatch):
     timed.clock.advance(hours=4)
     blocked = status_of(timed)
     assert blocked["state"] == "quota" and blocked["message"].startswith("Tu as utilisé ta génération")
+
+
+def test_l_espace_annonce_que_les_combines_sont_personnels(timed):
+    login(timed.client)
+    html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ").replace("\u00a0", " ")
+    assert "des onze compétitions" in html
+    assert "Ces combinés sont les tiens : aucun autre abonné ne les voit." in html
+    assert "partagés entre tous les abonnés" not in html
 
 
 def test_l_espace_annonce_les_generations_du_jour(timed):

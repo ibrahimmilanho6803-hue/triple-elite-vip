@@ -344,9 +344,9 @@
     if (generated) { bits.push(['Générés à ', h('strong', null, fmtTime(generated))]); }
     if (meta.matches_total) {
       var analyzed = meta.matches_analyzed || meta.matches_total;
-      var leagues = (meta.leagues || []).length || 5;
+      var leagues = (meta.leagues || []).length;
       bits.push(analyzed + ' matchs analysés' + (meta.matches_total > analyzed ? ' sur ' + meta.matches_total : '') +
-        ' dans ' + leagues + ' championnats');
+        (leagues ? ' dans ' + leagues + ' compétition' + (leagues > 1 ? 's' : '') : ''));
     }
     var metaBox = $('results-meta');
     metaBox.textContent = '';

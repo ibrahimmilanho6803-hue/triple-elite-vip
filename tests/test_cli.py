@@ -162,7 +162,7 @@ def site_client(lm, tmp_path):
     """Le site client branché sur ce gestionnaire de licences (donc sur la même base que le script)."""
     service = GenerationService(pipeline=make_pipeline(delay=0), cache_dir=str(tmp_path / "cache"),
                                 results_dir=str(tmp_path / "results"))
-    app = dashboard.create_app(lm=lm, service=service, history_loader=lambda: [])
+    app = dashboard.create_app(lm=lm, service=service, history_loader=lambda viewer=None: [])
     app.config["TESTING"] = True
     client = app.test_client()
     return lambda email, typed: client.post("/login", data={"email": email, "license_key": typed}).status_code

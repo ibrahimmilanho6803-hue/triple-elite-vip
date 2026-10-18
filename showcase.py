@@ -14,8 +14,8 @@ gratuit ». Les combinés d'une génération sont le produit payant.
     (« day » dans ses métadonnées) en fournit un. Un jour sans match, il n'y en a pas, et la page le dit
     (no_match_today : « Pas de championnat aujourd'hui »).
 
-Rien de ce que fait un visiteur ne coûte quoi que ce soit : jamais d'appel à l'IA (on lit seulement la dernière génération,
-GenerationService.latest) ni d'appel réseau dans la requête. Les scores manquants sont récupérés en arrière-plan, au plus
+Rien de ce que fait un visiteur ne coûte quoi que ce soit : jamais d'appel à l'IA (on lit seulement la dernière génération
+automatique, GenerationService.latest) ni d'appel réseau dans la requête. Les scores manquants sont récupérés en arrière-plan, au plus
 une fois tous les quarts d'heure (combo_history borne en plus chaque série d'appels).
 
 Chaque dictionnaire rendu aux gabarits est construit champ par champ (liste blanche) : un champ ajouté plus tard aux
@@ -221,7 +221,7 @@ def share_links(pick, page_url):
 class Showcase:
     """Ce que les pages publiques ont le droit de montrer : bilan des combinés joués, combiné gratuit.
 
-    service : GenerationService (on n'y lit que la dernière génération). loader(refresh) : historique complet au format
+    service : GenerationService (on n'y lit que la dernière génération automatique). loader(refresh) : historique complet au format
     de combo_history.load_history ; background_refresh : récupérer les scores manquants en arrière-plan (par défaut
     seulement avec le vrai chargeur : un chargeur de test ne fait aucun appel réseau)."""
 

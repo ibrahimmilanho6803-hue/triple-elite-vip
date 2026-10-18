@@ -89,10 +89,11 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     lm = lm or LicenseManager()
     gate = web.LicenseGate(lm)
     service = service or GenerationService()
-    load_history = history_loader or (lambda: combo_history.load_history(config.RESULTS_DIR))
+    # history_loader(viewer) : l'historique tel que CE client a le droit de le voir (combo_history.load_history).
+    load_history = history_loader or (lambda viewer: combo_history.load_history(config.RESULTS_DIR, viewer=viewer))
     throttle = web.RateLimiter(config.LOGIN_MAX_ATTEMPTS, config.LOGIN_WINDOW_SECONDS)
     if showcase is None:
-        showcase = Showcase(service, loader=(lambda refresh: history_loader()) if history_loader else None)
+        showcase = Showcase(service, loader=(lambda refresh: history_loader(None)) if history_loader else None)
     if daily is None and config.AUTO_GENERATE_HOUR is not None:
         daily = DailyGeneration(service, config.AUTO_GENERATE_HOUR)
     if daily is not None:
@@ -303,6 +304,8 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     # Générations : chaque client en a CLIENT_GENERATIONS_PER_DAY par jour (jour UTC). Seul le clic qui démarre vraiment
     # une analyse en consomme une ; afficher des combinés déjà prêts, rejoindre un travail en cours, un jour sans match
     # ou une analyse qui n'aboutit pas ne coûtent rien au client.
+    # Chaque client a SON travail et SES combinés (generation_service) : tout ce que le service rend ici est celui du client
+    # connecté, désigné par son e-mail de session. Rien de ce qu'un autre client a généré n'arrive jusqu'à lui.
     # ------------------------------------------------------------------
 
     def quota_for(email):
@@ -329,7 +332,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     def api_generate():
         email = session.get("email")
         who = web.mask_email(email)
-        current = service.status()
+        current = service.status(email)
         if current["state"] != "idle":
             # Combinés prêts, travail en cours, pause après un échec, pas de championnat aujourd'hui : rien à compter.
             log.info("génération demandée par %s : %s", who, current["state"])
@@ -344,7 +347,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
             log.exception("compteur de générations indisponible : analyse autorisée sans être comptée")
             allowed = True
         if not allowed:
-            current = service.status()                # entre-temps, un autre clic a peut-être déjà tout réglé
+            current = service.status(email)           # entre-temps, un autre clic (de lui) a peut-être déjà tout réglé
             if current["state"] != "idle":
                 return jsonify(with_quota(current, email))
             log.info("génération refusée à %s : %d sur %d utilisées aujourd'hui", who, used, limit)
@@ -352,7 +355,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
 
         # `refund` : rend ce clic si l'analyse qu'il lance n'aboutit à aucun combiné (panne, pas de match aujourd'hui).
         refund = (lambda: lm.release_generation(email, day)) if reserved else None
-        response = service.request_generation(refund=refund)
+        response = service.request_generation(client=email, refund=refund)
         if reserved and not response.get("started"):
             lm.release_generation(email, day)         # ce clic n'a rien démarré (travail déjà lancé par un autre, plafond...)
             used -= 1
@@ -364,9 +367,10 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     @app.get("/api/generate/status")
     @login_required
     def api_generate_status():
-        state = service.status()
+        email = session.get("email")
+        state = service.status(email)
         if state["state"] in ("idle", "error"):
-            quota = quota_for(session.get("email"))
+            quota = quota_for(email)
             if quota is not None:
                 if state["state"] == "idle" and quota["left"] <= 0:
                     return jsonify(quota_state(quota["used"], quota["limit"]))
@@ -377,7 +381,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     @login_required
     def api_history():
         try:
-            return jsonify(load_history())
+            return jsonify(load_history(service.scope_of(session.get("email"))))
         except Exception:
             log.exception("historique : chargement impossible")
             return jsonify({"error": MSG_HISTORY_ERROR}), 500

@@ -21,6 +21,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 import config  # noqa: E402
 import license_manager  # noqa: E402
+from helpers import join_jobs  # noqa: E402
 from paydunya import PayDunyaError  # noqa: E402
 from pipeline import GenerationError, NoMatchToday  # noqa: E402
 from site_fakes import EMAIL, KEY, history_with, make_pipeline  # noqa: E402
@@ -57,9 +58,9 @@ def no_horizontal_overflow(page):
 
 
 def make_free_pick(site):
-    """Un abonné vient de générer les combinés : le combiné gratuit du jour existe (sans cela, /gratuit est vide)."""
+    """La génération automatique du jour a eu lieu : le combiné gratuit existe (sans cela, /gratuit est vide)."""
     site.service.request_generation()
-    site.service._thread.join(15)
+    join_jobs(site.service, 15)
 
 
 # ======================================================================================================
@@ -141,7 +142,7 @@ class TestGenerationEtHistorique:
         assert "confiance 70 %" in first
         for slip in range(3):
             expect(slips.nth(slip).locator(".leg")).to_have_count(3)
-        assert "15 matchs analysés dans 5 championnats" in norm(page.locator("#results-meta").inner_text())
+        assert "15 matchs analysés dans 5 compétitions" in norm(page.locator("#results-meta").inner_text())
         # Cote estimée : le « ≈ » et la mention lue par les lecteurs d'écran ; cote réelle (Bayern) : ni l'un ni l'autre.
         estimated = slips.nth(0).locator(".leg").first
         expect(estimated.locator(".approx")).to_have_text("≈")
@@ -155,7 +156,35 @@ class TestGenerationEtHistorique:
         expect(page.locator("#results")).to_be_visible()
         expect(page.locator("#results-grid .slip")).to_have_count(3)
         expect(page.locator("#generate")).to_be_hidden()
-        assert site.pipeline.state["calls"] == 1                      # le cache sert tous les clients
+        assert site.pipeline.state["calls"] == 1                      # ses combinés lui sont réaffichés sans refaire l'analyse
+
+    def test_un_autre_abonne_ne_voit_pas_mes_combines_et_genere_les_siens(self, page, site, context):
+        other_email, other_key = "autre@exemple.com", "fedcba9876543210"
+        site.licenses.records[other_email] = {"key": other_key, "active": True,
+                                              "expires": license_manager._utcnow() + timedelta(days=5)}
+        log_in_and_generate(page, site)
+        expect(page.locator("#results-grid .slip")).to_have_count(3)
+        assert site.pipeline.state["calls"] == 1
+        other_context = context.browser.new_context(locale="fr-FR", timezone_id="Europe/Paris",
+                                                    viewport={"width": 1280, "height": 900})
+        try:
+            other = other_context.new_page()
+            other.set_default_timeout(15_000)
+            log_in(other, site, other_email, other_key)
+            other.wait_for_url("**/app")
+            other.wait_for_load_state("networkidle")
+            expect(other.locator("#btn-generate")).to_be_enabled()            # rien d'autre que le bouton
+            expect(other.locator("#results")).to_be_hidden()
+            assert site.pipeline.state["calls"] == 1
+            other.click("#btn-generate")
+            expect(other.locator("#results")).to_be_visible()
+            expect(other.locator("#results-grid .slip")).to_have_count(3)
+            assert site.pipeline.state["calls"] == 2                          # son propre travail
+        finally:
+            other_context.close()
+        page.reload()                                                         # le premier retrouve les siens, sans nouveau travail
+        expect(page.locator("#results-grid .slip")).to_have_count(3)
+        assert site.pipeline.state["calls"] == 2
 
     def test_historique_avec_scores_et_bilan(self, page, site):
         enter(page, site)
@@ -231,9 +260,9 @@ class TestGenerationEtHistorique:
 
 def forget_combos(site):
     """Les combinés générés ne sont plus d'actualité (cache écoulé) : la prochaine demande relance une analyse."""
-    site.service._mem.pop("last_generation.json", None)
-    site.service._mem.pop("job.json", None)
-    for name in ("last_generation.json", "job.json"):
+    scope = site.service.scope_of(EMAIL)
+    for name in (f"last_generation_{scope}.json", f"job_{scope}.json"):
+        site.service._mem.pop(name, None)
         path = os.path.join(site.service.cache_dir, name)
         if os.path.exists(path):
             os.remove(path)

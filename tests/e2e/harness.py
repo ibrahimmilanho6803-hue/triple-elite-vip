@@ -39,7 +39,7 @@ def running_site(pipeline=None, history=None, history_error=None):
     service = GenerationService(pipeline=pipeline, cache_dir=os.path.join(tmp, "cache"), results_dir=os.path.join(tmp, "results"))
     history = history if history is not None else sample_history()
 
-    def load_history():
+    def load_history(viewer=None):
         if history_error:
             raise history_error
         return history

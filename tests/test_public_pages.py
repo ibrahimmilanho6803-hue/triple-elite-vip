@@ -18,6 +18,7 @@ import config
 import dashboard
 from daily_generation import DailyGeneration
 from generation_service import GenerationService
+from helpers import join_jobs
 from showcase import Showcase
 from site_fakes import FakeLicenses, history_with, make_pipeline, sample_combos
 
@@ -41,7 +42,7 @@ def site(tmp_path):
         return s.history
 
     s.showcase = Showcase(s.service, loader=loader, results_ttl=0, pick_ttl=0)
-    s.app = dashboard.create_app(lm=FakeLicenses(), service=s.service, history_loader=lambda: s.history,
+    s.app = dashboard.create_app(lm=FakeLicenses(), service=s.service, history_loader=lambda viewer=None: s.history,
                                  showcase=s.showcase)
     s.app.config["TESTING"] = True
     s.client = s.app.test_client()
@@ -49,8 +50,8 @@ def site(tmp_path):
 
 
 def publish_generation(site, combos=None, age=timedelta(hours=1), day=None):
-    """Écrit une génération réussie dans le cache, comme le ferait un abonné qui clique sur « Générer ». `day` : le jour des
-    matchs avec lesquels elle est composée (aujourd'hui, UTC, par défaut)."""
+    """Écrit une génération automatique réussie dans le cache, comme le ferait celle du matin. `day` : le jour des matchs
+    avec lesquels elle est composée (aujourd'hui, UTC, par défaut)."""
     made = datetime.now(timezone.utc) - age
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     site.service._write("last_generation.json", {"generated_ts": made.timestamp(), "generated_at": made.isoformat(),
@@ -367,10 +368,10 @@ def test_gratuit_vide_tant_qu_aucune_generation_n_existe_et_ne_coute_rien(site):
     assert set(site.loads) == {False}                                                # jamais de récupération de scores
 
 
-def test_gratuit_apparait_apres_la_generation_d_un_abonne_et_reste_le_meme(site):
+def test_gratuit_apparait_apres_la_generation_automatique_et_reste_le_meme(site):
     assert "pas encore prêt" in visible(site.client.get("/gratuit"))
-    site.service.request_generation()                                                # clic d'un abonné
-    site.service._thread.join(10)
+    site.service.request_generation()                                                # la génération automatique du matin
+    join_jobs(site.service, 10)
     first = visible(site.client.get("/gratuit"))
     assert "Arsenal" in first and "pas encore prêt" not in first
     assert (site.cache / "free_pick.json").exists()
@@ -378,6 +379,15 @@ def test_gratuit_apparait_apres_la_generation_d_un_abonne_et_reste_le_meme(site)
     better[2]["success_probability"] = 48.0                                          # une génération plus tard, un meilleur combiné
     publish_generation(site, better, age=timedelta(0))
     assert visible(site.client.get("/gratuit")) == first                             # le lien partagé le matin montre le même coupon
+
+
+def test_gratuit_ne_vient_jamais_de_la_generation_d_un_abonne(site):
+    """Les combinés d'un abonné sont les siens : ils ne deviennent pas le combiné gratuit de tout le monde."""
+    site.service.request_generation("abonne@exemple.com")
+    join_jobs(site.service, 10)
+    page = visible(site.client.get("/gratuit"))
+    assert "pas encore prêt" in page and "Arsenal" not in page
+    assert not (site.cache / "free_pick.json").exists()
 
 
 def test_gratuit_disparait_apres_un_jour_ou_quand_les_matchs_ont_commence(site):
@@ -489,6 +499,37 @@ def test_gratuit_peut_etre_coupe_sans_deploiement(site, monkeypatch):
 # --------------------------------------------------------------------------
 # Accueil
 # --------------------------------------------------------------------------
+
+def test_l_accueil_presente_les_onze_competitions_dont_la_ligue_des_champions(site):
+    page = visible(site.client.get("/"))
+    assert len(config.LEAGUE_CARDS) == 11 and "Onze compétitions analysées" in page
+    assert "Quand l’une fait une pause, les autres prennent le relais" in page
+    for short, country in config.LEAGUE_CARDS.values():
+        assert re.search(rf"{re.escape(short)}\s+{re.escape(country)}", page), (short, country)
+    assert "analyse onze compétitions européennes, Ligue des champions comprise" in page
+    for old in ("cinq grands championnats", "Cinq championnats", "des cinq championnats"):
+        assert old not in page, old
+
+
+def test_toutes_les_pages_parlent_des_memes_competitions(site):
+    from web_common import number_word
+    word = number_word(len(config.LEAGUES))
+    assert word == "onze"
+    for path in ("/", "/gratuit"):
+        page = visible(site.client.get(path))
+        assert f"{word} compétitions" in page.lower(), path
+        assert "cinq" not in page.lower().replace("cinq boutons", ""), path
+    footer = visible(site.client.get("/conditions"))
+    assert "Ligue des champions" in footer and "Süper Lig" in footer and "Primeira Liga" in footer
+    social = meta(raw(site.client.get("/")), "og:description")
+    assert social.startswith("Onze compétitions analysées par IA")
+
+
+def test_les_nombres_en_toutes_lettres():
+    from web_common import number_word
+    assert [number_word(n) for n in (0, 5, 11, 20)] == ["zéro", "cinq", "onze", "vingt"]
+    assert number_word(21) == "21" and number_word(-1) == "-1" and number_word("11") == "11"
+
 
 def test_l_accueil_montre_les_chiffres_reels_a_partir_de_dix_combines(site):
     page = visible(site.client.get("/"))
@@ -644,7 +685,7 @@ def test_la_generation_automatique_n_existe_pas_sans_reglage(tmp_path, monkeypat
     monkeypatch.setattr(config, "AUTO_GENERATE_HOUR", None)
     app = dashboard.create_app(lm=FakeLicenses(), service=GenerationService(pipeline=make_pipeline(0.0),
                                cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r")),
-                               history_loader=lambda: history_with())
+                               history_loader=lambda viewer=None: history_with())
     assert SpyDaily.created == [] and app.extensions["tev"].daily is None
 
 
@@ -656,7 +697,7 @@ def test_la_generation_automatique_est_branchee_a_l_heure_reglee_mais_ne_demarre
     monkeypatch.setattr(dashboard, "DailyGeneration", SpyDaily)
     monkeypatch.setattr(config, "AUTO_GENERATE_HOUR", 7)
     service = GenerationService(pipeline=make_pipeline(0.0), cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r"))
-    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda: history_with())
+    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda viewer=None: history_with())
     (daily,) = SpyDaily.created
     assert daily.service is service and daily.hour == 7
     assert app.extensions["tev"].daily is daily
@@ -680,7 +721,7 @@ def test_aucun_fil_de_fond_ne_nait_a_la_creation_de_l_application(tmp_path, monk
 
     before = loops()
     service = GenerationService(pipeline=make_pipeline(0.0), cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r"))
-    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda: history_with())
+    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda viewer=None: history_with())
     assert isinstance(app.extensions["tev"].daily, DailyGeneration)
     assert loops() == before and app.extensions["tev"].daily._thread is None
 
@@ -695,7 +736,7 @@ def test_un_demarrage_differe_qui_echoue_ne_casse_pas_les_pages_et_n_est_pas_ret
     monkeypatch.setattr(dashboard, "DailyGeneration", Failing)
     monkeypatch.setattr(config, "AUTO_GENERATE_HOUR", 7)
     service = GenerationService(pipeline=make_pipeline(0.0), cache_dir=str(tmp_path / "c"), results_dir=str(tmp_path / "r"))
-    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda: history_with())
+    app = dashboard.create_app(lm=FakeLicenses(), service=service, history_loader=lambda viewer=None: history_with())
     client = app.test_client()
     with caplog.at_level(logging.ERROR):
         assert [client.get("/health").status_code for _ in range(3)] == [200, 200, 200]

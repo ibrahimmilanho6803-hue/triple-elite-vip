@@ -1,9 +1,23 @@
 """Fabriques de données de test partagées."""
 import math
 import random
+from datetime import datetime, timedelta
 
 import config
 from probabilities import reconcile
+
+
+class FakeClock:
+    """Horloge que le test fait avancer : s'appelle comme time.time (secondes). `now` : un datetime ou un nombre de secondes."""
+
+    def __init__(self, now):
+        self.now = now.timestamp() if isinstance(now, datetime) else float(now)
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, **delta):
+        self.now += timedelta(**delta).total_seconds()
 
 
 class FakeAnalyzer:
@@ -58,3 +72,10 @@ def make_all_preds(generator, seed=0, matches=15, cap=90):
         match = make_match(n)
         preds += generator.get_predictions_from_analysis(match, make_analysis(rng, cap))
     return preds
+
+
+def join_jobs(service, timeout=10):
+    """Attend la fin de tous les travaux de génération en cours : celui de chaque client et celui de la génération automatique."""
+    for slot in list(service._slots.values()):
+        if slot.thread is not None:
+            slot.thread.join(timeout)

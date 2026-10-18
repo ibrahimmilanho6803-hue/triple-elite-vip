@@ -9,6 +9,7 @@ import pytest
 import config
 import generation_service
 from generation_service import GenerationService
+from helpers import join_jobs
 from pipeline import GenerationError, NoMatchToday
 
 
@@ -34,11 +35,13 @@ def combo(kickoff=None):
 class Pipeline:
     def __init__(self, kickoff=None, error=None, delay=0.0):
         self.calls, self.kickoff, self.error, self.delay = 0, kickoff, error, delay
+        self.varieties = []                  # la variété transmise à chaque appel
         self.gate = threading.Event()
         self.gate.set()
 
-    def __call__(self, progress=None):
+    def __call__(self, progress=None, variety=None):
         self.calls += 1
+        self.varieties.append(variety)
         if progress:
             progress("analyse", 40, "Analyse…")
         self.gate.wait(5)
@@ -59,8 +62,7 @@ def make(dirs, pipeline, clock=None):
 
 
 def wait(service):
-    if service._thread:
-        service._thread.join(5)
+    join_jobs(service, 5)
 
 
 def test_demarrage_progression_puis_resultat(dirs):
@@ -495,7 +497,7 @@ def test_des_navigateurs_qui_interrogent_en_meme_temps_ne_font_declarer_la_perte
 def test_une_analyse_perdue_qui_se_termine_enfin_ne_touche_ni_au_clic_ni_a_l_etat_de_la_suivante(dirs):
     clock = Clock()
     service, pipeline, first = stuck(dirs, clock, error=RuntimeError("tard"))
-    first_thread = service._thread
+    first_thread = service._slot(None).thread
     clock.now += config.JOB_MAX_SECONDS + 1
     assert service.status()["state"] == "error" and first.calls == 1
     clock.now += generation_service.FAILURE_COOLDOWN_SECONDS + 1

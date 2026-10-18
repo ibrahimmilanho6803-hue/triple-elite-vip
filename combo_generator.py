@@ -2,7 +2,8 @@
 
 - get_predictions_from_analysis() : transforme l'analyse d'un match en pronostics
   (probabilité, confiance affichée, cote) ;
-- build_combos() : choisit les meilleurs combinés de 3 matchs différents.
+- build_combos() : choisit les meilleurs combinés de 3 matchs différents, en évitant de redonner à un client les matchs
+  qu'il a déjà reçus aujourd'hui (voir variety.py).
 
 Sur les cotes : si ODDS_API_KEY est définie, les cotes des marchés couverts par
 the-odds-api (résultat 1/N/2 et totaux de buts) sont les vraies cotes des bookmakers
@@ -39,6 +40,7 @@ ODDS_CACHE_DIR = os.path.join(config.DATA_DIR, "cache")
 LEAGUE_BONUS = 2.0
 CATEGORY_BONUS = 1.0
 REPEAT_TYPE_PENALTY = 3.0
+SERVED_COUNTED_MAX = 3       # au plus ce nombre d'autres clients comptent dans la légère pénalité des matchs déjà distribués
 
 
 def _odds_api_key():
@@ -57,6 +59,12 @@ class ComboGenerator:
         "Bundesliga": "soccer_germany_bundesliga",
         "Ligue 1": "soccer_france_ligue_one",
         "Serie A": "soccer_italy_serie_a",
+        "Ligue des champions": "soccer_uefa_champs_league",
+        "Premier-Liga (Russie)": "soccer_russia_premier_league",
+        "Eredivisie (Pays-Bas)": "soccer_netherlands_eredivisie",
+        "Primeira Liga (Portugal)": "soccer_portugal_primeira_liga",
+        "Pro League (Belgique)": "soccer_belgium_first_div",
+        "Süper Lig (Turquie)": "soccer_turkey_super_league",
     }
 
     def __init__(self, analyzer=None):
@@ -253,11 +261,14 @@ class ComboGenerator:
         return ranked[:size]
 
     @staticmethod
-    def _best_combo(legs_by_match, excluded_matches, used_types, target_odds):
-        """Meilleur combiné de 3 matchs (hors matchs déjà utilisés), ou None."""
+    def _best_combo(legs_by_match, excluded_matches, used_types, target_odds, penalties=None):
+        """Meilleur combiné de 3 matchs (hors matchs déjà utilisés), ou None. `penalties` : {id du match: pénalité de variété
+        par pronostic sur ce match}, retirée de la note du combiné (voir _variety_penalties)."""
+        penalties = penalties or {}
         keys = [k for k in legs_by_match if k not in excluded_matches]
         best, best_score = None, None
         for ka, kb, kc in combinations(keys, 3):
+            variety_cost = penalties.get(ka, 0.0) + penalties.get(kb, 0.0) + penalties.get(kc, 0.0)
             for la, lb, lc in product(legs_by_match[ka], legs_by_match[kb], legs_by_match[kc]):
                 total_odds = round(la["estimated_odds"] * lb["estimated_odds"] * lc["estimated_odds"], 2)
                 if total_odds < target_odds:
@@ -268,16 +279,32 @@ class ComboGenerator:
                 leagues = {la["league"], lb["league"], lc["league"]}
                 joint = la["probability"] * lb["probability"] * lc["probability"] / 10000.0
                 score = (joint + LEAGUE_BONUS * (len(leagues) - 1) + CATEGORY_BONUS * (len(categories) - 1)
-                         - REPEAT_TYPE_PENALTY * sum(1 for leg in (la, lb, lc) if used_types[leg["type"]]))
+                         - REPEAT_TYPE_PENALTY * sum(1 for leg in (la, lb, lc) if used_types[leg["type"]]) - variety_cost)
                 if best_score is None or score > best_score:
                     best_score = score
                     best = (la, lb, lc, total_odds, joint, categories, leagues)
         return best
 
-    def build_combos(self, all_preds, target_odds=None, max_combos=None):
+    @staticmethod
+    def _variety_penalties(match_ids, variety):
+        """{id du match: pénalité} : très forte pour un match déjà donné à CE client aujourd'hui, légère pour chaque autre
+        client qui l'a reçu (voir config.VARIETY_* et variety.py). Vide sans `variety`."""
+        if variety is None:
+            return {}
+        penalties = {}
+        for match_id in match_ids:
+            penalty = config.VARIETY_SERVED_PENALTY * min(variety.times_served(match_id), SERVED_COUNTED_MAX)
+            if variety.is_seen(match_id):
+                penalty += config.VARIETY_SEEN_PENALTY
+            if penalty:
+                penalties[match_id] = penalty
+        return penalties
+
+    def build_combos(self, all_preds, target_odds=None, max_combos=None, variety=None):
         """Jusqu'à `max_combos` combinés de 3 matchs, sans match en commun entre
         combinés, chacun d'une cote totale >= `target_odds`, variés (championnats,
-        types de pronostics) et classés par probabilité de réussite."""
+        types de pronostics) et classés par probabilité de réussite. `variety` : ce que le client a déjà reçu aujourd'hui
+        (variety.Variety), pour ne pas lui redonner les mêmes matchs."""
         target_odds = config.TARGET_ODDS if target_odds is None else target_odds
         max_combos = config.MAX_COMBOS_RETOURNES if max_combos is None else max_combos
 
@@ -285,12 +312,13 @@ class ComboGenerator:
         for leg in all_preds:
             grouped[leg["match_id"]].append(leg)
         legs_by_match = {k: self._shortlist(v, config.MAX_PREDICTIONS_PAR_MATCH) for k, v in grouped.items()}
+        penalties = self._variety_penalties(legs_by_match, variety)
 
         selected = []
         used_matches = set()
         used_types = Counter()
         while len(selected) < max_combos:
-            best = self._best_combo(legs_by_match, used_matches, used_types, target_odds)
+            best = self._best_combo(legs_by_match, used_matches, used_types, target_odds, penalties)
             if best is None:
                 break
             la, lb, lc, total_odds, joint, categories, leagues = best

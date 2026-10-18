@@ -45,15 +45,38 @@ def load_env_file(path=".env"):
 if not os.environ.get("TEV_NO_DOTENV"):
     load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-# --- Championnats suivis (nom -> id TheSportsDB) ---
-# 5 championnats : quand une trêve internationale (ou un calendrier incomplet chez
-# TheSportsDB) met un championnat en pause, les autres compensent.
+# --- Championnats suivis (nom affiché -> id TheSportsDB) ---
+# Onze compétitions : les jours de trêve internationale (ou de calendrier incomplet chez TheSportsDB), les autres
+# compensent, et plus il y a de matchs chaque jour, moins les mêmes équipes reviennent d'un combiné à l'autre.
+# Le nom affiché sert de clé partout (base des matchs, historique, cotes : voir ComboGenerator.LEAGUE_TO_ODDS_SPORT) :
+# changer un nom ici change seulement ce que le client lit, mais il faut alors le changer aussi dans cette table.
 LEAGUES = {
     "Premier League": "4328",
     "La Liga": "4335",
     "Bundesliga": "4331",
     "Ligue 1": "4334",
     "Serie A": "4332",
+    "Ligue des champions": "4480",
+    "Premier-Liga (Russie)": "4355",
+    "Eredivisie (Pays-Bas)": "4337",
+    "Primeira Liga (Portugal)": "4344",
+    "Pro League (Belgique)": "4338",
+    "Süper Lig (Turquie)": "4339",
+}
+
+# Ce que la page d'accueil montre pour chaque compétition de LEAGUES : (nom court, pays). Un test vérifie qu'aucune n'est oubliée.
+LEAGUE_CARDS = {
+    "Premier League": ("Premier League", "Angleterre"),
+    "La Liga": ("La Liga", "Espagne"),
+    "Bundesliga": ("Bundesliga", "Allemagne"),
+    "Ligue 1": ("Ligue 1", "France"),
+    "Serie A": ("Serie A", "Italie"),
+    "Ligue des champions": ("Ligue des champions", "Europe"),
+    "Premier-Liga (Russie)": ("Premier-Liga", "Russie"),
+    "Eredivisie (Pays-Bas)": ("Eredivisie", "Pays-Bas"),
+    "Primeira Liga (Portugal)": ("Primeira Liga", "Portugal"),
+    "Pro League (Belgique)": ("Pro League", "Belgique"),
+    "Süper Lig (Turquie)": ("Süper Lig", "Turquie"),
 }
 
 # --- Stockage local (historique des matchs, combinés générés, cache) ---
@@ -63,33 +86,51 @@ LEAGUES = {
 DATA_DIR = os.environ.get("DATA_DIR") or "."
 DB_PATH = os.path.join(DATA_DIR, "triple_elite.db")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")   # un fichier JSON par génération
-CACHE_DIR = os.path.join(DATA_DIR, "cache")       # dernière génération, état du travail, quota
+CACHE_DIR = os.path.join(DATA_DIR, "cache")       # combinés et travail de chaque client, quota, analyses de l'IA gardées
 
 # --- TheSportsDB ---
-# "3" est la clé de test publique et partagée de TheSportsDB (limitée). Définis
+# "123" est la clé de test publique et partagée de TheSportsDB (limitée ; l'ancienne clé "3" est désactivée). Définis
 # SPORTSDB_API_KEY sur Render avec ta propre clé pour un accès stable.
-SPORTSDB_API_KEY = os.environ.get("SPORTSDB_API_KEY") or "3"
+SPORTSDB_API_KEY = os.environ.get("SPORTSDB_API_KEY") or "123"
 
 # --- Génération des combinés ---
 TARGET_ODDS = 2.50          # cote totale minimale d'un combiné
 MIN_CONFIDENCE = 65         # confiance minimale (%) pour qu'un pronostic soit retenu
 MAX_COMBOS_RETOURNES = 3    # nombre de combinés renvoyés au client
-MATCHS_PAR_CHAMPIONNAT = 3  # nombre de matchs du jour analysés par championnat (les combinés ne portent que sur les
-                            # matchs du JOUR, jour UTC, qui n'ont pas encore commencé)
+MATCHS_PAR_GENERATION = 18  # matchs du jour analysés au plus pour une génération, tous championnats confondus. Quand il y en
+                            # a davantage (onze compétitions), un match de chaque championnat passe avant le deuxième de
+                            # chacun, et ainsi de suite (voir variety.choose_pool). C'est ce qui borne le temps d'une
+                            # génération et la dépense d'IA. Les combinés ne portent que sur les matchs du JOUR (jour UTC)
+                            # qui n'ont pas encore commencé.
 
 # Nombre de pronostics conservés par match au moment de composer les combinés
-# (les plus cotés parmi ceux qui atteignent la confiance minimale). Avec 15 matchs,
+# (les plus cotés parmi ceux qui atteignent la confiance minimale). Avec 18 matchs,
 # 10 laisse assez de choix sans faire exploser le nombre de combinaisons.
 MAX_PREDICTIONS_PAR_MATCH = 10
 
-# Durée (minutes) pendant laquelle les combinés générés sont réutilisés, pour tous
-# les clients. Évite de refaire collecte + analyse IA à chaque clic (lent et payant)
-# et garde des combinés stables dans la journée.
+# Variété : ne pas redonner les mêmes équipes. Chaque génération part des matchs que CE client n'a pas encore reçus
+# aujourd'hui, puis des matchs que le moins de clients ont reçus. Pour composer les combinés, un pronostic est pénalisé
+# (la note d'un combiné est sa probabilité de réussite en %, de 10 à 40 environ, plus de petits bonus) :
+VARIETY_SEEN_PENALTY = 25.0     # par pronostic dont le match a déjà été donné à CE client aujourd'hui : quasi interdit,
+                                # permis seulement quand les matchs du jour ne suffisent pas à faire autrement
+VARIETY_SERVED_PENALTY = 0.75   # par pronostic, pour chaque AUTRE client qui a reçu ce match aujourd'hui (3 au plus comptés) :
+                                # une légère préférence pour les matchs moins distribués ; 0 la supprime
+
+# Durée (minutes) pendant laquelle les combinés d'un client restent affichés chez LUI (s'ils sont plus anciens, ou si un de
+# leurs matchs a commencé, le bouton « Générer » revient). Les combinés d'un client ne s'affichent jamais chez un autre.
 CACHE_MINUTES = 180
 
-# Plafond de générations réelles (donc d'appels à l'IA payante) par jour. Au-delà,
-# les derniers combinés disponibles restent servis.
-MAX_GENERATIONS_PAR_JOUR = 10
+# Ce que toutes les générations partagent, pour que la dépense d'IA ne grandisse pas avec le nombre de clients :
+ANALYSIS_CACHE_MINUTES = 720    # l'estimation de l'IA pour un match est gardée ce temps (les données ne bougent pas dans la
+                                # journée : un match du jour est analysé UNE fois, pas une fois par client)
+MATCHDAY_CACHE_SECONDS = 300    # les matchs du jour sont relus chez TheSportsDB au plus toutes les 5 minutes
+COLLECT_CACHE_MINUTES = 60      # les derniers résultats (forme des équipes) sont collectés au plus une fois par heure
+AI_RETRY_AFTER_SECONDS = 60     # après une analyse IA sans réponse, les autres générations n'insistent pas avant ce délai
+
+# Plafond de générations par jour, tous clients confondus, qui ont réellement appelé l'IA payante (une génération servie
+# entièrement par les analyses déjà faites ne compte pas). Filet de sécurité contre un emballement : au-delà, plus aucune
+# génération ne part jusqu'à demain. Un client en lance 2 au plus par jour, et chaque match n'est analysé qu'une fois.
+MAX_GENERATIONS_PAR_JOUR = 60
 
 # Générations que CHAQUE client peut lancer par jour (jour UTC). Seul le clic qui démarre réellement une analyse compte :
 # réafficher des combinés déjà prêts, un jour sans match ou une génération en échec ne consomment rien. Le compteur est
@@ -111,7 +152,8 @@ def parse_hour(raw):
 
 
 # --- Pages publiques : résultats réels (/resultats) et combiné gratuit du jour (/gratuit) ---
-# Le combiné gratuit est UN SEUL des combinés de la dernière génération (celui dont la chance estimée est la plus élevée).
+# Le combiné gratuit est UN SEUL des combinés de la dernière génération AUTOMATIQUE (celui dont la chance estimée est la plus
+# élevée) : jamais d'une génération d'abonné, dont les combinés sont les siens.
 # Les autres restent le produit payant : jamais montrés. FREE_PICK_ENABLED=0 (Render > Environment) retire la page
 # /gratuit et ses liens sans nouveau déploiement.
 FREE_PICK_ENABLED = os.environ.get("FREE_PICK_ENABLED", "1").strip().lower() not in ("0", "false", "non", "no", "off")
@@ -137,8 +179,9 @@ def parse_seconds(raw, default, maximum=600):
 # dans Render > Environment suffit, sans nouveau déploiement).
 PUBLIC_PAGE_CACHE_SECONDS = parse_seconds(os.environ.get("PUBLIC_PAGE_CACHE_SECONDS"), 60)
 
-# Génération automatique quotidienne (daily_generation.py), pour que le combiné gratuit et l'historique soient alimentés
-# même les jours où aucun abonné ne clique. DÉSACTIVÉE par défaut : chaque génération est un appel payant à l'IA.
+# Génération automatique quotidienne (daily_generation.py). Les combinés d'un abonné sont les siens : seule cette génération
+# alimente le combiné gratuit, et elle fait avancer l'historique public même les jours où aucun abonné ne clique.
+# DÉSACTIVÉE par défaut : chaque génération est un appel payant à l'IA.
 # AUTO_GENERATE_HOUR = heure UTC (0 à 23) à partir de laquelle la génération du jour peut partir ; absente = désactivée.
 AUTO_GENERATE_HOUR = parse_hour(os.environ.get("AUTO_GENERATE_HOUR"))
 AUTO_GENERATE_MAX_ATTEMPTS = 3    # tentatives par jour (une panne de l'IA ne doit pas multiplier les appels payants)
@@ -216,7 +259,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.2.1"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
+VERSION = "2.3.0"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente

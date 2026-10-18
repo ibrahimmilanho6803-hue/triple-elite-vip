@@ -45,7 +45,7 @@
   <div class="dash">
     <section id="panel-combos" role="tabpanel" aria-labelledby="tab-combos">
       <div class="generate" id="generate">
-        <p class="dash__intro" id="generate-intro">L’IA étudie les matchs du jour des cinq championnats et compose jusqu’à trois combinés. Compte une vingtaine de secondes.</p>
+        <p class="dash__intro" id="generate-intro">L’IA étudie les matchs du jour des {{ league_count }} compétitions et compose jusqu’à trois combinés pour toi. Compte une vingtaine de secondes.</p>
         <div class="generate__row">
           <button class="btn btn--or btn--grand" type="button" id="btn-generate">Générer les combinés</button>
         </div>
@@ -71,7 +71,7 @@
         <div class="legend">
           <p><strong>Confiance</strong>&nbsp;: probabilité estimée que le pronostic se réalise. <strong>Chance estimée</strong>&nbsp;: probabilité que les trois pronostics se réalisent ensemble.</p>
           <p>Le signe «&nbsp;≈&nbsp;» devant une cote indique une cote estimée par notre modèle&nbsp;: elle peut différer de celle de ton bookmaker. Vérifie la cote avant de parier.</p>
-          <p>Les horaires sont affichés dans le fuseau de ton appareil. Ces combinés sont partagés entre tous les abonnés et actualisés environ toutes les {{ cache_hours }}&nbsp;heures.</p>
+          <p>Les horaires sont affichés dans le fuseau de ton appareil. Ces combinés sont les tiens&nbsp;: aucun autre abonné ne les voit. Ils restent affichés environ {{ cache_hours }}&nbsp;heures, ou jusqu’au premier coup d’envoi.</p>
         </div>
       </div>
     </section>

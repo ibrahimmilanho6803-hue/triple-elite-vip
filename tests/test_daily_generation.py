@@ -10,6 +10,7 @@ import daily_generation
 from daily_generation import DailyGeneration
 from generation_service import (FAILURE_COOLDOWN_SECONDS, MATCHDAY_CHECK_EVERY, MATCHDAY_RETRY_AFTER,
                                 GenerationService)
+from helpers import join_jobs
 from pipeline import GenerationError
 from site_fakes import sample_combos
 
@@ -36,7 +37,7 @@ class Pipeline:
         self.gate = gate
         self.clock = None
 
-    def __call__(self, progress=None):
+    def __call__(self, progress=None, variety=None):
         self.calls += 1
         if self.gate is not None:
             self.gate.wait(5)
@@ -72,8 +73,7 @@ def build(tmp_path, clock, pipeline=None, hour=6, matchday=None, **kwargs):
 
 
 def settle(service):
-    if service._thread is not None:
-        service._thread.join(5)
+    join_jobs(service, 5)
 
 
 # --------------------------------------------------------------------------

@@ -4,6 +4,11 @@ Lit les combinés sauvegardés à chaque génération (results/combo_*.json), le
 rapproche des scores réels connus en base (table 'matches') et donne un verdict
 gagné/perdu par pronostic puis par combiné, plus un bilan global. Aucune dépendance
 à Flask : dashboard.py n'a qu'à renvoyer le résultat de load_history() en JSON.
+
+Chaque client a SES combinés (generation_service) : le fichier d'une génération de client porte son identifiant opaque
+(combo_AAAAMMJJ_HHMMSS_<identifiant>.json), celui de la génération automatique n'en a pas. Pour un client (`viewer`), l'historique
+montre ses propres combinés, joués ou non, et ceux des autres seulement quand tous leurs matchs ont commencé : un combiné à
+venir d'un autre client (ou de la génération automatique) n'y apparaît jamais.
 """
 import glob
 import json
@@ -137,11 +142,11 @@ def refresh_pending_results(pending, now=None, called_off=()):
 # Lecture de l'historique
 # --------------------------------------------------------------------------
 
-_FILE_RE = re.compile(r"combo_(\d{8})_(\d{6})\.json$")
+_FILE_RE = re.compile(r"combo_(\d{8})_(\d{6})(?:_([0-9a-f]{16}))?\.json$")
 
 
 def _timestamp_from_filename(path):
-    """Date de génération (ISO 8601, UTC) déduite du nom combo_AAAAMMJJ_HHMMSS.json
+    """Date de génération (ISO 8601, UTC) déduite du nom combo_AAAAMMJJ_HHMMSS[_identifiant].json
     (écrit en UTC ; les serveurs Render sont en UTC)."""
     m = _FILE_RE.search(os.path.basename(path))
     if not m:
@@ -153,18 +158,26 @@ def _timestamp_from_filename(path):
     return moment.replace(tzinfo=timezone.utc).isoformat()
 
 
+def _owner_from_filename(path):
+    """L'identifiant opaque du client qui a généré ce fichier, ou None (génération automatique, ou ancien fichier)."""
+    m = _FILE_RE.search(os.path.basename(path))
+    return m.group(3) if m else None
+
+
 def _read_entries(results_dir, max_files):
-    """[(date_génération, combiné)] du plus récent au plus ancien, sans doublon.
+    """[(date_génération, combiné, propriétaires)] du plus récent au plus ancien, sans doublon.
 
     Un même combiné (mêmes matchs, mêmes pronostics) régénéré plus tard n'apporte
-    rien : seule sa première apparition est gardée.
+    rien : seule sa première apparition est gardée. Ses `propriétaires` (ensemble d'identifiants de clients, None pour la
+    génération automatique) sont ceux de TOUTES ses apparitions : chaque client qui l'a reçu le retrouve dans son historique.
     """
     files = sorted(glob.glob(os.path.join(results_dir, "combo_*.json")))[-max_files:]
-    seen, entries = set(), []
+    first, entries = {}, []
     for path in files:  # du plus ancien au plus récent
         generated_at = _timestamp_from_filename(path)
         if not generated_at:
             continue
+        owner = _owner_from_filename(path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 combos = json.load(f)
@@ -178,12 +191,31 @@ def _read_entries(results_dir, max_files):
             if not isinstance(preds, list) or not preds or not all(isinstance(p, dict) for p in preds):
                 continue
             signature = tuple(sorted((str(p.get("match_id")), str(p.get("type"))) for p in preds))
-            if signature in seen:
+            if signature in first:
+                first[signature].add(owner)
                 continue
-            seen.add(signature)
-            entries.append((generated_at, combo))
+            owners = first[signature] = {owner}
+            entries.append((generated_at, combo, owners))
     entries.sort(key=lambda e: e[0], reverse=True)
     return entries
+
+
+def _all_started(combo, generated_at, now):
+    """Tous les matchs du combiné ont commencé : il n'est plus un pronostic à venir, seulement un fait. Un match dont l'heure est
+    inconnue est jugé par le jour de la génération (commencé quand ce jour est passé)."""
+    today = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
+    for p in combo["predictions"]:
+        try:
+            moment = datetime.fromisoformat(str(p.get("kickoff")))
+        except ValueError:
+            if generated_at[:10] >= today:
+                return False
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        if moment.timestamp() > now:
+            return False
+    return True
 
 
 def _status(outcomes, voids):
@@ -219,17 +251,22 @@ def summarize(history):
     }
 
 
-def load_history(results_dir, db_path=None, max_combos=30, max_files=400, refresh=True):
-    """{"combos": [...les plus récents...], "summary": {...bilan sur tout l'historique...}}."""
+def load_history(results_dir, db_path=None, max_combos=30, max_files=400, refresh=True, viewer=None, now=None):
+    """{"combos": [...les plus récents...], "summary": {...bilan sur tout ce qui est montré...}}.
+
+    `viewer` : identifiant opaque du client qui regarde (privacy.client_scope). Sans lui, tout l'historique est rendu (pages
+    publiques : showcase.py applique ses propres règles). Avec lui, les combinés d'un AUTRE client ou de la génération
+    automatique dont un match n'a pas encore commencé sont retirés (liste et bilan)."""
     db_path = db_path or config.DB_PATH
+    now = time.time() if now is None else now
     entries = _read_entries(results_dir, max_files)
 
-    ids = {_to_int(p.get("match_id")) for _, combo in entries for p in combo["predictions"]}
+    ids = {_to_int(p.get("match_id")) for _, combo, _ in entries for p in combo["predictions"]}
     scores, called_off = _read_results(db_path, ids)
 
     if refresh:
         pending = {}
-        for _, combo in entries:                       # du plus récent au plus ancien
+        for _, combo, _owners in entries:                       # du plus récent au plus ancien
             for p in combo["predictions"]:
                 match_id = _to_int(p.get("match_id"))
                 if match_id is not None and match_id not in scores and match_id not in pending:
@@ -238,7 +275,9 @@ def load_history(results_dir, db_path=None, max_combos=30, max_files=400, refres
             scores, called_off = _read_results(db_path, ids)
 
     history = []
-    for generated_at, combo in entries:
+    for generated_at, combo, owners in entries:
+        if viewer is not None and viewer not in owners and not _all_started(combo, generated_at, now):
+            continue
         legs, outcomes, voids = [], [], []
         for p in combo["predictions"]:
             match_id = _to_int(p.get("match_id"))

@@ -220,10 +220,11 @@ button { cursor: pointer; }
 .step__t { margin-top: 6px; font-size: 1.1875rem; font-weight: 650; line-height: 1.25; }
 .step__p { margin-top: 8px; color: var(--craie); }
 
-.leagues { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--ligne); border-radius: var(--rayon); }
-.leagues li { padding: 18px 16px; border-left: 1px solid var(--ligne); }
-.leagues li:first-child { border-left: 0; }
-.leagues strong { display: block; font-family: var(--font-display); font-weight: 750; font-size: 1.45rem; line-height: 1.1; }
+/* Les compétitions suivies : une grille de cases dont les bordures se superposent (marges négatives), pour que la liste reste
+   propre quel que soit leur nombre et la place qu'il reste sur la dernière ligne. */
+.leagues { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 1px 0 0 1px; }
+.leagues li { padding: 18px 16px; border: 1px solid var(--ligne); margin: -1px 0 0 -1px; }
+.leagues strong { display: block; font-family: var(--font-display); font-weight: 750; font-size: 1.25rem; line-height: 1.15; }
 .leagues span { color: var(--craie); font-size: 0.875rem; }
 
 .honest {
@@ -681,8 +682,6 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
   .free { grid-template-columns: minmax(0, 1fr); }
   .free__side { margin-top: 32px; }
   .leagues { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .leagues li:nth-child(4) { border-left: 0; }
-  .leagues li:nth-child(n + 4) { border-top: 1px solid var(--ligne); }
 }
 
 @media (max-width: 680px) {
@@ -693,10 +692,6 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
   .step + .step { margin-top: 28px; }
   .results__grid, .history__grid { grid-template-columns: minmax(0, 1fr); }
   .leagues { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .leagues li { border-left: 0; border-top: 1px solid var(--ligne); }
-  .leagues li:nth-child(odd) { border-right: 1px solid var(--ligne); }
-  .leagues li:nth-child(-n + 2) { border-top: 0; }
-  .leagues li:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
   .footer__grid { grid-template-columns: minmax(0, 1fr); }
   .footer nav { margin-top: 18px; }
   .brand__name { font-size: 1.1rem; white-space: nowrap; }

@@ -142,7 +142,7 @@ class DataCollector:
     MAX_PARALLEL = 8       # appels simultanés au plus
 
     def __init__(self):
-        # Sans variable SPORTSDB_API_KEY, la clé de test publique "3" est utilisée
+        # Sans variable SPORTSDB_API_KEY, la clé de test publique "123" est utilisée
         # (fonctionnelle mais partagée et limitée).
         self.api_key = config.SPORTSDB_API_KEY
         self.base_url = f"https://www.thesportsdb.com/api/v1/json/{self.api_key}"
@@ -161,7 +161,7 @@ class DataCollector:
     @staticmethod
     def _current_season():
         """Saison TheSportsDB en cours, format 'AAAA-AAAA' (ex: '2026-2027').
-        Les 5 championnats suivis démarrent autour de juillet/août."""
+        Les championnats suivis démarrent autour de juillet/août."""
         now = datetime.now()
         if now.month >= 7:
             return f"{now.year}-{now.year + 1}"
@@ -336,8 +336,9 @@ class DataCollector:
         répondu (panne passagère, réponse trop lente) a droit à un deuxième essai, et un seul.
 
         Renvoie {"day": "AAAA-MM-JJ", "matches": [...], "total": n, "complete": bool} :
-          - matches : ceux qui n'ont pas encore commencé (MATCHS_PAR_CHAMPIONNAT par championnat au plus, hors matchs
-            reportés ou annulés), au format attendu par la chaîne de génération ;
+          - matches : TOUS ceux qui n'ont pas encore commencé (hors matchs reportés ou annulés), dans l'ordre des
+            championnats puis du coup d'envoi, au format attendu par la chaîne de génération. C'est elle (variety.choose_pool)
+            qui en retient quelques-uns par championnat pour chaque génération ;
           - total : tous les matchs du jour vus, commencés ou non (hors reportés ou annulés) ;
           - complete : tous les championnats ont répondu. Quand c'est faux, « aucun match » ne prouve rien : TheSportsDB
             était peut-être en panne, il ne faut pas en conclure qu'il n'y a pas de football aujourd'hui."""
@@ -353,7 +354,7 @@ class DataCollector:
             fetched.update(self._fetch_many(silent, deadline=self.RETRY_DEADLINE))
         upcoming, seen = [], set()
         for league_name in self.leagues:                 # ordre stable des championnats
-            count = 0
+            league_upcoming = []
             for event in fetched.get(league_name) or []:
                 match_id = event.get("idEvent")
                 if match_id in (None, "") or match_id in seen:
@@ -366,9 +367,7 @@ class DataCollector:
                 seen.add(match_id)
                 if start is not None and start <= now:
                     continue                             # déjà commencé : compté dans « total » seulement
-                if count >= config.MATCHS_PAR_CHAMPIONNAT:
-                    continue
-                upcoming.append({
+                league_upcoming.append({
                     "id": match_id,
                     "date": f"{event.get('dateEvent', '')} {event.get('strTime') or ''}".strip(),
                     "kickoff": start.isoformat() if start else None,
@@ -376,7 +375,10 @@ class DataCollector:
                     "away_team": event.get("strAwayTeam", ""),
                     "league": league_name,
                 })
-                count += 1
+            # Du plus proche coup d'envoi au plus lointain (ceux dont l'heure est inconnue en dernier), quel que soit l'ordre de
+            # la réponse : c'est l'ordre dans lequel choose_pool départage deux matchs à égalité.
+            league_upcoming.sort(key=lambda match: match["kickoff"] or "9")
+            upcoming.extend(league_upcoming)
         return {"day": today.isoformat(), "matches": upcoming, "total": len(seen),
                 "complete": all(events is not None for events in fetched.values())}
 

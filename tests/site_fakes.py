@@ -169,7 +169,7 @@ def make_pipeline(delay=0.25, combos=None, error=None):
     """Chaîne de génération simulée : quelques étapes avec progression, puis les combinés."""
     state = {"calls": 0}
 
-    def pipeline(progress=None):
+    def pipeline(progress=None, variety=None):
         state["calls"] += 1
         steps = [("matchs", 5, "Recherche des matchs du jour…"), ("collecte", 12, "Collecte des derniers résultats…"),
                  ("analyse", 40, "Analyse des matchs par l'IA (1/5)…"), ("analyse", 80, "Analyse des matchs par l'IA (5/5)…"),

@@ -1,10 +1,11 @@
 """Génération automatique quotidienne (facultative).
 
-Sans elle, une génération n'existe que si un abonné clique sur « Générer » : les jours calmes, la page « Combiné gratuit »
-reste vide et l'historique public n'avance pas. Avec elle, une génération part chaque jour à l'heure choisie (variable
-AUTO_GENERATE_HOUR, heure UTC), si personne n'en a déjà fait une ce jour-là, c'est-à-dire composée avec les matchs de CE
-jour. Un jour sans match (ou avec trop peu de matchs), elle le constate sans appeler l'IA et n'insiste pas : « Pas de
-championnat aujourd'hui », sur la page « Combiné gratuit » comme chez les abonnés.
+Les combinés qu'un abonné génère sont les siens : ils n'alimentent pas la page « Combiné gratuit ». Sans cette génération
+automatique, la page « Combiné gratuit » reste donc vide, et l'historique public n'avance que par les clics des abonnés.
+Avec elle, une génération part chaque jour à l'heure choisie (variable AUTO_GENERATE_HOUR, heure UTC), si la génération
+automatique n'a pas déjà eu lieu ce jour-là, c'est-à-dire composée avec les matchs de CE jour. Un jour sans match (ou avec
+trop peu de matchs), elle le constate sans appeler l'IA et n'insiste pas : « Pas de championnat aujourd'hui », sur la page
+« Combiné gratuit » comme chez les abonnés.
 
 La boucle fait aussi, dès le début de chaque journée et AVANT l'heure de génération, le constat des matchs du jour
 (GenerationService.refresh_matchday : gratuit, aucun appel à l'IA). C'est lui qui permet d'afficher « Pas de championnat
@@ -38,9 +39,9 @@ class DailyGeneration:
         self._thread = None
 
     def _generated_on(self, day):
-        """Une génération réussie existe-t-elle déjà pour ce jour (UTC) ? Il faut qu'elle ait été composée avec les matchs
-        de CE jour (« day » dans ses métadonnées) : une génération d'avant le passage aux matchs du jour seulement, qui
-        portait sur les prochains jours, ne compte pas."""
+        """Une génération AUTOMATIQUE réussie existe-t-elle déjà pour ce jour (UTC) ? (Celles des abonnés ne comptent pas : ce
+        sont les leurs.) Il faut qu'elle ait été composée avec les matchs de CE jour (« day » dans ses métadonnées) : une
+        génération d'avant le passage aux matchs du jour seulement, qui portait sur les prochains jours, ne compte pas."""
         entry = self.service.latest()
         meta = entry.get("meta") if isinstance(entry, dict) else None
         return isinstance(meta, dict) and meta.get("day") == day.isoformat()

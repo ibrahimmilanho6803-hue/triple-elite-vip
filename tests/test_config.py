@@ -129,3 +129,43 @@ def test_les_pages_publiques_sont_gardees_une_minute_et_cela_se_coupe_par_variab
     assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS", PUBLIC_PAGE_CACHE_SECONDS="0") == "0"
     assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS", PUBLIC_PAGE_CACHE_SECONDS="120") == "120"
     assert read_config("config.PUBLIC_PAGE_CACHE_SECONDS", PUBLIC_PAGE_CACHE_SECONDS="longtemps") == "60"
+
+
+# --------------------------------------------------------------------------
+# Les onze compétitions suivies
+# --------------------------------------------------------------------------
+
+NEW_LEAGUES = {"Ligue des champions": "4480", "Premier-Liga (Russie)": "4355", "Eredivisie (Pays-Bas)": "4337",
+               "Primeira Liga (Portugal)": "4344", "Pro League (Belgique)": "4338", "Süper Lig (Turquie)": "4339"}
+
+
+def test_onze_competitions_les_cinq_historiques_puis_les_six_ajoutees():
+    assert len(config.LEAGUES) == 11
+    assert list(config.LEAGUES)[:5] == ["Premier League", "La Liga", "Bundesliga", "Ligue 1", "Serie A"]
+    for name, league_id in NEW_LEAGUES.items():
+        assert config.LEAGUES[name] == league_id, name
+    ids = list(config.LEAGUES.values())
+    assert len(set(ids)) == len(ids) and all(i.isdigit() for i in ids)           # un identifiant TheSportsDB par compétition
+
+
+def test_chaque_competition_a_sa_carte_d_accueil_et_son_marche_de_cotes():
+    from combo_generator import ComboGenerator
+    assert set(config.LEAGUE_CARDS) == set(config.LEAGUES)                      # aucune compétition oubliée sur la page d'accueil
+    assert set(ComboGenerator.LEAGUE_TO_ODDS_SPORT) == set(config.LEAGUES)      # ni dans la recherche des vraies cotes
+    sports = list(ComboGenerator.LEAGUE_TO_ODDS_SPORT.values())
+    assert len(set(sports)) == len(sports) and all(sport.startswith("soccer_") for sport in sports)
+    for short, country in config.LEAGUE_CARDS.values():
+        assert short and country and short == short.strip() and country == country.strip()
+
+
+def test_les_reglages_de_variete_et_de_partage_sont_utilisables():
+    assert config.MATCHS_PAR_GENERATION >= 3 * config.MAX_COMBOS_RETOURNES      # assez de matchs pour trois combinés de trois
+    assert config.VARIETY_SEEN_PENALTY > config.VARIETY_SERVED_PENALTY >= 0
+    assert config.ANALYSIS_CACHE_MINUTES * 60 > config.MATCHDAY_CACHE_SECONDS and config.AI_RETRY_AFTER_SECONDS > 0
+    assert config.MAX_GENERATIONS_PAR_JOUR >= config.CLIENT_GENERATIONS_PER_DAY
+    assert not hasattr(config, "MATCHS_PAR_CHAMPIONNAT")                         # remplacé par MATCHS_PAR_GENERATION
+
+
+def test_la_cle_thesportsdb_par_defaut_est_la_cle_de_test_publique():
+    assert read_config("config.SPORTSDB_API_KEY", SPORTSDB_API_KEY="") == "'123'"        # l'ancienne « 3 » est désactivée
+    assert read_config("config.SPORTSDB_API_KEY", SPORTSDB_API_KEY="cle-de-test") == "'cle-de-test'"

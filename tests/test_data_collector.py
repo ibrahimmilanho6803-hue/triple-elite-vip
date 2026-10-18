@@ -134,11 +134,23 @@ def test_matchs_du_jour_seulement(db, monkeypatch):
     monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
     matchday = DataCollector().get_matchday(now=NOW)
     assert matchday["day"] == "2026-10-10" and matchday["complete"] is True
-    assert [m["id"] for m in matchday["matches"]] == ["92", "93", "94"]      # 3 par championnat au plus
+    assert [m["id"] for m in matchday["matches"]] == ["92", "93", "94", "95"]      # tous ceux à venir, sans plafond
     assert matchday["total"] == 5                                            # 91, 92, 93, 94, 95 : les matchs du jour vus
     first = matchday["matches"][0]
     assert first["kickoff"] == "2026-10-10T14:00:00+00:00" and first["date"] == "2026-10-10 14:00:00"
     assert first["league"] == "Premier League" and first["home_team"] == "H92" and first["away_team"] == "A92"
+
+
+def test_aucun_plafond_par_championnat_et_matchs_classes_par_heure_de_coup_d_envoi(db, monkeypatch):
+    """Le choix des matchs à analyser se fait ensuite (variety.choose_pool) : la liste du jour est complète, dans l'ordre des
+    coups d'envoi pour chaque championnat, quel que soit l'ordre dans lequel TheSportsDB les donne."""
+    hours = [20, 14, 18, 16, 21, 13, 19, 15, 17, 22, 23, 12]                                  # douze matchs, en désordre
+    events = [kickoff_event(100 + n, "2026-10-10", hour) for n, hour in enumerate(hours)]
+    monkeypatch.setattr(data_collector.requests, "get", FakeWeb({"eventsnextleague": events}))
+    monkeypatch.setattr(config, "LEAGUES", {"Premier League": "4328"})
+    matchday = DataCollector().get_matchday(now=datetime(2026, 10, 10, 6, 0, tzinfo=timezone.utc))
+    kickoffs = [m["kickoff"] for m in matchday["matches"]]
+    assert len(kickoffs) == 12 and kickoffs == sorted(kickoffs) and matchday["total"] == 12
 
 
 def test_get_upcoming_matches_ne_rend_que_les_matchs_du_jour_a_venir(db, monkeypatch):
