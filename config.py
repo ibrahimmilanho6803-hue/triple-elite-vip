@@ -111,10 +111,13 @@ MAX_PREDICTIONS_PAR_MATCH = 10
 # Variété : ne pas redonner les mêmes équipes. Chaque génération part des matchs que CE client n'a pas encore reçus
 # aujourd'hui, puis des matchs que le moins de clients ont reçus. Pour composer les combinés, un pronostic est pénalisé
 # (la note d'un combiné est sa probabilité de réussite en %, de 10 à 40 environ, plus de petits bonus) :
-VARIETY_SEEN_PENALTY = 25.0     # par pronostic dont le match a déjà été donné à CE client aujourd'hui : quasi interdit,
-                                # permis seulement quand les matchs du jour ne suffisent pas à faire autrement
-VARIETY_SERVED_PENALTY = 0.75   # par pronostic, pour chaque AUTRE client qui a reçu ce match aujourd'hui (3 au plus comptés) :
-                                # une légère préférence pour les matchs moins distribués ; 0 la supprime
+VARIETY_SEEN_PENALTY = 40.0     # par pronostic dont le match a déjà été donné à CE client aujourd'hui : quasi interdit,
+                                # permis seulement quand les matchs du jour ne suffisent pas à faire autrement ; toujours bien
+                                # au-dessus du maximum de la pénalité suivante (VARIETY_SERVED_PENALTY × 3 clients)
+VARIETY_SERVED_PENALTY = 6.0    # par pronostic, pour chaque AUTRE client qui a reçu ce match aujourd'hui (3 au plus comptés) :
+                                # des clients différents reçoivent des matchs différents tant que le jour en compte assez, sans
+                                # qu'aucun match soit interdit (mesuré par simulation : la chance de réussite moyenne ne bouge
+                                # pas) ; 0 la supprime
 
 # Durée (minutes) pendant laquelle les combinés d'un client restent affichés chez LUI (s'ils sont plus anciens, ou si un de
 # leurs matchs a commencé, le bouton « Générer » revient). Les combinés d'un client ne s'affichent jamais chez un autre.
@@ -259,7 +262,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.3.0"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
+VERSION = "2.3.1"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente

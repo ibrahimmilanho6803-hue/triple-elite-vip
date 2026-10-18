@@ -138,13 +138,15 @@ def test_aucune_penalite_sans_variete():
     assert ComboGenerator._variety_penalties(["1", "2"], Variety()) == {}
 
 
-def test_penalites_forte_pour_un_match_deja_recu_et_legere_pour_ceux_d_autres_clients():
+def test_penalites_forte_pour_un_match_deja_recu_et_moderee_pour_ceux_d_autres_clients():
     variety = Variety(seen=frozenset({"1"}), served={"1": 2, "2": 1, "3": 10})
     penalties = ComboGenerator._variety_penalties(["1", "2", "3", "4"], variety)
     assert penalties == {"1": config.VARIETY_SEEN_PENALTY + 2 * config.VARIETY_SERVED_PENALTY,
                          "2": config.VARIETY_SERVED_PENALTY,
                          "3": SERVED_COUNTED_MAX * config.VARIETY_SERVED_PENALTY}   # plafonnée : "4" n'a aucune pénalité
-    assert config.VARIETY_SEEN_PENALTY > 10 * config.VARIETY_SERVED_PENALTY            # « déjà reçu » pèse bien plus lourd
+    # « déjà reçu par CE client » pèse toujours plus lourd que n'importe quel nombre d'autres clients (3 au plus comptés), avec
+    # une marge de 20 points au moins : de l'ordre de l'écart de probabilité entre un très bon et un mauvais combiné.
+    assert config.VARIETY_SEEN_PENALTY >= SERVED_COUNTED_MAX * config.VARIETY_SERVED_PENALTY + 20
 
 
 def synthetic(match_id, category, league):
@@ -167,6 +169,23 @@ def test_la_composition_laisse_de_cote_le_match_le_plus_penalise():
     assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties={"4": 0.75})) == {"1", "2", "3"}
     best = ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties={"1": 0.75, "2": 0.75, "3": 0.75})
     assert "4" in chosen(best)                 # trois matchs pénalisés, un seul libre : le combiné évite d'en prendre trois
+
+
+def test_un_match_deja_recu_par_un_autre_client_cede_la_place_a_un_match_un_peu_moins_probable():
+    """Des clients différents reçoivent des matchs différents : environ trois points de chance de moins valent mieux qu'un match
+    que d'autres clients ont déjà reçu (le défaut corrigé : la préférence était trop faible pour jamais l'emporter)."""
+    def leg(match_id, probability, n):
+        return {"match_id": match_id, "estimated_odds": 1.4, "category": "ab"[n % 2], "league": f"L{n}",
+                "probability": probability, "type": f"T{match_id}"}
+
+    legs = {}
+    for n, match_id in enumerate(("1", "2", "3")):              # un peu plus probables, mais déjà reçus par un autre client
+        legs[match_id] = [leg(match_id, 73.0, n)]
+    for n, match_id in enumerate(("4", "5", "6")):
+        legs[match_id] = [leg(match_id, 71.0, n)]
+    penalties = ComboGenerator._variety_penalties(list(legs), Variety(served={"1": 1, "2": 1, "3": 1}))
+    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5)) == {"1", "2", "3"}      # sans variété : les plus probables
+    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties=penalties)) == {"4", "5", "6"}
 
 
 def test_une_penalite_ne_supprime_jamais_un_combine():

@@ -129,6 +129,68 @@ def test_same_team():
     assert not same("Manchester City", "Man City")
 
 
+def test_same_team_ignore_les_accents_et_la_ponctuation():
+    """TheSportsDB et the-odds-api n'écrivent pas les noms pareil : le défaut corrigé laissait une cote « ≈ » à des paris
+    pourtant cotés par les bookmakers (« İstanbul Başakşehir gagne ou match nul » en est un exemple réel)."""
+    same = ComboGenerator._same_team
+    assert same("İstanbul Başakşehir", "Istanbul Basaksehir") and same("İstanbul Başakşehir", "Istanbul Basaksehir FK")
+    assert same("Paris Saint-Germain", "Paris Saint Germain") and same("St. Pauli", "FC St Pauli")
+    assert same("Atlético Madrid", "Atletico Madrid") and same("Borussia Mönchengladbach", "Borussia Monchengladbach")
+    assert same("Deportivo Alavés", "Alaves") and same("1. FC Köln", "FC Koln") and same("Málaga", "MALAGA")
+    assert same("Fenerbahçe", "Fenerbahce") and same("Gençlerbirliği", "Genclerbirligi")      # le « ı » turc, sans point
+    assert same("Brøndby", "Brondby") and same("Zürich", "Zurich") and same("Łódź", "Lodz")
+    assert same("Ростов", "Ростов") and not same("Ростов", "Зенит")                          # autres alphabets : gardés tels quels
+    # Rien de plus permissif pour autant : des équipes différentes restent différentes.
+    assert not same("Real Madrid", "Real Sociedad") and not same("Sporting CP", "Sporting Braga")
+    assert not same("Inter", "Atalanta") and not same("Rom", "Roma")
+    assert not same(None, "Arsenal") and not same("Arsenal", None) and not same("-", "Arsenal") and not same("", "")
+
+
+def test_nom_d_equipe_compare():
+    fold = combo_generator._fold_name
+    assert fold("İstanbul  Başakşehir") == "istanbul basaksehir" == fold("ISTANBUL-BASAKSEHIR")
+    assert fold("Newell's Old Boys") == "newell s old boys"
+    assert fold(None) == "" and fold("  ") == "" and fold(42) == "42"
+
+
+def test_cote_reelle_d_un_match_dont_le_nom_a_des_accents(gen, monkeypatch):
+    """Le match « İstanbul Başakşehir – Gaziantep » reçoit sa vraie cote même si the-odds-api l'écrit sans accents."""
+    monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
+    asked = []
+
+    def fake_load(self, sport):
+        asked.append(sport)
+        return [odds_event("Galatasaray", "Fenerbahce"), odds_event("Istanbul Basaksehir", "Gaziantep FK")]
+
+    monkeypatch.setattr(ComboGenerator, "_load_events", fake_load)
+    real = gen.get_real_odds("İstanbul Başakşehir", "Gaziantep", "Süper Lig (Turquie)")
+    assert asked == ["soccer_turkey_super_league"] and real and real["home"] == 1.6
+    match = {**make_match(0, league="Süper Lig (Turquie)"), "home_team": "İstanbul Başakşehir", "away_team": "Gaziantep"}
+    analysis = {"base": reconcile({"v1": 72, "v2": 8, "1x": 92, "2x": 28, "over_2_5": 70, "under_2_5": 30,
+                                   "over_0_5": 96, "over_1_5": 85, "over_3_5": 40}), "cap": 90}
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, analysis, real)}
+    assert legs["1X"]["odds_source"] == "bookmakers" and legs["1X"]["estimated_odds"] == round(1 / (1 / 1.6 + 1 / 4.0), 2)
+
+
+def test_match_introuvable_chez_the_odds_api_est_note_dans_les_journaux(gen, monkeypatch, caplog):
+    monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
+    monkeypatch.setattr(ComboGenerator, "_load_events", lambda self, sport: [odds_event("Arsenal", "Chelsea")])
+    with caplog.at_level(logging.INFO, logger="combo_generator"):
+        assert gen.get_real_odds("Lyon", "Nantes", "Ligue 1") is None
+        assert gen.get_real_odds("Arsenal", "Chelsea", "Premier League")                    # trouvé : rien à signaler
+    assert "Lyon – Nantes (Ligue 1) introuvable parmi les 1 match(s) cotés" in caplog.text
+    assert caplog.text.count("introuvable") == 1 and "cle-de-test" not in caplog.text
+
+
+def test_pas_de_journal_quand_l_api_n_a_rien_repondu(gen, monkeypatch, caplog):
+    """Quota atteint ou panne : _load_events le signale déjà, et aucun match n'est « introuvable » pour autant."""
+    monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
+    monkeypatch.setattr(ComboGenerator, "_load_events", lambda self, sport: [])
+    with caplog.at_level(logging.INFO, logger="combo_generator"):
+        assert gen.get_real_odds("Lyon", "Nantes", "Ligue 1") is None
+    assert "introuvable" not in caplog.text
+
+
 def test_vraies_cotes_utilisees_quand_disponibles(gen, monkeypatch):
     monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
     calls = []

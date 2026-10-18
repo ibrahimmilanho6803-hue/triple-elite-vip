@@ -9,7 +9,7 @@ Elles servent à deux endroits :
     passent avant, avec un match de chaque championnat avant le deuxième de chacun, puis les moins distribués, puis les plus
     proches du coup d'envoi ;
   - ComboGenerator.build_combos : un pronostic sur un match déjà reçu par le client est très fortement pénalisé, un match
-    déjà reçu par d'autres clients, légèrement.
+    déjà reçu par d'autres clients, modérément (3 clients au plus comptés).
 Un jour de peu de matchs, il n'y a pas d'autre choix que de redonner des matchs : les pénalités s'y plient (elles ne
 suppriment aucun match), la génération réussit quand même.
 """

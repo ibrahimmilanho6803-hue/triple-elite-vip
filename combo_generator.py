@@ -15,8 +15,10 @@ plus une valeur fixe identique pour tous les matchs.
 import json
 import logging
 import os
+import re
 import statistics
 import time
+import unicodedata
 from collections import Counter, defaultdict
 from itertools import combinations, product
 
@@ -40,7 +42,10 @@ ODDS_CACHE_DIR = os.path.join(config.DATA_DIR, "cache")
 LEAGUE_BONUS = 2.0
 CATEGORY_BONUS = 1.0
 REPEAT_TYPE_PENALTY = 3.0
-SERVED_COUNTED_MAX = 3       # au plus ce nombre d'autres clients comptent dans la légère pénalité des matchs déjà distribués
+SERVED_COUNTED_MAX = 3       # au plus ce nombre d'autres clients comptent dans la pénalité des matchs déjà distribués
+
+# Les lettres que la décomposition Unicode ne ramène pas à une lettre de base (« ı » turc sans point, « ø », « æ »...).
+_LETTER_FOLD = str.maketrans({"ı": "i", "ø": "o", "æ": "ae", "œ": "oe", "ł": "l", "đ": "d", "ð": "d", "þ": "th"})
 
 
 def _odds_api_key():
@@ -49,6 +54,16 @@ def _odds_api_key():
 
 def _valid_price(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 1.01
+
+
+def _fold_name(name):
+    """Nom d'équipe tel qu'on le compare d'une source de données à l'autre : minuscules, sans accents, tirets, points et
+    apostrophes ramenés à une espace. « İstanbul Başakşehir » et « Istanbul Basaksehir », « Paris Saint-Germain » et
+    « Paris Saint Germain », « Atlético Madrid » et « Atletico Madrid » donnent le même texte. Les lettres d'autres alphabets
+    sont gardées telles quelles."""
+    text = unicodedata.normalize("NFKD", str(name or "").casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char)).translate(_LETTER_FOLD)
+    return " ".join(re.sub(r"[\W_]+", " ", text).split())
 
 
 class ComboGenerator:
@@ -80,9 +95,10 @@ class ComboGenerator:
 
     @staticmethod
     def _same_team(name_a, name_b):
-        """Comparaison tolérante (« Man City » ~ « Manchester City »), mais une
-        sous-chaîne trop courte ne suffit pas à confondre deux équipes."""
-        a, b = (name_a or "").lower().strip(), (name_b or "").lower().strip()
+        """Comparaison tolérante d'un nom d'équipe d'une source à l'autre : sans accents ni ponctuation (voir _fold_name) et
+        à une partie du nom près (« Brighton » ~ « Brighton and Hove Albion »), mais une sous-chaîne trop courte ne suffit pas
+        à confondre deux équipes."""
+        a, b = _fold_name(name_a), _fold_name(name_b)
         if not a or not b:
             return False
         shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
@@ -172,15 +188,23 @@ class ComboGenerator:
             return None
         sport = self.LEAGUE_TO_ODDS_SPORT.get(league)
         sports = [sport] if sport else list(self.LEAGUE_TO_ODDS_SPORT.values())
+        searched = 0
         for sport_key in sports:
             if sport_key not in self._league_events:
                 self._league_events[sport_key] = self._load_events(sport_key)
-            for event in self._league_events[sport_key]:
+            events = self._league_events[sport_key]
+            searched += len(events)
+            for event in events:
                 if (self._same_team(home_team, event.get("home_team"))
                         and self._same_team(away_team, event.get("away_team"))):
                     odds = self._extract_odds(event)
                     if odds:
                         return odds
+        if searched:
+            # Pas de réponse de l'API (clé, quota) : déjà signalé par _load_events. Ici elle a répondu, mais sans ce match : il
+            # n'est pas encore coté, ou son nom s'écrit autrement chez elle. Ses paris gardent une cote estimée.
+            log.info("cotes réelles : %s – %s (%s) introuvable parmi les %d match(s) cotés par the-odds-api : cotes estimées",
+                     home_team, away_team, league, searched)
         return None
 
     @classmethod
@@ -287,7 +311,7 @@ class ComboGenerator:
 
     @staticmethod
     def _variety_penalties(match_ids, variety):
-        """{id du match: pénalité} : très forte pour un match déjà donné à CE client aujourd'hui, légère pour chaque autre
+        """{id du match: pénalité} : très forte pour un match déjà donné à CE client aujourd'hui, modérée pour chaque autre
         client qui l'a reçu (voir config.VARIETY_* et variety.py). Vide sans `variety`."""
         if variety is None:
             return {}
