@@ -802,7 +802,7 @@ def test_la_limite_se_regle_dans_la_configuration(timed, monkeypatch):
 def test_l_espace_annonce_que_les_combines_sont_personnels(timed):
     login(timed.client)
     html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ").replace("\u00a0", " ")
-    assert "des onze compétitions" in html
+    assert "des douze compétitions" in html
     assert "Ces combinés sont les tiens : aucun autre abonné ne les voit." in html
     assert "partagés entre tous les abonnés" not in html
 

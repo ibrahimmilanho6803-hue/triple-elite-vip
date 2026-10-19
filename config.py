@@ -46,7 +46,7 @@ if not os.environ.get("TEV_NO_DOTENV"):
     load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # --- Championnats suivis (nom affiché -> id TheSportsDB) ---
-# Onze compétitions : les jours de trêve internationale (ou de calendrier incomplet chez TheSportsDB), les autres
+# Douze compétitions : les jours de trêve internationale (ou de calendrier incomplet chez TheSportsDB), les autres
 # compensent, et plus il y a de matchs chaque jour, moins les mêmes équipes reviennent d'un combiné à l'autre.
 # Le nom affiché sert de clé partout (base des matchs, historique, cotes : voir ComboGenerator.LEAGUE_TO_ODDS_SPORT) :
 # changer un nom ici change seulement ce que le client lit, mais il faut alors le changer aussi dans cette table.
@@ -62,6 +62,7 @@ LEAGUES = {
     "Primeira Liga (Portugal)": "4344",
     "Pro League (Belgique)": "4338",
     "Süper Lig (Turquie)": "4339",
+    "Superliga (Danemark)": "4340",
 }
 
 # Ce que la page d'accueil montre pour chaque compétition de LEAGUES : (nom court, pays). Un test vérifie qu'aucune n'est oubliée.
@@ -77,6 +78,7 @@ LEAGUE_CARDS = {
     "Primeira Liga (Portugal)": ("Primeira Liga", "Portugal"),
     "Pro League (Belgique)": ("Pro League", "Belgique"),
     "Süper Lig (Turquie)": ("Süper Lig", "Turquie"),
+    "Superliga (Danemark)": ("Superliga", "Danemark"),
 }
 
 # --- Stockage local (historique des matchs, combinés générés, cache) ---
@@ -98,7 +100,7 @@ TARGET_ODDS = 2.50          # cote totale minimale d'un combiné
 MIN_CONFIDENCE = 65         # confiance minimale (%) pour qu'un pronostic soit retenu
 MAX_COMBOS_RETOURNES = 3    # nombre de combinés renvoyés au client
 MATCHS_PAR_GENERATION = 18  # matchs du jour analysés au plus pour une génération, tous championnats confondus. Quand il y en
-                            # a davantage (onze compétitions), un match de chaque championnat passe avant le deuxième de
+                            # a davantage (douze compétitions), un match de chaque championnat passe avant le deuxième de
                             # chacun, et ainsi de suite (voir variety.choose_pool). C'est ce qui borne le temps d'une
                             # génération et la dépense d'IA. Les combinés ne portent que sur les matchs du JOUR (jour UTC)
                             # qui n'ont pas encore commencé.
@@ -262,7 +264,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.3.1"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
+VERSION = "2.3.2"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente

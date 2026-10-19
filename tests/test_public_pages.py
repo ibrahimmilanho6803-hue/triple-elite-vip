@@ -500,13 +500,13 @@ def test_gratuit_peut_etre_coupe_sans_deploiement(site, monkeypatch):
 # Accueil
 # --------------------------------------------------------------------------
 
-def test_l_accueil_presente_les_onze_competitions_dont_la_ligue_des_champions(site):
+def test_l_accueil_presente_les_douze_competitions_dont_la_ligue_des_champions(site):
     page = visible(site.client.get("/"))
-    assert len(config.LEAGUE_CARDS) == 11 and "Onze compétitions analysées" in page
+    assert len(config.LEAGUE_CARDS) == 12 and "Douze compétitions analysées" in page
     assert "Quand l’une fait une pause, les autres prennent le relais" in page
     for short, country in config.LEAGUE_CARDS.values():
         assert re.search(rf"{re.escape(short)}\s+{re.escape(country)}", page), (short, country)
-    assert "analyse onze compétitions européennes, Ligue des champions comprise" in page
+    assert "analyse douze compétitions européennes, Ligue des champions comprise" in page
     for old in ("cinq grands championnats", "Cinq championnats", "des cinq championnats"):
         assert old not in page, old
 
@@ -514,20 +514,21 @@ def test_l_accueil_presente_les_onze_competitions_dont_la_ligue_des_champions(si
 def test_toutes_les_pages_parlent_des_memes_competitions(site):
     from web_common import number_word
     word = number_word(len(config.LEAGUES))
-    assert word == "onze"
+    assert word == "douze"
     for path in ("/", "/gratuit"):
         page = visible(site.client.get(path))
         assert f"{word} compétitions" in page.lower(), path
         assert "cinq" not in page.lower().replace("cinq boutons", ""), path
     footer = visible(site.client.get("/conditions"))
     assert "Ligue des champions" in footer and "Süper Lig" in footer and "Primeira Liga" in footer
+    assert "Superliga" in footer
     social = meta(raw(site.client.get("/")), "og:description")
-    assert social.startswith("Onze compétitions analysées par IA")
+    assert social.startswith("Douze compétitions analysées par IA")
 
 
 def test_les_nombres_en_toutes_lettres():
     from web_common import number_word
-    assert [number_word(n) for n in (0, 5, 11, 20)] == ["zéro", "cinq", "onze", "vingt"]
+    assert [number_word(n) for n in (0, 5, 11, 12, 20)] == ["zéro", "cinq", "onze", "douze", "vingt"]
     assert number_word(21) == "21" and number_word(-1) == "-1" and number_word("11") == "11"
 
 

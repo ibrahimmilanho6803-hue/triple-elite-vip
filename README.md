@@ -1,7 +1,7 @@
 # Triple Elite VIP
 
-Site d'abonnement qui analyse onze compétitions de football (Premier League, La Liga, Bundesliga, Ligue 1, Serie A, Ligue des
-champions, et les championnats de Russie, des Pays-Bas, du Portugal, de Belgique et de Turquie) avec l'IA Claude et compose **trois combinés de trois matchs**, de cote totale d'au moins 2,50, avec les
+Site d'abonnement qui analyse douze compétitions de football (Premier League, La Liga, Bundesliga, Ligue 1, Serie A, Ligue des
+champions, et les championnats de Russie, des Pays-Bas, du Portugal, de Belgique, de Turquie et du Danemark) avec l'IA Claude et compose **trois combinés de trois matchs**, de cote totale d'au moins 2,50, avec les
 **matchs du jour** (moins de combinés les petits jours ; aucun un jour sans championnat : « Pas de championnat aujourd'hui »,
 voir « Matchs du jour et générations des clients »).
 Les clients paient par Mobile Money (PayDunya ; la carte bancaire viendra quand PayDunya l'aura activée sur le compte,
@@ -132,19 +132,19 @@ du site dans la Search Console de Google (facultatif).
 
 ## Matchs du jour et générations des clients
 
-**Les combinés ne portent que sur les matchs d'aujourd'hui** : ceux de nos onze compétitions dont le coup d'envoi tombe dans le
+**Les combinés ne portent que sur les matchs d'aujourd'hui** : ceux de nos douze compétitions dont le coup d'envoi tombe dans le
 jour **UTC** en cours (minuit UTC = 1 h du matin à Lagos, minuit à Abidjan) et qui n'ont pas encore commencé.
-`DataCollector.get_matchday()` les cherche en onze appels gratuits à TheSportsDB (un par compétition) et les rend **tous**, classés par
+`DataCollector.get_matchday()` les cherche en douze appels gratuits à TheSportsDB (un par compétition) et les rend **tous**, classés par
 heure de coup d'envoi dans chaque compétition ; une génération en retient au plus 18 (`MATCHS_PAR_GENERATION`, voir « Les combinés de
 chaque client, la variété et les analyses partagées »). C'est la première étape de la chaîne (`pipeline.run_pipeline`), avant toute
 collecte et tout appel payant à l'IA.
 
 **Compétitions suivies** (`config.LEAGUES`, nom affiché et identifiant TheSportsDB) : Premier League (4328), La Liga (4335),
 Bundesliga (4331), Ligue 1 (4334), Serie A (4332), Ligue des champions (4480), Premier-Liga de Russie (4355), Eredivisie des
-Pays-Bas (4337), Primeira Liga du Portugal (4344), Pro League de Belgique (4338), Süper Lig de Turquie (4339). Ajouter une
+Pays-Bas (4337), Primeira Liga du Portugal (4344), Pro League de Belgique (4338), Süper Lig de Turquie (4339), Superliga du Danemark (4340). Ajouter une
 compétition = une ligne dans `LEAGUES`, une dans `LEAGUE_CARDS` (la carte de l'accueil) et une dans
 `ComboGenerator.LEAGUE_TO_ODDS_SPORT` (le nom du sport chez the-odds-api, pour les vraies cotes) ; un test vérifie que les trois
-listes restent d'accord, et les textes du site (« onze compétitions ») suivent tout seuls. Le nom affiché sert de clé partout (base des
+listes restent d'accord, et les textes du site (« douze compétitions ») suivent tout seuls. Le nom affiché sert de clé partout (base des
 matchs, historique, cotes) : le changer demande de le changer aussi dans ces trois listes.
 
 Il faut au moins **3 matchs à venir** (`pipeline.MIN_MATCHES`). En dessous, rien n'est généré, l'IA n'est pas appelée, et le site
@@ -152,7 +152,7 @@ répond, dans l'espace client comme sur `/gratuit` :
 
 | Situation | Message |
 | --- | --- |
-| Aucun match de nos onze compétitions aujourd'hui | « Pas de championnat aujourd'hui » |
+| Aucun match de nos douze compétitions aujourd'hui | « Pas de championnat aujourd'hui » |
 | Des matchs, mais tous ont déjà commencé | « Les matchs d'aujourd'hui ont déjà commencé » |
 | Un ou deux matchs encore à venir | « Trop peu de matchs aujourd'hui » |
 

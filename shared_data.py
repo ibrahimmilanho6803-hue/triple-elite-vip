@@ -1,7 +1,7 @@
 """Ce que toutes les générations partagent, clients et génération automatique confondus.
 
-Chaque client a SES combinés, mais il ne faut pas que chaque clic refasse tout : relire les matchs du jour (onze appels à
-TheSportsDB), recollecter les derniers résultats (vingt-deux appels) et surtout refaire payer l'IA pour des matchs qu'elle a
+Chaque client a SES combinés, mais il ne faut pas que chaque clic refasse tout : relire les matchs du jour (douze appels à
+TheSportsDB), recollecter les derniers résultats (vingt-quatre appels) et surtout refaire payer l'IA pour des matchs qu'elle a
 déjà analysés. Trois choses sont donc gardées en commun pour un temps limité (config.py) :
 
   - les matchs du jour (quelques minutes) : les générations lancées à peu d'écart voient le même programme ;

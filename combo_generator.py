@@ -80,6 +80,7 @@ class ComboGenerator:
         "Primeira Liga (Portugal)": "soccer_portugal_primeira_liga",
         "Pro League (Belgique)": "soccer_belgium_first_div",
         "Süper Lig (Turquie)": "soccer_turkey_super_league",
+        "Superliga (Danemark)": "soccer_denmark_superliga",
     }
 
     def __init__(self, analyzer=None):

@@ -132,15 +132,16 @@ def test_les_pages_publiques_sont_gardees_une_minute_et_cela_se_coupe_par_variab
 
 
 # --------------------------------------------------------------------------
-# Les onze compétitions suivies
+# Les douze compétitions suivies
 # --------------------------------------------------------------------------
 
 NEW_LEAGUES = {"Ligue des champions": "4480", "Premier-Liga (Russie)": "4355", "Eredivisie (Pays-Bas)": "4337",
-               "Primeira Liga (Portugal)": "4344", "Pro League (Belgique)": "4338", "Süper Lig (Turquie)": "4339"}
+               "Primeira Liga (Portugal)": "4344", "Pro League (Belgique)": "4338", "Süper Lig (Turquie)": "4339",
+               "Superliga (Danemark)": "4340"}
 
 
-def test_onze_competitions_les_cinq_historiques_puis_les_six_ajoutees():
-    assert len(config.LEAGUES) == 11
+def test_douze_competitions_les_cinq_historiques_puis_les_sept_ajoutees():
+    assert len(config.LEAGUES) == 12
     assert list(config.LEAGUES)[:5] == ["Premier League", "La Liga", "Bundesliga", "Ligue 1", "Serie A"]
     for name, league_id in NEW_LEAGUES.items():
         assert config.LEAGUES[name] == league_id, name
@@ -156,6 +157,14 @@ def test_chaque_competition_a_sa_carte_d_accueil_et_son_marche_de_cotes():
     assert len(set(sports)) == len(sports) and all(sport.startswith("soccer_") for sport in sports)
     for short, country in config.LEAGUE_CARDS.values():
         assert short and country and short == short.strip() and country == country.strip()
+
+
+def test_la_superliga_du_danemark():
+    """Identifiant TheSportsDB (4340, « Danish Superliga ») et sport the-odds-api (« Denmark Superliga ») vérifiés en ligne."""
+    from combo_generator import ComboGenerator
+    assert config.LEAGUES["Superliga (Danemark)"] == "4340"
+    assert config.LEAGUE_CARDS["Superliga (Danemark)"] == ("Superliga", "Danemark")
+    assert ComboGenerator.LEAGUE_TO_ODDS_SPORT["Superliga (Danemark)"] == "soccer_denmark_superliga"
 
 
 def test_les_reglages_de_variete_et_de_partage_sont_utilisables():

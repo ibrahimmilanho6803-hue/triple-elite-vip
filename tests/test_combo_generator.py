@@ -139,6 +139,7 @@ def test_same_team_ignore_les_accents_et_la_ponctuation():
     assert same("Deportivo Alavés", "Alaves") and same("1. FC Köln", "FC Koln") and same("Málaga", "MALAGA")
     assert same("Fenerbahçe", "Fenerbahce") and same("Gençlerbirliği", "Genclerbirligi")      # le « ı » turc, sans point
     assert same("Brøndby", "Brondby") and same("Zürich", "Zurich") and same("Łódź", "Lodz")
+    assert same("FC Nordsjælland", "FC Nordsjaelland") and same("SønderjyskE", "Sonderjyske")    # les clubs danois (Superliga)
     assert same("Ростов", "Ростов") and not same("Ростов", "Зенит")                          # autres alphabets : gardés tels quels
     # Rien de plus permissif pour autant : des équipes différentes restent différentes.
     assert not same("Real Madrid", "Real Sociedad") and not same("Sporting CP", "Sporting Braga")
