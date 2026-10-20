@@ -30,8 +30,9 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
 3. La confiance est **plafonnée selon la quantité de données** : moins de 4 matchs connus pour une équipe, jamais plus
    de 60 % ; de 4 à 7 matchs, 72 % ; de 8 à 14, 82 % ; 15 ou plus, 90 %.
 4. Seuls les paris à 65 % ou plus **et payés au moins 1,25** (`MIN_LEG_ODDS`) sont gardés : un pari « presque sûr » à 1,03 ne se
-   joue pas, même quand l'IA a raison. Les combinés sont choisis par **probabilité de réussite**, avec un peu de variété
-   (championnats, types de paris).
+   joue pas, même quand l'IA a raison. Les combinés sont choisis par **probabilité de réussite**, avec de la variété :
+   championnats, familles de paris, et genres de pronostics (un même genre de pari ne revient que si rien d'autre ne convient, voir
+   « Des pronostics variés »).
 5. Les **cotes** sont celles de 1xBet, le bookmaker des clients (voir « Les cotes 1xBet ») : si `ODDS_API_KEY` est définie et que
    1xBet cote le pari, sa cote s'affiche **sans signe**. Sinon la cote est indicative et porte un « ≈ » : la médiane des autres
    bookmakers quand ils cotent le pari mais pas 1xBet, ou, quand personne ne le cote, une estimation `(1 − 7 %) / probabilité`
@@ -361,11 +362,80 @@ Trois causes, corrigées en 2.4.0 :
 Mesuré par simulation (IA réaliste, 12 ou 18 matchs analysés par génération, 150 à 250 générations par ligne) : avec les vraies cotes
 des bookmakers, 45 à 70 % des combinés contenaient avant un pari sous 1,20 (selon la justesse supposée de l'IA) ; maintenant aucun
 (cote minimale moyenne d'un combiné : 1,28). Il y a
-toujours 3 combinés par génération et une cote totale moyenne proche de 2,5 à 2,8, et **la cote totale affichée suit la cote réellement
+3 combinés dans presque toutes les générations et une cote totale moyenne proche de 2,5 à 2,8, et **la cote totale affichée suit la cote réellement
 pariable** (2,65 contre 2,64, au lieu de 2,65 contre 2,50). La chance annoncée baisse (environ 39 % au lieu de 42 %) parce qu'elle était
 gonflée par les paris à 1,05 ; la chance réelle d'un combiné est d'environ 30 à 34 %. Cette simulation ne montre **aucun gain à long
 terme** : le rendement espéré par unité misée reste autour de 0,85 (la marge des bookmakers, avec une IA qui en sait moins que le
 marché, hypothèse prudente). La cote minimale rend les cotes affichées honnêtes ; elle ne rend pas les paris rentables.
+
+## Des pronostics variés
+
+Un client a constaté que « Moins de 3,5 buts » revenait presque à chaque génération et lui faisait perdre des gains, et que d'autres
+pronostics (les deux équipes marquent, le total de buts du match, le total d'une équipe) n'étaient presque jamais proposés. Trois
+mesures, depuis la version 2.5.0.
+
+**1. « Moins de 3,5 buts » est retiré** (`markets.RETIRED_CODES`). Autour de 70 % de chance, il passait la confiance minimale (65 %) et
+la cote minimale (1,25) sur presque tous les matchs : la composition le reprenait partout (13 % des pronostics proposés en simulation
+avec de vraies cotes). Le catalogue des pronostics générés passe de 47 à 46 types ; le code reste décodé, évalué et libellé, car les
+combinés déjà générés qui le contiennent restent dans l'historique des clients et dans les résultats publics.
+*Ce retrait ne fait pas gagner plus de combinés à lui seul* : en simulation ce pari gagnait aussi souvent que les autres, et sans autre
+mesure d'autres paris prennent sa place et dominent à leur tour (« Plus de 1,5 but » passe de 20 % à 33 % des pronostics, « X gagne
+ou nul » de 31 % à 39 %, et cinq paris font alors 83 % des pronostics).
+
+**2. Les trois combinés d'une génération sont choisis ensemble, avec des genres de pari différents** (`ComboGenerator._candidates`,
+`_select`). Un *genre* est ce que le client lit, sans l'équipe concernée (`markets.genre_of`) : « A gagne ou match nul » et « B gagne ou
+match nul » sont du même genre, comme « A : plus de 0,5 but » et « B : plus de 0,5 but » ; « Plus de 1,5 » et « Plus de 2,5 » sont deux
+genres. Les 46 types font 31 genres. Dans l'ensemble des neuf pronostics, **chaque pronostic dont le genre figure déjà retire
+`GENRE_REPEAT_PENALTY` (8) points à la note de l'ensemble** (la note d'un combiné est sa probabilité de réussite en %, de 25 à 40
+environ) : la composition préfère un autre genre tant qu'il ne coûte pas plus de 8 points de probabilité, et reprend un genre quand rien
+d'autre ne convient. Elle ne rend jamais un combiné de moins pour cela (le nombre de combinés passe avant la variété).
+Avant, chaque combiné prenait le meilleur d'abord, donc les genres les plus courants, et les suivants n'avaient plus de variété
+possible : les combinés sont maintenant cherchés **ensemble** (recherche locale à 14 départs, mesurée à environ 1 % de l'optimum exact
+sur des journées simulées, en quelques centièmes de seconde). Les journaux disent ce qui a été proposé : `types des 9 pronostics
+proposés : TOTAL_1.5+ x2, 1X, EQ1_0.5+, … (8 genres de pari différents)`.
+
+**3. Les buts attendus d'une équipe sont plafonnés à 3** (`probabilities.MAX_POISSON_PCT`, 95 % au lieu de 99 %). La probabilité qu'une
+équipe marque plus de 1,5 ou 2,5 buts se déduit de celle qu'elle marque au moins un but ; à 97 ou 99 %, la loi de Poisson donnait 3,5 à
+4,6 buts attendus, et « l'équipe marque plus de 2,5 buts » ressortait à 68 ou 84 %, soit des chiffres que seul un excès de confiance de
+l'IA justifie. Ces paris passaient alors la confiance minimale, étaient choisis pour cela, et perdaient (en simulation, annoncés à
+68 %, « plus de 2,5 buts de l'équipe » réussissait 37 à 42 % du temps). Avec le plafond, « plus de 2,5 buts de l'équipe » ne passe plus
+jamais 65 %. « Plus de 1,5 » reste possible pour les grandes équipes à domicile, mais il reste surestimé en simulation (59 % de réussite
+pour 70 % annoncés) : c'est, avec « au moins une équipe marque plus de 2,5 buts » et « plus de 2,5 buts dans le match », l'un des genres
+à surveiller dans les vrais résultats.
+
+Mesuré par simulation (journées de 10 à 18 matchs, IA bruitée, **3 séries de 800 jours**, le même tirage pour l'ancien et le nouveau
+code ; « cotes réelles » : de vraies cotes de bookmaker pour le résultat et les totaux, comme avec `ODDS_API_KEY` ; « cotes estimées » :
+sans clé) :
+
+| | cotes réelles, avant | cotes réelles, après | cotes estimées, avant | cotes estimées, après |
+| --- | --- | --- | --- | --- |
+| Pronostics de genres différents (sur 9) | 5,8 | **8,1** | 7,6 | **8,4** |
+| Générations avec au moins un genre en double | 99,7 % | **58 %** | 83 % | **32 %** |
+| Part du pronostic le plus fréquent | 26 % | **17 %** | 13 % | 14 % |
+| Combinés gagnés | 31,0 % | 30,1 % | 27,7 % | 28,0 % |
+| Chance annoncée sur le coupon | 44,3 % | 39,6 % | 32,2 % | 32,2 % |
+| Générations qui donnent 3 combinés | 99,6 % | 99,6 % | 97,4 % | 98,4 % |
+
+À lire honnêtement : **la variété coûte un peu** quand de vraies cotes existent (environ 1 point de combinés gagnés), parce que les
+pronostics qu'elle fait entrer sont un peu moins probables que ceux qu'elle écarte ; avec les cotes estimées, le plafond de buts
+compense. La chance annoncée baisse parce qu'elle était gonflée : la composition choisissait les paris que l'IA surestimait le plus
+(la réussite réelle simulée est de 30 %, contre 44 % annoncés avant). Ces chiffres viennent d'un **modèle** (une IA un peu moins
+informée que le marché, cotes à 6 % de marge) : le sens et l'ordre de grandeur sont fiables, pas la décimale. Les vrais résultats
+(`/resultats`) diront le reste.
+
+**Pourquoi tous les types n'apparaissent pas.** Un pari n'est proposé que si l'IA le met à 65 % ou plus **et** qu'il est payé au moins
+1,25 : seuls une dizaine de genres passent chaque jour, sur 31. « Les deux équipes marquent » est estimé autour de 50 à 55 % sur un
+match moyen, donc il n'atteint 65 % que sur des matchs très particuliers (environ 4 % des pronostics proposés avec la variété, contre 1 à 3 % avant) ;
+l'imposer plus souvent reviendrait à proposer des paris qui gagnent à peine plus d'une fois sur deux. Abaisser la barre à 60 % pour les
+paris sur les buts a été essayé : cela ne change presque rien à leur fréquence. Avec la variété, les totaux d'une équipe
+(« A marque au moins un but ») passent de 12 % à 18 % des pronostics, les paris composés (« A gagne ou nul et plus de 1,5 but »,
+« A gagne ou nul et A marque… ») de 8 % à 20 %, les « au moins une équipe marque plus de… » de 5 % à 11 %, et les deux équipes
+marquent de 1 % à 4 % ; les totaux de buts du match restent très présents (21 %, contre 35 %) et le résultat (victoire, double chance)
+passe de 39 % à 26 %.
+
+**Régler la variété.** `GENRE_REPEAT_PENALTY` dans Render > Environment (un redémarrage suffit) : 0 supprime la variété (les paris les
+plus probables partout, donc les mêmes genres) ; 5 est un compromis (7,2 genres sur 9, 90 % de générations avec un doublon) ; 12 donne
+8,4 genres sur 9 pour un demi-point de combinés gagnés en moins. Au-delà de 12, presque rien ne change.
 
 ## Les cotes 1xBet
 
@@ -466,7 +536,7 @@ page s'ouvre en moins de 1,2 s alors que le démarrage en prend 2 ; mode sans co
 | `variety.py`, `shared_data.py` | Variété (choix des matchs analysés, matchs déjà reçus) ; données communes à toutes les générations : matchs du jour, collecte, estimations de l'IA gardées par match (`analyses.json`) |
 | `data_collector.py`, `analyzerv2.py` | Données TheSportsDB (matchs du jour, résultats récents), analyse IA : consigne, appels en parallèle, attente quand l'API limite le débit, modèles de repli si un nom de modèle n'existe pas |
 | `dossier.py` | Dossier d'un match pour l'IA : niveau des équipes, domicile / extérieur, derniers matchs pesés par l'adversaire, repos, confrontations directes, repère statistique (Poisson), avis du marché en option ; aucun appel réseau |
-| `probabilities.py`, `markets.py`, `combo_generator.py` | Probabilités, catalogue des paris et verdicts, composition des combinés et cotes |
+| `probabilities.py`, `markets.py`, `combo_generator.py` | Probabilités, catalogue des paris (et pronostics retirés, genres de pari) et verdicts, composition des combinés (choisis ensemble, avec variété) et cotes |
 | `combo_history.py` | Historique : résultats réels des matchs joués, bilan ; chaque client ne voit que ses combinés à venir |
 | `web_common.py`, `privacy.py` | Sécurité commune (en-têtes, anti-CSRF, limitation d'essais), gabarits, e-mails masqués dans les journaux, identifiant opaque d'un client (`client_scope`) |
 | `config.py` | Réglages non secrets ; lit aussi un fichier `.env` en local |
@@ -492,6 +562,7 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `ODDS_API_KEY` | dashboard | Facultatif : vraies cotes (the-odds-api.com). Sans elle, cotes estimées |
 | `ODDS_BOOKMAKER` | dashboard | Facultatif. Le bookmaker dont la cote s'affiche sans « ≈ » : 1xBet (`onexbet`) si la variable est absente ; une autre clé the-odds-api la remplace ; **vide** = aucun, la médiane de tous les bookmakers fait foi. Voir « Les cotes 1xBet » |
 | `MIN_LEG_ODDS` | dashboard | Facultatif. Cote minimale d'un pari proposé : 1,25 par défaut, de 1,0 à 2,0 (virgule ou point). Voir « La cote minimale d'un pari » |
+| `GENRE_REPEAT_PENALTY` | dashboard | Facultatif. Variété des pronostics : points retirés à la note des combinés pour chaque pronostic dont le genre de pari figure déjà dans la génération. 8 par défaut, de 0 (aucune variété) à 50. Voir « Des pronostics variés » |
 | `AI_SEES_MARKET` | dashboard | Facultatif. `1` : l'IA voit aussi l'avis des bookmakers (cotes médianes, marge retirée) ; sans `ODDS_API_KEY`, aucun effet. Désactivé par défaut (voir « L'analyse de l'IA : un dossier par match ») |
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
 | `FREE_PICK_ENABLED` | dashboard | Facultatif. `0` (ou `non`, `false`, `off`) retire le combiné gratuit : `/gratuit` et ses liens disparaissent. Par défaut : activé |
@@ -773,6 +844,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | La première génération après une mise à jour est plus lente | Normal : les analyses gardées par l'ancienne méthode sont ignorées (`AI_PROMPT_VERSION`), les matchs du jour sont ré-analysés une fois. Les générations suivantes retrouvent des analyses partagées |
 | Un client dit qu'il ne peut pas générer une deuxième fois | Depuis la 2.4.2, tant que ses combinés sont valables, il n'y a plus de bouton « Générer » : c'est **« Générer de nouveaux combinés »**, sous ses combinés (avec confirmation). S'il n'y est pas : il a déjà utilisé ses 2 générations du jour (le message le dit sous les combinés), ou sa page date d'avant la mise à jour (la recharger). Les logs disent `génération (de nouveaux combinés) demandée par j***@… : running (lancée)`, puis `génération refusée à j***@… : 2 sur 2 utilisées aujourd'hui` s'il insiste |
 | « Aucun combiné assez fiable avec les matchs d'aujourd'hui » plus souvent depuis la 2.4.0 | La cote minimale (`MIN_LEG_ODDS`, 1,25) écarte les paris trop sûrs : un petit jour de championnat, il peut ne rester aucun combiné à 2,50. Les logs disent combien de pronostics sont restés (`… N pronostics, 0 combinés`). Si cela se répète, baisser un peu `MIN_LEG_ODDS` (1,20) dans Render > Environment ; en dessous, les paris à 1,0x reviennent |
+| Un client trouve que le même pari revient (« Plus de 1,5 but », « X gagne ou nul »…), ou que « Les deux équipes marquent » ne sort presque jamais | Voir « Des pronostics variés ». Les logs du service client disent ce qui a été proposé : `types des 9 pronostics proposés : … (N genres de pari différents)`. Un seul genre en double est normal (la variété est une préférence, pas une interdiction) ; 5 doublons ou plus sur 9 ne l'est pas : vérifier que `GENRE_REPEAT_PENALTY` n'a pas été mise à 0 dans Render > Environment. « Les deux équipes marquent » n'est proposé que si l'IA le met à 65 % ou plus, ce qu'elle fait rarement (le pari est à peine plus prévisible que la moyenne) ; ce n'est pas un défaut du code |
 | Un client trouve que les mêmes équipes reviennent, ou voit d'autres combinés que son voisin | Chaque client a ses propres combinés (voir « Les combinés de chaque client, la variété et les analyses partagées »). Les équipes se répètent surtout les petits jours (trêve, peu de matchs) : s'il reste peu de matchs à venir, ceux déjà reçus sont repris faute d'autre choix. Les logs du service client disent combien de matchs étaient disponibles : `génération : N matchs à venir, M retenus, K analysés (… par l'IA, … déjà gardés), … combinés`. Les générations faites avant la version 2.3.0 restent dans l'historique du client avec leurs répétitions d'alors (les matchs reçus avant cette version ne sont pas comptés dans la variété du jour) |
 | « Pas de championnat aujourd'hui », « Trop peu de matchs aujourd'hui » ou « Les matchs d'aujourd'hui ont déjà commencé » | Pas une panne : les combinés ne portent que sur les matchs du jour (UTC) qui n'ont pas commencé, il en faut 3. Logs du service client : `matchs du jour (AAAA-MM-JJ) : N à venir sur M`. Trêve internationale, ou calendrier de TheSportsDB incomplet : le constat est revérifié toutes les 30 minutes. « Les matchs du jour sont momentanément indisponibles » : un championnat n'a pas répondu chez TheSportsDB, réessayer |
 | « Générer les combinés » reste bloqué plusieurs minutes, puis « Une erreur est survenue pendant la génération » | Logs du service client : chaque étape est consignée (`génération : Recherche des matchs du jour… (5 %)`, puis `Collecte…`, `Analyse…`) ; la dernière dit où ça s'est arrêté. `génération perdue (elle dure trop longtemps) : étape « … »` est suivie de la pile du fil bloqué : sa dernière ligne montre l'appel qui ne revient pas. Le clic du client a été rendu (il peut réessayer). `TheSportsDB : N appel(s) sans réponse au bout de 25 s` : TheSportsDB, ou le réseau du serveur, ne répond plus ; l'étape est abandonnée au bout de 25 s et non de 5 minutes. Si cela se répète sans cause visible, redémarrer le service depuis Render |

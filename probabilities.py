@@ -13,7 +13,8 @@ Principes (documentés aussi dans le README) :
    (hypothèse d'indépendance, volontairement prudente), sauf quand une condition en
    implique une autre. Elle ne dépasse donc jamais celle de sa condition la plus faible.
 4. Le nombre de buts d'une équipe suit une loi de Poisson dont le paramètre est déduit
-   de la probabilité que cette équipe marque au moins un but.
+   de la probabilité que cette équipe marque au moins un but (au plus 3 buts attendus :
+   voir MAX_POISSON_PCT).
 5. Un plafond selon la quantité de données disponibles est appliqué par l'appelant.
 
 Toutes les probabilités de ce module sont des pourcentages (0 à 100).
@@ -22,7 +23,12 @@ import math
 
 from markets import parse_market
 
-MAX_POISSON_PCT = 99.0
+# Plafond de « l'équipe marque au moins un but » pour en déduire ses buts attendus. À 99 %, la loi de Poisson donnait 4,6 buts
+# attendus : « l'équipe marque plus de 2,5 buts » ressortait à 84 %, un chiffre qu'aucun match ne justifie, et ces paris étaient
+# choisis pour cela. À 95 %, une équipe est au plus à 3,0 buts attendus (le haut des meilleures équipes à domicile) : « plus de
+# 1,5 but de l'équipe » monte à 80 % au plus, « plus de 2,5 » à 58 % au plus, donc n'est plus jamais proposé (confiance minimale
+# 65 %). Mesuré par simulation (IA bruitée, 800 jours x 3 graines) : de 1 à 2 points de combinés gagnés en plus.
+MAX_POISSON_PCT = 95.0
 
 
 def _pct(value):

@@ -5,7 +5,9 @@ Un pronostic est identifié par un code texte (ex. "V1", "TOTAL_2.5+",
 - parse_market()        : décode un code en une structure Market ;
 - evaluate_prediction() : verdict d'un code à partir du score final ;
 - describe_prediction() : libellé français montré au client (avec les noms des équipes) ;
-- category_of()         : famille du pronostic (sert à varier les combinés).
+- category_of()         : famille du pronostic (sert à varier les combinés) ;
+- genre_of()            : genre du pronostic tel que le client le lit, sans l'équipe concernée (sert à ne pas répéter le même
+                          genre de pari dans les combinés d'une génération).
 
 Convention des lignes : « Plus de N » = strictement plus de N buts, « Moins de N »
 = strictement moins de N buts. Les codes générés n'utilisent que des lignes en
@@ -22,6 +24,12 @@ TOTAL_LINES = ("0.5", "1.5", "2.5", "3.5")
 TEAM_LINES = ("0.5", "1.5", "2.5")
 COMBINED_LINES = ("1.5", "2.5", "3.5")
 AT_LEAST_LINES = ("1.5", "2.5", "3.5")
+
+# Pronostics que le site ne propose plus. « Moins de 3,5 buts » : retiré à la demande du propriétaire du site. À ~70 % de chance,
+# presque tous les matchs le rendaient éligible : il revenait dans la plupart des générations. Il est retiré du catalogue des
+# pronostics GÉNÉRÉS, mais reste décodé, évalué et libellé comme avant : les combinés déjà générés qui le contiennent sont encore
+# dans l'historique des clients et dans les résultats publics.
+RETIRED_CODES = frozenset({"TOTAL_3.5-"})
 
 
 def _build_catalog():
@@ -41,10 +49,10 @@ def _build_catalog():
     codes += [f"V2_T2_{line}+" for line in ("2.5", "3.5")]
     codes += [f"2X_T2_{line}+" for line in TOTAL_LINES]
     codes += ["BTTS_OUI", "BTTS_NON"]
-    return tuple(codes)
+    return tuple(code for code in codes if code not in RETIRED_CODES)
 
 
-# Pronostics générés pour chaque match, dans un ordre stable.
+# Pronostics générés pour chaque match, dans un ordre stable (sans les pronostics retirés, voir RETIRED_CODES).
 PREDICTION_CODES = _build_catalog()
 
 _NUM = r"(\d+(?:\.\d+)?)"
@@ -110,6 +118,28 @@ def category_of(code):
         "result_total": "COMBINE",
         "result_team": "COMBINE",
     }[market.kind]
+
+
+def genre_of(code):
+    """Genre d'un pronostic tel que le client le lit, sous forme de texte (« result:DC », « total:1.5:+ », « team:0.5 »...) :
+    « A gagne ou match nul » et « B gagne ou match nul » sont du même genre, comme « A : plus de 0,5 but » et « B : plus de 0,5
+    but » ; « Victoire A » et « A gagne ou match nul » sont de deux genres, et « plus de 1,5 » ne se confond pas avec « plus de
+    2,5 » ni avec « moins de 1,5 ». Sert à ne pas répéter le même genre de pari dans les combinés d'une génération. Un code
+    inconnu est son propre genre."""
+    market = parse_market(code)
+    if market is None:
+        return str(code)
+    parts = [market.kind]
+    result = {"V1": "V", "V2": "V", "1X": "DC", "2X": "DC"}.get(market.result)    # l'équipe concernée ne compte pas
+    if result:
+        parts.append(result)
+    if market.line is not None:
+        parts.append(f"{market.line:g}")
+    if market.kind == "total":
+        parts.append(market.side)                                                  # « plus » ou « moins » de buts compte
+    if market.kind == "btts":
+        parts.append("oui" if market.yes else "non")
+    return ":".join(parts)
 
 
 # --------------------------------------------------------------------------

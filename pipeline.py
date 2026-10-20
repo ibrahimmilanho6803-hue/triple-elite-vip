@@ -15,6 +15,7 @@ from collections import Counter
 from contextlib import contextmanager
 
 import config
+import markets
 from combo_generator import ComboGenerator
 from data_collector import DataCollector
 from variety import Variety, choose_pool
@@ -227,6 +228,11 @@ def run_pipeline(progress=None, collector=None, generator=None, variety=None, sh
         log.info("cotes des %d pronostics proposés : %d relevées chez %s, %d médiane des bookmakers (≈), %d estimées (≈)",
                  len(legs), origins["bookmakers"], config.ODDS_BOOKMAKER_LABEL or "les bookmakers",
                  origins["mediane"], origins["estimee"])
+        # Et quels pronostics : c'est ce qui répond à « pourquoi toujours le même pari ? » (voir GENRE_REPEAT_PENALTY).
+        types = Counter(str(leg.get("type")) for leg in legs)
+        log.info("types des %d pronostics proposés : %s (%d genres de pari différents)", len(legs),
+                 ", ".join(code if n == 1 else f"{code} x{n}" for code, n in types.most_common()),
+                 len({markets.genre_of(code) for code in types}))
         meta = {
             "day": matchday.get("day"),
             "day_total": matchday.get("total", len(upcoming)),     # matchs du jour vus, commencés ou non

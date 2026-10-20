@@ -69,6 +69,16 @@ def test_cote_minimale_par_pari():
     assert 1.0 <= config.MIN_LEG_ODDS <= 2.0
 
 
+def test_penalite_de_repetition_des_genres_de_pari():
+    assert config.GENRE_REPEAT_PENALTY == 8.0               # rien dans l'environnement des tests
+    assert read_config("config.GENRE_REPEAT_PENALTY") == "8.0"
+    assert read_config("config.GENRE_REPEAT_PENALTY", GENRE_REPEAT_PENALTY="5") == "5.0"
+    assert read_config("config.GENRE_REPEAT_PENALTY", GENRE_REPEAT_PENALTY="0") == "0.0"        # 0 : aucune variété
+    assert read_config("config.GENRE_REPEAT_PENALTY", GENRE_REPEAT_PENALTY="12,5") == "12.5"    # virgule française
+    for raw in ("", "abc", "-1", "999", "nan"):                                                  # illisible ou hors bornes : le défaut
+        assert read_config("config.GENRE_REPEAT_PENALTY", GENRE_REPEAT_PENALTY=raw) == "8.0", raw
+
+
 def test_bookmaker_de_reference_lu_dans_un_texte():
     parse = config.parse_bookmaker
     assert parse(None, "onexbet") == "onexbet"                                       # absent : le défaut

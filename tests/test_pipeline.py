@@ -177,6 +177,18 @@ def test_le_journal_dit_d_ou_viennent_les_cotes_proposees(caplog):
     assert "cotes des 3 pronostics proposés : 1 relevées chez 1xBet, 1 médiane des bookmakers (≈), 1 estimées (≈)" in caplog.text
 
 
+def test_le_journal_dit_quels_pronostics_sont_proposes(caplog):
+    """Les types des pronostics et le nombre de genres de pari différents : de quoi répondre à « pourquoi toujours le même pari ? »."""
+    legs = [{"match_id": "0", "type": "TOTAL_1.5+", "odds_source": "estimee"},
+            {"match_id": "1", "type": "TOTAL_1.5+", "odds_source": "estimee"},
+            {"match_id": "2", "type": "1X", "odds_source": "estimee"},
+            {"match_id": "3", "type": "2X", "odds_source": "estimee"},      # même genre que « 1X » : pour l'autre équipe
+            {"match_id": "4", "type": "BTTS_OUI", "odds_source": "estimee"}]
+    with caplog.at_level(logging.INFO, logger="pipeline"):
+        run_pipeline(collector=Collector(matchday(6)), generator=Generator([{"predictions": legs, "total_odds": 2.7}]))
+    assert "types des 5 pronostics proposés : TOTAL_1.5+ x2, 1X, 2X, BTTS_OUI (3 genres de pari différents)" in caplog.text
+
+
 def test_le_total_du_jour_compte_aussi_les_matchs_deja_commences():
     day = matchday(4, total=9)                                       # 9 matchs aujourd'hui, 5 ont commencé, 4 restent
     result = run_pipeline(collector=Collector(day), generator=Generator([combo("0", "1", "2")]))

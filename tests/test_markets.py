@@ -2,7 +2,7 @@ import pytest
 
 import markets
 from markets import (PREDICTION_CODES, category_of, combo_status, describe_prediction,
-                     evaluate_prediction, parse_market)
+                     evaluate_prediction, genre_of, parse_market)
 
 
 def test_catalogue_sans_doublon_et_decodable():
@@ -10,6 +10,18 @@ def test_catalogue_sans_doublon_et_decodable():
     assert len(PREDICTION_CODES) >= 45
     for code in PREDICTION_CODES:
         assert parse_market(code) is not None, code
+
+
+def test_moins_de_3_5_buts_est_retire_du_catalogue_mais_reste_evalue():
+    """Retiré à la demande du propriétaire : plus jamais généré, mais les combinés déjà enregistrés qui le contiennent restent
+    décodés, jugés et libellés comme avant (historique des clients, résultats publics)."""
+    assert markets.RETIRED_CODES == {"TOTAL_3.5-"}
+    assert "TOTAL_3.5-" not in PREDICTION_CODES and len(PREDICTION_CODES) == 46
+    assert "TOTAL_3.5+" in PREDICTION_CODES and "TOTAL_2.5-" in PREDICTION_CODES      # son contraire et les autres lignes restent
+    assert parse_market("TOTAL_3.5-") is not None and category_of("TOTAL_3.5-") == "TOTAL"
+    assert evaluate_prediction("TOTAL_3.5-", 2, 1) is True and evaluate_prediction("TOTAL_3.5-", 3, 1) is False
+    assert evaluate_prediction("TOTAL_3.5-", 2, 2) is False
+    assert describe_prediction("TOTAL_3.5-", "A", "B") == "Moins de 3,5 buts dans le match"
 
 
 def test_catalogue_sans_paris_identiques():
@@ -71,6 +83,21 @@ def test_categories():
     assert category_of("V1_ET_1.5+") == "COMBINE"
     assert category_of("2X_T2_0.5+") == "COMBINE"
     assert category_of("???") == "AUTRE"
+
+
+def test_genre_des_pronostics():
+    """Le genre ne dépend pas de l'équipe concernée : « A gagne ou nul » et « B gagne ou nul » sont du même genre de pari."""
+    assert genre_of("1X") == genre_of("2X") and genre_of("V1") == genre_of("V2") and genre_of("1X") != genre_of("V1")
+    assert genre_of("EQ1_0.5+") == genre_of("EQ2_0.5+") and genre_of("EQ1_0.5+") != genre_of("EQ1_1.5+")
+    assert genre_of("1X_ET_1.5+") == genre_of("2X_ET_1.5+") != genre_of("V1_ET_1.5+") == genre_of("V2_ET_1.5+")
+    assert genre_of("1X_T1_0.5+") == genre_of("2X_T2_0.5+") != genre_of("V1_T1_2.5+")
+    assert genre_of("V1_T1_2.5+") == genre_of("V2_T2_2.5+")
+    # Le sens et la ligne comptent : « plus de 1,5 » et « moins de 1,5 » sont deux genres, comme « plus de 2,5 ».
+    assert len({genre_of("TOTAL_1.5+"), genre_of("TOTAL_1.5-"), genre_of("TOTAL_2.5+")}) == 3
+    assert genre_of("BTTS_OUI") != genre_of("BTTS_NON") and genre_of("AU_MOINS_1.5") != genre_of("AU_MOINS_2.5")
+    assert genre_of("INCONNU") == "INCONNU"                                          # un code inconnu est son propre genre
+    genres = {genre_of(code) for code in PREDICTION_CODES}
+    assert 25 <= len(genres) < len(PREDICTION_CODES)                                 # plusieurs codes par genre, mais pas un seul genre
 
 
 def test_libelles_avec_noms_des_equipes():

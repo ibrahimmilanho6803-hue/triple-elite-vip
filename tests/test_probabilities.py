@@ -2,6 +2,7 @@ import random
 
 import pytest
 
+import config
 import markets
 from probabilities import (implied_odds, market_probability, poisson_lambda, poisson_tail,
                            reconcile)
@@ -100,6 +101,19 @@ def test_poisson():
     assert poisson_tail(lam, 2.5) == pytest.approx(16.3, abs=0.2)
     assert poisson_tail(lam, 3.5) < poisson_tail(lam, 2.5)
     assert poisson_lambda(100) < 10 and poisson_lambda(0) == 0
+
+
+def test_les_buts_attendus_d_une_equipe_sont_plafonnes_a_trois():
+    """« L'équipe marque au moins un but » à 97 ou 99 % ne doit pas faire croire qu'elle marque trois buts deux fois sur trois :
+    les buts attendus s'arrêtent à 3,0 (95 %), donc « plus de 2,5 buts de l'équipe » ne passe jamais la confiance minimale."""
+    assert poisson_lambda(99) == poisson_lambda(95) == poisson_lambda(100) == pytest.approx(3.0, abs=0.01)
+    assert poisson_lambda(90) < poisson_lambda(95)                                  # sous le plafond, rien ne change
+    for estimate in (95, 97, 99):
+        base = {"e1": float(estimate), "e2": float(estimate)}
+        assert market_probability("EQ1_2.5+", base) < 60 and market_probability("EQ2_2.5+", base) < 60
+        assert market_probability("EQ1_1.5+", base) < 81
+        assert market_probability("EQ1_0.5+", base) == estimate                    # « marque au moins un but » : l'estimation elle-même
+    assert market_probability("EQ1_2.5+", {"e1": 99.0}) < config.MIN_CONFIDENCE
 
 
 def test_cotes_estimees_coherentes_avec_la_probabilite():

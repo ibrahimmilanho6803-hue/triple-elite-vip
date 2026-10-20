@@ -159,15 +159,22 @@ def four_equal_matches():
     return {m: [synthetic(m, "ab"[n % 2], f"L{n}")] for n, m in enumerate(("1", "2", "3", "4"))}
 
 
+def best_of(legs, penalties=None, target_odds=2.5):
+    """Le meilleur combiné (un seul) des matchs donnés, ou None."""
+    candidates = ComboGenerator._candidates(legs, target_odds, penalties)
+    best = ComboGenerator._select(candidates, 1, config.GENRE_REPEAT_PENALTY)
+    return best[0] if best else None
+
+
 def chosen(best):
-    return {leg["match_id"] for leg in best[:3]}
+    return {leg["match_id"] for leg in best.legs}
 
 
 def test_la_composition_laisse_de_cote_le_match_le_plus_penalise():
     legs = four_equal_matches()
-    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties={"1": 2.25})) == {"2", "3", "4"}
-    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties={"4": 0.75})) == {"1", "2", "3"}
-    best = ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties={"1": 0.75, "2": 0.75, "3": 0.75})
+    assert chosen(best_of(legs, penalties={"1": 2.25})) == {"2", "3", "4"}
+    assert chosen(best_of(legs, penalties={"4": 0.75})) == {"1", "2", "3"}
+    best = best_of(legs, penalties={"1": 0.75, "2": 0.75, "3": 0.75})
     assert "4" in chosen(best)                 # trois matchs pénalisés, un seul libre : le combiné évite d'en prendre trois
 
 
@@ -184,14 +191,14 @@ def test_un_match_deja_recu_par_un_autre_client_cede_la_place_a_un_match_un_peu_
     for n, match_id in enumerate(("4", "5", "6")):
         legs[match_id] = [leg(match_id, 71.0, n)]
     penalties = ComboGenerator._variety_penalties(list(legs), Variety(served={"1": 1, "2": 1, "3": 1}))
-    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5)) == {"1", "2", "3"}      # sans variété : les plus probables
-    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties=penalties)) == {"4", "5", "6"}
+    assert chosen(best_of(legs)) == {"1", "2", "3"}      # sans variété : les plus probables
+    assert chosen(best_of(legs, penalties=penalties)) == {"4", "5", "6"}
 
 
 def test_une_penalite_ne_supprime_jamais_un_combine():
     legs = four_equal_matches()
     everything = {m: config.VARIETY_SEEN_PENALTY * 4 for m in legs}                # tout a été reçu, et très largement
-    assert ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties=everything) is not None
+    assert best_of(legs, penalties=everything) is not None
 
 
 def test_les_combines_d_une_nouvelle_generation_evitent_les_matchs_deja_recus(gen):
@@ -232,4 +239,4 @@ def test_un_match_donne_a_d_autres_clients_est_legerement_moins_favorise(gen):
     legs = four_equal_matches()
     variety = Variety(served={"1": 1})
     penalties = ComboGenerator._variety_penalties(legs, variety)
-    assert chosen(ComboGenerator._best_combo(legs, set(), Counter(), 2.5, penalties=penalties)) == {"2", "3", "4"}
+    assert chosen(best_of(legs, penalties=penalties)) == {"2", "3", "4"}

@@ -7,6 +7,7 @@ import pytest
 
 import combo_generator
 import config
+import markets
 from combo_generator import ComboGenerator
 from helpers import FakeAnalyzer, make_all_preds, make_analysis, make_match
 from probabilities import implied_odds, market_probability, reconcile
@@ -144,19 +145,23 @@ def test_la_cote_minimale_est_atteinte_exactement(gen):
 
 def test_aucun_combine_ne_contient_un_pari_sous_la_cote_minimale(gen):
     """De vraies cotes très basses (grands favoris) sur la moitié des matchs : avant le plancher, beaucoup de combinés en
-    contenaient un. Désormais aucun, et les trois combinés sont toujours là."""
+    contenaient un. Désormais aucun, et les trois combinés sont presque toujours là. (Ce cas extrême, où la moitié des matchs n'offre
+    presque rien, laisse rarement deux combinés seulement depuis que « moins de 3,5 buts » n'est plus proposé.)"""
     rng = random.Random(11)
     real = {"home": 1.03, "draw": 14.0, "away": 40.0, "over_2.5": 1.12, "under_2.5": 5.0, "over_1.5": 1.02, "under_1.5": 12.0}
+    sizes = []
     for round_number in range(8):
         preds = []
         for n in range(12):
             analysis = make_analysis(rng, cap=90, noise=5.0)
             preds += gen.get_predictions_from_analysis(make_match(n), analysis, dict(real) if n % 2 == 0 else None)
         combos = gen.build_combos(preds)
-        assert len(combos) == 3, round_number
+        assert len(combos) >= 2, round_number
+        sizes.append(len(combos))
         for combo in combos:
             assert combo["total_odds"] >= config.TARGET_ODDS
             assert all(leg["estimated_odds"] >= config.MIN_LEG_ODDS for leg in combo["predictions"])
+    assert sizes.count(3) >= 6, sizes
 
 
 # --------------------------------------------------------------------------
@@ -560,3 +565,229 @@ def test_un_seul_combine_possible_avec_trois_matchs(gen):
     preds = make_all_preds(gen, seed=2, matches=3)
     combos = gen.build_combos(preds, target_odds=1.5)
     assert len(combos) == 1
+
+
+# --------------------------------------------------------------------------
+# Pari retiré : « Moins de 3,5 buts »
+# --------------------------------------------------------------------------
+
+# Un match où « moins de 3,5 buts » est à 72 % : avant son retrait, il passait la confiance minimale (65 %) et la cote minimale
+# (estimée à 1,29), comme sur presque tous les matchs.
+UNDER_35_ANALYSIS = {"base": reconcile({"v1": 45, "v2": 25, "over_0_5": 93, "over_1_5": 74, "over_2_5": 48,
+                                        "over_3_5": 28, "under_3_5": 72}), "cap": 90}
+
+
+def test_moins_de_3_5_buts_n_est_plus_propose(gen, monkeypatch):
+    """Retiré à la demande du propriétaire du site (il revenait dans la plupart des générations)."""
+    match = make_match(0)
+    assert market_probability("TOTAL_3.5-", UNDER_35_ANALYSIS["base"]) == 72
+    types = {leg["type"] for leg in gen.get_predictions_from_analysis(match, UNDER_35_ANALYSIS)}
+    assert types and "TOTAL_3.5-" not in types
+    # Avec une vraie cote de 1xBet, ou une IA sûre à 99 % et sans cote minimale : toujours pas proposé.
+    real = with_reference({"under_3.5": 1.55, "over_3.5": 2.3})
+    assert "TOTAL_3.5-" not in {leg["type"] for leg in gen.get_predictions_from_analysis(match, UNDER_35_ANALYSIS, real)}
+    sure = {"base": reconcile({"over_3_5": 1, "under_3_5": 99, "over_0_5": 99, "over_1_5": 90, "over_2_5": 40}), "cap": 90}
+    gen.min_leg_odds = 1.0
+    assert "TOTAL_3.5-" not in {leg["type"] for leg in gen.get_predictions_from_analysis(match, sure)}
+    # La preuve que c'est bien son retrait du catalogue qui l'écarte, et non un seuil : remis au catalogue, il est proposé.
+    gen.min_leg_odds = config.MIN_LEG_ODDS
+    monkeypatch.setattr(markets, "PREDICTION_CODES", (*markets.PREDICTION_CODES, "TOTAL_3.5-"))
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, UNDER_35_ANALYSIS)}
+    assert legs["TOTAL_3.5-"]["confidence"] == 72 and legs["TOTAL_3.5-"]["estimated_odds"] == implied_odds(72, config.ODDS_MARGIN)
+
+
+def test_les_autres_totaux_restent_proposes(gen):
+    """Seul « moins de 3,5 » est retiré : les autres lignes de buts (et son contraire) le restent."""
+    match = make_match(0)
+    analysis = {"base": reconcile({"v1": 45, "v2": 25, "over_0_5": 93, "over_1_5": 70, "over_2_5": 30, "over_3_5": 28,
+                                   "under_2_5": 70, "under_3_5": 72}), "cap": 90}
+    types = {leg["type"] for leg in gen.get_predictions_from_analysis(match, analysis)}
+    assert {"TOTAL_1.5+", "TOTAL_2.5-"} <= types and "TOTAL_3.5-" not in types
+
+
+# --------------------------------------------------------------------------
+# Variété des pronostics : un même genre de pari le moins possible dans une génération
+# --------------------------------------------------------------------------
+
+LEAGUES = ("Premier League", "La Liga", "Serie A")
+
+
+def fake_leg(match, code, category, probability, odds):
+    """Un pronostic tel que get_predictions_from_analysis le rend, avec seulement ce que la composition lit."""
+    return {"match_id": str(match), "home_team": f"D{match}", "away_team": f"E{match}", "league": LEAGUES[match % 3],
+            "kickoff": None, "type": code, "type_name": code, "category": category, "confidence": int(probability),
+            "probability": float(probability), "estimated_odds": odds, "odds_source": "estimee"}
+
+
+def shared_genre_day():
+    """9 matchs ; sur chacun, une double chance (« 1X » ou « 2X » : le même genre de pari, pour l'une ou l'autre équipe), la plus
+    probable, et un pari bien à lui, un peu moins probable. Sans variété, la composition reprend la double chance partout."""
+    categories = ("TOTAL", "EQUIPE", "BTTS")
+    preds = []
+    for m in range(9):
+        preds.append(fake_leg(m, "1X" if m % 2 == 0 else "2X", "RESULTAT", 74, 1.38))
+        preds.append(fake_leg(m, f"PARI_{m}", categories[m % 3], 70, 1.42))
+    return preds
+
+
+def genres(combos):
+    return [markets.genre_of(leg["type"]) for combo in combos for leg in combo["predictions"]]
+
+
+def test_la_variete_donne_des_pronostics_de_genres_differents(gen, monkeypatch):
+    assert config.GENRE_REPEAT_PENALTY > 0
+    found = genres(gen.build_combos(shared_genre_day()))
+    assert len(found) == 9 and len(set(found)) == 9                    # neuf pronostics, neuf genres différents
+    # La preuve que c'est la pénalité qui fait la variété : sans elle, la double chance (« 1X » et « 2X » confondus) revient.
+    monkeypatch.setattr(config, "GENRE_REPEAT_PENALTY", 0.0)
+    sans = Counter(genres(gen.build_combos(shared_genre_day())))
+    assert sans[markets.genre_of("1X")] >= 4
+
+
+def test_plus_la_penalite_est_forte_moins_un_genre_se_repete(gen, monkeypatch):
+    distinct = []
+    for penalty in (0.0, 2.0, 8.0, 50.0):
+        monkeypatch.setattr(config, "GENRE_REPEAT_PENALTY", penalty)
+        distinct.append(len(set(genres(gen.build_combos(shared_genre_day())))))
+    assert distinct == sorted(distinct) and distinct[0] < distinct[-1] == 9
+
+
+def test_un_combine_evite_deux_fois_le_meme_genre_quand_c_est_possible(gen):
+    for combo in gen.build_combos(shared_genre_day()):
+        assert len({markets.genre_of(leg["type"]) for leg in combo["predictions"]}) == 3
+
+
+def test_la_variete_ne_fait_perdre_aucun_combine_quand_les_paris_manquent(gen, monkeypatch):
+    """Deux genres seulement sur tous les matchs : trois pronostics différents sont impossibles dans un combiné. La génération
+    reprend alors les genres plutôt que de rendre un combiné de moins, même avec la pénalité la plus forte."""
+    preds = []
+    for m in range(9):
+        preds.append(fake_leg(m, "1X" if m % 2 else "2X", "RESULTAT", 74, 1.40))
+        preds.append(fake_leg(m, "TOTAL_1.5+", "TOTAL", 72, 1.40))
+    for penalty in (0.0, 8.0, 50.0):
+        monkeypatch.setattr(config, "GENRE_REPEAT_PENALTY", penalty)
+        combos = gen.build_combos(preds)
+        assert len(combos) == 3, penalty
+        for combo in combos:
+            assert len(combo["predictions"]) == 3 and len(combo["categories"]) == 2        # les règles de base tiennent toujours
+            assert combo["total_odds"] >= config.TARGET_ODDS
+
+
+def candidate(score, matches, genre_names):
+    """Un combiné possible écrit à la main, pour essayer la recherche sans passer par les pronostics."""
+    mask = sum(1 << m for m in matches)
+    return combo_generator.Candidate(score, mask, tuple(genre_names), (), 2.6, score, frozenset(), frozenset())
+
+
+def picked(chosen):
+    return sorted((tuple(sorted(c.genres)), c.score) for c in chosen)
+
+
+def test_les_combines_sont_choisis_ensemble_et_non_l_un_apres_l_autre():
+    """Le combiné le mieux noté prend les genres a, b, c ; le suivant n'a plus que des répétitions. Deux combinés un peu moins bien
+    notés, mais de genres tous différents, valent plus : la recherche les trouve, une composition qui prend toujours le meilleur
+    d'abord non."""
+    top = candidate(40, (1, 2, 3), "abc")
+    second = candidate(39, (4, 5, 6), "abc")          # avec top : 3 répétitions
+    alt_a = candidate(38, (1, 2, 4), "abd")
+    alt_b = candidate(37, (3, 5, 6), "efc")
+    pool = [top, second, alt_a, alt_b]
+    chosen = ComboGenerator._select(pool, 2, 8.0)
+    assert set(chosen) == {alt_a, alt_b}              # 75 points, aucun genre répété, contre 79 - 24 = 55
+    assert set(ComboGenerator._select(pool, 2, 0.0)) == {top, second}         # sans pénalité : les deux mieux notés
+    assert set(ComboGenerator._select(pool, 2, 1.0)) == {top, second}         # 79 - 3 = 76 > 75 : une pénalité faible ne suffit pas
+
+
+def test_la_recherche_prefere_plus_de_combines_a_plus_de_variete():
+    pool = [candidate(30, (1, 2, 3), "abc"), candidate(30, (4, 5, 6), "abc"), candidate(30, (7, 8, 9), "abc")]
+    for penalty in (0.0, 8.0, 50.0):
+        assert len(ComboGenerator._select(pool, 3, penalty)) == 3, penalty
+    assert len(ComboGenerator._select(pool, 2, 8.0)) == 2                      # jamais plus que demandé
+    assert ComboGenerator._select([], 3, 8.0) == [] and ComboGenerator._select(pool, 0, 8.0) == []
+
+
+def test_la_recherche_ne_prend_jamais_deux_combines_sur_le_meme_match():
+    pool = [candidate(40 - n, matches, "abc") for n, matches in enumerate(((1, 2, 3), (3, 4, 5), (5, 6, 1), (6, 7, 8)))]
+    for penalty in (0.0, 8.0):
+        chosen = ComboGenerator._select(pool, 3, penalty)
+        masks = [c.mask for c in chosen]
+        assert all(a & b == 0 for i, a in enumerate(masks) for b in masks[i + 1:])
+
+
+def test_la_recherche_garde_toujours_autant_de_combines_que_la_composition_la_plus_simple():
+    """Un cas où le meilleur combiné de tête empêche d'en faire trois : la recherche essaie d'autres têtes."""
+    blocker = candidate(45, (1, 4, 7), "abc")            # coupe chacun des trois autres combinés
+    pool = [blocker, candidate(30, (1, 2, 3), "def"), candidate(30, (4, 5, 6), "ghi"), candidate(30, (7, 8, 9), "jkl")]
+    chosen = ComboGenerator._select(pool, 3, 8.0)
+    assert len(chosen) == 3 and blocker not in chosen
+
+
+def test_le_resultat_ne_depend_que_des_pronostics(gen):
+    preds = shared_genre_day()
+    assert gen.build_combos(preds) == gen.build_combos(list(preds)) == gen.build_combos(preds)
+
+
+def test_un_combine_deja_trouve_n_est_pas_modifie_par_la_variete(gen):
+    """Les champs d'un combiné sont ceux de ses pronostics, comme avant : la variété ne change que le choix."""
+    for combo in gen.build_combos(shared_genre_day()):
+        legs = combo["predictions"]
+        assert combo["total_odds"] == round(legs[0]["estimated_odds"] * legs[1]["estimated_odds"] * legs[2]["estimated_odds"], 2)
+        assert combo["avg_confidence"] == round(sum(leg["confidence"] for leg in legs) / 3, 1)
+        assert combo["leagues"] == sorted({leg["league"] for leg in legs})
+        assert combo["categories"] == sorted({leg["category"] for leg in legs})
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_la_variete_garde_autant_de_combines_et_aucun_pari_trop_bas(gen, monkeypatch, seed):
+    """Sur des journées plausibles (15 matchs, IA bruitée) : autant de combinés qu'avec une pénalité nulle, davantage de genres
+    de pari différents (ou autant), et les règles de base tiennent."""
+    preds = make_all_preds(gen, seed=seed, cap=90)
+    avec = gen.build_combos(preds)
+    monkeypatch.setattr(config, "GENRE_REPEAT_PENALTY", 0.0)
+    sans = gen.build_combos(preds)
+    assert len(avec) == len(sans)
+    assert len(set(genres(avec))) >= len(set(genres(sans)))
+    for combo in avec:
+        assert combo["total_odds"] >= config.TARGET_ODDS
+        assert all(leg["estimated_odds"] >= config.MIN_LEG_ODDS for leg in combo["predictions"])
+
+
+def heavy_day(matches, legs_per_match):
+    """Un jour où chaque match offre énormément de pronostics éligibles (une IA qui met tout à plus de 65 %)."""
+    codes = list(markets.PREDICTION_CODES)
+    preds = []
+    for m in range(matches):
+        for n in range(legs_per_match):
+            code = codes[(m * 7 + n * 3) % len(codes)]
+            preds.append(fake_leg(m, code, markets.category_of(code), 66 + (n % 8), round(1.30 + 0.02 * n, 2)))
+    return preds
+
+
+def test_un_jour_tres_charge_reste_borne_en_temps_et_en_memoire(gen, monkeypatch):
+    """18 matchs x 10 pronostics font 800 000 combinaisons : la composition retient alors moins de pronostics par match (les plus
+    cotés) plutôt que d'examiner tout, et rend quand même ses trois combinés."""
+    seen = {}
+    original = ComboGenerator._candidates
+
+    def spy(legs_by_match, target_odds, penalties=None):
+        seen["count"] = combo_generator._combination_count(legs_by_match)
+        seen["size"] = max(len(legs) for legs in legs_by_match.values())
+        return original(legs_by_match, target_odds, penalties)
+
+    monkeypatch.setattr(ComboGenerator, "_candidates", staticmethod(spy))
+    combos = gen.build_combos(heavy_day(18, 10))
+    assert len(combos) == 3
+    assert seen["count"] <= combo_generator.MAX_RAW_COMBINATIONS and seen["size"] < 10
+    # Un jour ordinaire n'est pas touché : tous ses pronostics sont gardés.
+    seen.clear()
+    gen.build_combos(heavy_day(15, 3))
+    assert seen["size"] == 3 and seen["count"] == 455 * 27
+
+
+def test_nombre_de_combinaisons():
+    legs = lambda n: [object()] * n                                                 # noqa: E731
+    assert combo_generator._combination_count({}) == 0
+    assert combo_generator._combination_count({"a": legs(2), "b": legs(3)}) == 0            # moins de trois matchs
+    assert combo_generator._combination_count({"a": legs(2), "b": legs(3), "c": legs(4)}) == 24
+    assert combo_generator._combination_count({"a": legs(1), "b": legs(2), "c": legs(3), "d": legs(4)}) == (
+        1 * 2 * 3 + 1 * 2 * 4 + 1 * 3 * 4 + 2 * 3 * 4)

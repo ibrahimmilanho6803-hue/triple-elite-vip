@@ -22,7 +22,8 @@ import re
 import statistics
 import time
 import unicodedata
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
+from functools import lru_cache
 from itertools import combinations, product
 
 import requests
@@ -39,13 +40,26 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports"
 ODDS_CACHE_MINUTES = int(os.environ.get("ODDS_CACHE_MINUTES", "360"))
 ODDS_CACHE_DIR = os.path.join(config.DATA_DIR, "cache")
 
-# Poids de la sélection : on classe les combinés selon leur probabilité de réussite
-# (en %), avec un petit bonus de variété (championnats, types de paris) et une
-# pénalité quand un type de pari a déjà été utilisé par un combiné retenu.
+# Poids de la sélection : on classe les combinés selon leur probabilité de réussite (en %), avec un petit bonus de variété
+# (championnats, familles de paris). La variété des PRONOSTICS est une pénalité (config.GENRE_REPEAT_PENALTY) : dans l'ensemble
+# des combinés d'une génération, chaque pronostic dont le genre de pari (voir markets.genre_of) figure déjà retire ce nombre de
+# points à la note totale. Les combinés sont choisis ENSEMBLE (voir _select), pas l'un après l'autre : choisir d'abord le meilleur
+# combiné lui faisait prendre les genres les plus courants et laissait les suivants sans variété possible.
 LEAGUE_BONUS = 2.0
 CATEGORY_BONUS = 1.0
-REPEAT_TYPE_PENALTY = 3.0
 SERVED_COUNTED_MAX = 3       # au plus ce nombre d'autres clients comptent dans la pénalité des matchs déjà distribués
+SEARCH_STARTS = 12           # combien de combinés de tête essayés comme premier combiné de la recherche (voir _select)
+# Nombre maximal de combinaisons examinées (trois matchs, un pronostic de chacun). Un jour ordinaire en compte de 10 000 à 50 000
+# (15 matchs, 3 pronostics retenus par match en moyenne) ; au-delà, la composition retient moins de pronostics par match (les plus
+# cotés, voir _shortlist) pour que le temps et la mémoire d'une génération restent bornés.
+MAX_RAW_COMBINATIONS = 100_000
+
+_genre = lru_cache(maxsize=None)(markets.genre_of)       # le genre d'un pari, calculé une fois par code
+
+# Un combiné possible : sa note (probabilité de réussite en % + bonus - pénalité des matchs déjà reçus), les matchs qu'il utilise
+# (un bit par match), les genres de ses trois pronostics, les pronostics, la cote totale, la probabilité de réussite, ses familles
+# de paris et ses championnats.
+Candidate = namedtuple("Candidate", "score mask genres legs total_odds joint categories leagues")
 
 # Les lettres que la décomposition Unicode ne ramène pas à une lettre de base (« ı » turc sans point, « ø », « æ »...).
 _LETTER_FOLD = str.maketrans({"ı": "i", "ø": "o", "æ": "ae", "œ": "oe", "ł": "l", "đ": "d", "ð": "d", "þ": "th"})
@@ -67,6 +81,95 @@ def _fold_name(name):
     text = unicodedata.normalize("NFKD", str(name or "").casefold())
     text = "".join(char for char in text if not unicodedata.combining(char)).translate(_LETTER_FOLD)
     return " ".join(re.sub(r"[\W_]+", " ", text).split())
+
+
+def _repeats(genres, counts):
+    """Combien des pronostics de `genres` répètent un genre déjà compté dans `counts`, ou déjà vu plus tôt dans `genres`."""
+    repeated, earlier = 0, []
+    for genre in genres:
+        if counts.get(genre) or genre in earlier:
+            repeated += 1
+        earlier.append(genre)
+    return repeated
+
+
+def _tally(chosen):
+    """(matchs utilisés sous forme de bits, nombre de pronostics par genre) des combinés retenus."""
+    mask, counts = 0, Counter()
+    for candidate in chosen:
+        mask |= candidate.mask
+        counts.update(candidate.genres)
+    return mask, counts
+
+
+def _best_addition(candidates, mask, counts, penalty):
+    """Le combiné (sans match de `mask`) qui ajoute le plus à ceux déjà retenus : sa note moins `penalty` par pronostic dont le
+    genre est déjà pris. (combiné, valeur), ou (None, None). `candidates` est trié par note décroissante : la valeur ne dépasse
+    jamais la note, donc la recherche s'arrête dès que la note ne peut plus battre le meilleur trouvé."""
+    best, best_value = None, None
+    for candidate in candidates:
+        if best_value is not None and candidate.score <= best_value:
+            break
+        if candidate.mask & mask:
+            continue
+        value = candidate.score - penalty * _repeats(candidate.genres, counts)
+        if best_value is None or value > best_value:
+            best, best_value = candidate, value
+    return best, best_value
+
+
+def _value(chosen, penalty):
+    """Valeur d'un ensemble de combinés : la somme de leurs notes, moins `penalty` par pronostic qui répète un genre."""
+    genres = [genre for candidate in chosen for genre in candidate.genres]
+    return sum(candidate.score for candidate in chosen) - penalty * (len(genres) - len(set(genres)))
+
+
+def _grow(candidates, chosen, max_combos, penalty):
+    """Complète `chosen` combiné après combiné, en prenant à chaque fois celui qui ajoute le plus."""
+    chosen = list(chosen)
+    while len(chosen) < max_combos:
+        mask, counts = _tally(chosen)
+        best, _ = _best_addition(candidates, mask, counts, penalty)
+        if best is None:
+            break
+        chosen.append(best)
+    return chosen
+
+
+def _refine(candidates, chosen, max_combos, penalty):
+    """Remplace un combiné à la fois par un meilleur (compte tenu des autres), et en ajoute un si la place s'est libérée, tant que
+    l'ensemble gagne. Chaque changement fait monter strictement la valeur : la recherche se termine ; le plafond de tours n'est
+    qu'une ceinture."""
+    chosen = list(chosen)
+    for _ in range(30):
+        changed = False
+        for position in range(len(chosen)):
+            mask, counts = _tally(chosen[:position] + chosen[position + 1:])
+            best, best_value = _best_addition(candidates, mask, counts, penalty)
+            if best is None or best is chosen[position]:
+                continue
+            current = chosen[position].score - penalty * _repeats(chosen[position].genres, counts)
+            if best_value > current + 1e-9:
+                chosen[position] = best
+                changed = True
+        grown = _grow(candidates, chosen, max_combos, penalty)
+        if len(grown) > len(chosen):
+            chosen, changed = grown, True
+        if not changed:
+            break
+    return chosen
+
+
+def _combination_count(legs_by_match):
+    """Nombre de combinaisons « trois matchs différents, un pronostic de chacun » (polynôme symétrique élémentaire d'ordre 3 du
+    nombre de pronostics de chaque match)."""
+    e1 = e2 = e3 = 0
+    for legs in legs_by_match.values():
+        n = len(legs)
+        e3 += e2 * n
+        e2 += e1 * n
+        e1 += n
+    return e3
 
 
 class ComboGenerator:
@@ -341,14 +444,18 @@ class ComboGenerator:
         return ranked[:size]
 
     @staticmethod
-    def _best_combo(legs_by_match, excluded_matches, used_types, target_odds, penalties=None):
-        """Meilleur combiné de 3 matchs (hors matchs déjà utilisés), ou None. `penalties` : {id du match: pénalité de variété
-        par pronostic sur ce match}, retirée de la note du combiné (voir _variety_penalties)."""
+    def _candidates(legs_by_match, target_odds, penalties=None):
+        """Tous les combinés possibles de 3 matchs, du mieux noté au moins bien noté : cote totale d'au moins `target_odds`, au
+        moins deux familles de paris. `penalties` : {id du match: pénalité de variété par pronostic sur ce match}, retirée de la
+        note du combiné (voir _variety_penalties). Deux combinés des mêmes matchs et des mêmes genres de pari ne diffèrent que
+        par leur note : seul le mieux noté est gardé."""
         penalties = penalties or {}
-        keys = [k for k in legs_by_match if k not in excluded_matches]
-        best, best_score = None, None
+        keys = [k for k, legs in legs_by_match.items() if legs]
+        bit = {k: 1 << n for n, k in enumerate(keys)}
+        best = {}
         for ka, kb, kc in combinations(keys, 3):
             variety_cost = penalties.get(ka, 0.0) + penalties.get(kb, 0.0) + penalties.get(kc, 0.0)
+            mask = bit[ka] | bit[kb] | bit[kc]
             for la, lb, lc in product(legs_by_match[ka], legs_by_match[kb], legs_by_match[kc]):
                 total_odds = round(la["estimated_odds"] * lb["estimated_odds"] * lc["estimated_odds"], 2)
                 if total_odds < target_odds:
@@ -358,11 +465,41 @@ class ComboGenerator:
                     continue
                 leagues = {la["league"], lb["league"], lc["league"]}
                 joint = la["probability"] * lb["probability"] * lc["probability"] / 10000.0
-                score = (joint + LEAGUE_BONUS * (len(leagues) - 1) + CATEGORY_BONUS * (len(categories) - 1)
-                         - REPEAT_TYPE_PENALTY * sum(1 for leg in (la, lb, lc) if used_types[leg["type"]]) - variety_cost)
-                if best_score is None or score > best_score:
-                    best_score = score
-                    best = (la, lb, lc, total_odds, joint, categories, leagues)
+                score = (joint + LEAGUE_BONUS * (len(leagues) - 1) + CATEGORY_BONUS * (len(categories) - 1) - variety_cost)
+                genres = (_genre(la["type"]), _genre(lb["type"]), _genre(lc["type"]))
+                signature = (mask, tuple(sorted(genres)))
+                known = best.get(signature)
+                if known is None or score > known.score:
+                    best[signature] = Candidate(score, mask, genres, (la, lb, lc), total_odds, joint, categories, leagues)
+        return sorted(best.values(), key=lambda candidate: candidate.score, reverse=True)
+
+    @staticmethod
+    def _select(candidates, max_combos, penalty):
+        """Les combinés d'une génération, choisis ensemble : jusqu'à `max_combos` combinés sans match en commun qui maximisent la
+        somme de leurs notes, moins `penalty` points pour chaque pronostic dont le genre de pari figure déjà dans la génération
+        (dans un autre combiné, ou plus tôt dans le même). Plus de combinés avant tout : une variété ne coûte jamais un combiné.
+
+        Recherche locale à plusieurs départs (le problème exact se résout par programmation en nombres entiers ; mesuré sur des
+        journées simulées, cette recherche en reste à environ un pour cent de l'optimum, en quelques centièmes de seconde) :
+        chaque départ complète un combiné de tête puis remplace un combiné à la fois par un meilleur tant que l'ensemble gagne.
+        `penalty` 0 : aucune variété, les combinés les mieux notés sans match en commun."""
+        if not candidates or max_combos < 1:
+            return []
+        candidates = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)       # déjà trié par _candidates
+        starts = [_grow(candidates, [], max_combos, penalty), _grow(candidates, [], max_combos, 0.0)]
+        tried = set()
+        for first in candidates:
+            if first.mask not in tried:                     # des départs sur des matchs différents explorent plus de choix
+                tried.add(first.mask)
+                starts.append(_grow(candidates, [first], max_combos, penalty))
+                if len(tried) >= SEARCH_STARTS:
+                    break
+        best, best_key = [], None
+        for chosen in starts:
+            chosen = _refine(candidates, chosen, max_combos, penalty)
+            key = (len(chosen), round(_value(chosen, penalty), 9))
+            if best_key is None or key > best_key:
+                best, best_key = chosen, key
         return best
 
     @staticmethod
@@ -381,9 +518,9 @@ class ComboGenerator:
         return penalties
 
     def build_combos(self, all_preds, target_odds=None, max_combos=None, variety=None):
-        """Jusqu'à `max_combos` combinés de 3 matchs, sans match en commun entre
-        combinés, chacun d'une cote totale >= `target_odds`, variés (championnats,
-        types de pronostics) et classés par probabilité de réussite. `variety` : ce que le client a déjà reçu aujourd'hui
+        """Jusqu'à `max_combos` combinés de 3 matchs, sans match en commun entre combinés, chacun d'une cote totale >=
+        `target_odds`, variés (championnats, familles de paris, et genres de pronostics : voir _select et
+        config.GENRE_REPEAT_PENALTY) et classés par probabilité de réussite. `variety` : ce que le client a déjà reçu aujourd'hui
         (variety.Variety), pour ne pas lui redonner les mêmes matchs."""
         target_odds = config.TARGET_ODDS if target_odds is None else target_odds
         max_combos = config.MAX_COMBOS_RETOURNES if max_combos is None else max_combos
@@ -391,28 +528,28 @@ class ComboGenerator:
         grouped = defaultdict(list)
         for leg in all_preds:
             grouped[leg["match_id"]].append(leg)
-        legs_by_match = {k: self._shortlist(v, config.MAX_PREDICTIONS_PAR_MATCH) for k, v in grouped.items()}
+        size = config.MAX_PREDICTIONS_PAR_MATCH
+        legs_by_match = {k: self._shortlist(v, size) for k, v in grouped.items()}
+        while size > 3 and _combination_count(legs_by_match) > MAX_RAW_COMBINATIONS:
+            size -= 1
+            legs_by_match = {k: self._shortlist(v, size) for k, v in grouped.items()}
+        if size < config.MAX_PREDICTIONS_PAR_MATCH:
+            log.info("composition : %d pronostics par match au plus (beaucoup de pronostics éligibles, voir MAX_RAW_COMBINATIONS)",
+                     size)
         penalties = self._variety_penalties(legs_by_match, variety)
 
+        candidates = self._candidates(legs_by_match, target_odds, penalties)
         selected = []
-        used_matches = set()
-        used_types = Counter()
-        while len(selected) < max_combos:
-            best = self._best_combo(legs_by_match, used_matches, used_types, target_odds, penalties)
-            if best is None:
-                break
-            la, lb, lc, total_odds, joint, categories, leagues = best
-            legs = [la, lb, lc]
+        for candidate in self._select(candidates, max_combos, config.GENRE_REPEAT_PENALTY):
+            legs = list(candidate.legs)
             selected.append({
                 "predictions": legs,
-                "total_odds": total_odds,
+                "total_odds": candidate.total_odds,
                 "avg_confidence": round(sum(leg["confidence"] for leg in legs) / 3, 1),
-                "success_probability": round(joint, 1),
-                "leagues": sorted(leagues),
-                "categories": sorted(categories),
+                "success_probability": round(candidate.joint, 1),
+                "leagues": sorted(candidate.leagues),
+                "categories": sorted(candidate.categories),
             })
-            used_matches.update(leg["match_id"] for leg in legs)
-            used_types.update(leg["type"] for leg in legs)
         selected.sort(key=lambda c: c["success_probability"], reverse=True)
         return selected
 

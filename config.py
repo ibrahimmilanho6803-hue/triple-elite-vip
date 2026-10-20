@@ -122,6 +122,14 @@ MIN_CONFIDENCE = 65         # confiance minimale (%) pour qu'un pronostic soit r
 # 1 supprime le plancher.
 MIN_LEG_ODDS = parse_float(os.environ.get("MIN_LEG_ODDS"), 1.25, 1.0, 2.0)
 MAX_COMBOS_RETOURNES = 3    # nombre de combinés renvoyés au client
+# Variété des pronostics. Un « genre » de pari est ce que le client lit, sans l'équipe concernée : « Plus de 1,5 but dans le match »,
+# « A gagne ou match nul » (pour l'une comme pour l'autre équipe), « A : plus de 0,5 but » (idem)... voir markets.genre_of. Dans les
+# combinés d'une même génération, chaque pronostic dont le genre figure déjà retire ce nombre de points à la note de l'ensemble
+# (la note d'un combiné est sa probabilité de réussite en %, de 25 à 40 environ) : la composition préfère un autre genre de pari tant
+# qu'il ne coûte pas plus que cela en probabilité. Sans cette pénalité, elle reprenait partout les mêmes paris, les plus probables.
+# 0 la supprime. Modifiable dans Render > Environment (GENRE_REPEAT_PENALTY=5, par exemple : moins de variété, des combinés un peu
+# plus probables).
+GENRE_REPEAT_PENALTY = parse_float(os.environ.get("GENRE_REPEAT_PENALTY"), 8.0, 0.0, 50.0)
 MATCHS_PAR_GENERATION = 18  # matchs du jour analysés au plus pour une génération, tous championnats confondus. Quand il y en
                             # a davantage (douze compétitions), un match de chaque championnat passe avant le deuxième de
                             # chacun, et ainsi de suite (voir variety.choose_pool). C'est ce qui borne le temps d'une
@@ -324,7 +332,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.4.2"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
+VERSION = "2.5.0"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente
