@@ -56,6 +56,19 @@ def test_une_date_de_lancement_avec_heure_ne_fait_pas_planter_les_pages(monkeypa
     assert web_common.launch_until_label(datetime.date(2027, 1, 1)) is None
 
 
+def test_lecture_d_un_nombre_decimal_de_l_environnement():
+    parse = config.parse_float
+    assert parse("1.30", 1.25, 1.0, 2.0) == 1.3 and parse(" 1,4 ", 1.25, 1.0, 2.0) == 1.4 and parse("2", 1.25, 1.0, 2.0) == 2.0
+    # Une faute de frappe ne doit jamais fausser les cotes : valeur illisible ou hors bornes -> la valeur par défaut.
+    for raw in (None, "", "abc", "1.2.3", "0.5", "0", "-3", "9", "nan", "inf"):
+        assert parse(raw, 1.25, 1.0, 2.0) == 1.25, raw
+
+
+def test_cote_minimale_par_pari():
+    assert config.MIN_LEG_ODDS == 1.25                      # rien dans l'environnement des tests
+    assert 1.0 <= config.MIN_LEG_ODDS <= 2.0
+
+
 def test_liste_d_adresses_de_test():
     assert config.parse_email_list(" A@x.com, b@y.com;C@Z.com  d@w.org ,, ") == {"a@x.com", "b@y.com", "c@z.com", "d@w.org"}
     assert config.parse_email_list("") == frozenset() and config.parse_email_list(None) == frozenset()

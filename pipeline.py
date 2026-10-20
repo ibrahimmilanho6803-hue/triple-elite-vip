@@ -88,7 +88,23 @@ def _analysis_section(shared):
         shared.analysis_lock.release()
 
 
-def _estimates(pool, collector, analyzer, progress, shared):
+def _with_market(matches, generator):
+    """Copies des `matches` portant l'avis des bookmakers (clé "market" : cotes médianes, voir ComboGenerator.get_real_odds) quand
+    l'IA doit le voir (config.AI_SEES_MARKET). Sans cotes pour un match, il part tel quel : l'IA l'analyse sans cet avis."""
+    if not config.AI_SEES_MARKET or generator is None:
+        return matches
+    enriched = []
+    for match in matches:
+        try:
+            odds = generator.get_real_odds(match["home_team"], match["away_team"], match["league"])
+        except Exception:
+            log.exception("cotes indisponibles pour l'IA (%s vs %s)", match.get("home_team"), match.get("away_team"))
+            odds = None
+        enriched.append({**match, "market": odds} if odds else match)
+    return enriched
+
+
+def _estimates(pool, collector, analyzer, progress, shared, generator=None):
     """({id du match: estimation de l'IA}, nombre de matchs payés à l'IA pour cette génération).
 
     Avec `shared`, les matchs déjà analysés (et encore valables) viennent de la mémoire commune : seuls les autres sont envoyés
@@ -116,7 +132,7 @@ def _estimates(pool, collector, analyzer, progress, shared):
     def on_batch(done, total):
         progress("analyse", 20 + int(60 * done / total), f"Analyse des matchs par l'IA ({done}/{total})…")
 
-    ia_items = analyzer.analyze_multiple_matches(missing, progress=on_batch)
+    ia_items = analyzer.analyze_multiple_matches(_with_market(missing, generator), progress=on_batch)
     if not ia_items:
         if shared is not None:
             shared.note_ai_failure()
@@ -160,7 +176,7 @@ def run_pipeline(progress=None, collector=None, generator=None, variety=None, sh
     try:
         analyzer = generator.analyzer
         with _analysis_section(shared):
-            estimates, paid = _estimates(pool, collector, analyzer, progress, shared)
+            estimates, paid = _estimates(pool, collector, analyzer, progress, shared, generator)
             t_ia = time.time()
             matched = {match["id"]: estimates[match["id"]] for match in pool if match["id"] in estimates}
 

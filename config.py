@@ -14,6 +14,16 @@ def parse_email_list(raw):
     return frozenset(part.lower() for part in re.split(r"[,;\s]+", raw or "") if part)
 
 
+def parse_float(raw, default, minimum, maximum):
+    """Nombre décimal (virgule ou point) lu dans une variable d'environnement, compris entre `minimum` et `maximum` ;
+    `default` si la variable est absente, illisible ou hors de ces bornes (une faute de frappe ne doit jamais fausser les cotes)."""
+    try:
+        number = float(str(raw).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return default
+    return number if minimum <= number <= maximum else default
+
+
 def load_env_file(path=".env"):
     """Lit un fichier .env (CLE=valeur, une par ligne) et définit les variables d'environnement
     absentes. Pratique en local ; sur Render, les variables viennent du tableau de bord et ce
@@ -50,6 +60,10 @@ if not os.environ.get("TEV_NO_DOTENV"):
 # compensent, et plus il y a de matchs chaque jour, moins les mêmes équipes reviennent d'un combiné à l'autre.
 # Le nom affiché sert de clé partout (base des matchs, historique, cotes : voir ComboGenerator.LEAGUE_TO_ODDS_SPORT) :
 # changer un nom ici change seulement ce que le client lit, mais il faut alors le changer aussi dans cette table.
+# Les compétitions entre équipes de championnats différents n'ont pas de « repère statistique » (voir dossier.py) : les buts
+# marqués dans un championnat ne se comparent pas à ceux d'un autre.
+INTERNATIONAL_COMPETITIONS = ("Ligue des champions",)
+
 LEAGUES = {
     "Premier League": "4328",
     "La Liga": "4335",
@@ -98,6 +112,15 @@ SPORTSDB_API_KEY = os.environ.get("SPORTSDB_API_KEY") or "123"
 # --- Génération des combinés ---
 TARGET_ODDS = 2.50          # cote totale minimale d'un combiné
 MIN_CONFIDENCE = 65         # confiance minimale (%) pour qu'un pronostic soit retenu
+# Cote minimale d'UN pari. En dessous, le pari ne vaut pas d'être joué : « Victoire ou nul » d'un grand favori à 1,03 ne rapporte
+# presque rien, et beaucoup de bookmakers refusent les paris trop bas dans un combiné. Le programme s'en servait pourtant de
+# « bouche-trou » : un pari presque sûr fait monter la chance annoncée d'un combiné sans rien ajouter à sa cote (il atteignait
+# 2,50 grâce aux deux autres). Aucun pari plus bas n'est plus proposé, qu'il vienne des bookmakers ou d'une estimation.
+# Mesuré par simulation : avec les vraies cotes, sans plancher, 45 à 70 % des combinés contenaient un pari à moins de 1,20 ;
+# avec 1,25 plus aucun, et les trois combinés restent possibles à chaque génération. 1,25 garde les paris jusqu'à ~74 % de chance
+# (cote estimée ≈ 1,25) et écarte les plus sûrs. Modifiable dans Render > Environment (MIN_LEG_ODDS=1.30, par exemple) ;
+# 1 supprime le plancher.
+MIN_LEG_ODDS = parse_float(os.environ.get("MIN_LEG_ODDS"), 1.25, 1.0, 2.0)
 MAX_COMBOS_RETOURNES = 3    # nombre de combinés renvoyés au client
 MATCHS_PAR_GENERATION = 18  # matchs du jour analysés au plus pour une génération, tous championnats confondus. Quand il y en
                             # a davantage (douze compétitions), un match de chaque championnat passe avant le deuxième de
@@ -205,8 +228,23 @@ IA_FALLBACK_MODELS = ("claude-sonnet-5", "claude-sonnet-4-5")
 IA_BATCH_SIZE = 3           # matchs par appel (appels faits en parallèle)
 IA_MAX_PARALLEL = 5         # appels simultanés maximum
 IA_MAX_ATTEMPTS = 2         # tentatives par lot
-IA_TIMEOUT = 45.0           # secondes par appel
-IA_MAX_TOKENS = 2500
+# L'IA écrit maintenant une analyse de quelques phrases AVANT ses chiffres (voir analyzerv2.PROMPT_HEADER) : la réponse est
+# plus longue (~1 400 jetons pour 3 matchs au lieu de ~400), donc plus de temps et de marge avant d'être coupée.
+IA_TIMEOUT = 75.0           # secondes par appel
+IA_MAX_TOKENS = 4000
+# Quand l'API répond « trop de requêtes » (429) ou « surchargée » (529), on patiente le temps qu'elle indique (au plus ce
+# nombre de secondes) puis on réessaie, au plus IA_RATE_LIMIT_RETRIES fois par lot ; ces attentes ne comptent pas comme une
+# tentative ratée. Sans cela, deux générations rapprochées épuisaient la limite de débit de l'API et échouaient toutes les deux.
+IA_RATE_LIMIT_MAX_WAIT = 20
+IA_RATE_LIMIT_RETRIES = 3
+# Version du texte envoyé à l'IA. Une estimation gardée par une autre version n'est pas réutilisée (voir shared_data.py) :
+# après un changement de la méthode d'analyse, les matchs sont ré-analysés avec la nouvelle, pas servis par l'ancienne.
+AI_PROMPT_VERSION = 2
+# L'IA voit-elle aussi les cotes des bookmakers (marge retirée) ? Elles intègrent les compositions, blessés et suspendus
+# que nous n'avons pas, et empêchent l'IA de s'écarter du marché sans raison. Désactivé par défaut : à activer en connaissance
+# de cause (variable AI_SEES_MARKET=1 dans Render > Environment : un redémarrage suffit, le code ne change pas). Sans
+# ODDS_API_KEY, aucun effet.
+AI_SEES_MARKET = os.environ.get("AI_SEES_MARKET", "0").strip().lower() in ("1", "true", "oui", "yes", "on")
 
 # --- Sécurité des comptes clients ---
 LOGIN_MAX_ATTEMPTS = 8      # échecs de connexion tolérés par e-mail...
@@ -264,7 +302,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.3.2"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
+VERSION = "2.4.0"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente

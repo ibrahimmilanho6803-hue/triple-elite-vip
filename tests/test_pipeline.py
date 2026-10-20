@@ -378,3 +378,82 @@ def test_deux_generations_en_meme_temps_ne_font_payer_l_ia_qu_une_seule_fois(sha
     second.join(10)
     assert len(results) == 2 and len(analyzer.asked) == 1               # le second a attendu, puis trouvé l'analyse déjà faite
     assert sorted(r["meta"]["ai_matches"] for r in results) == [0, 6]
+
+
+# --------------------------------------------------------------------------
+# L'IA voit-elle l'avis des bookmakers ? (config.AI_SEES_MARKET, désactivé par défaut)
+# --------------------------------------------------------------------------
+
+class SpyAnalyzer(Analyzer):
+    def __init__(self):
+        super().__init__()
+        self.seen = []                                   # les matchs tels que l'IA les reçoit
+
+    def analyze_multiple_matches(self, matches, progress=None):
+        self.seen.extend(dict(m) for m in matches)
+        return super().analyze_multiple_matches(matches, progress)
+
+
+class OddsGenerator(Generator):
+    ODDS = {"H0": {"home": 1.8, "draw": 3.6, "away": 4.5}, "H2": {"home": 2.4, "draw": 3.3, "away": 3.0}}
+
+    def __init__(self, broken=()):
+        super().__init__([combo("0", "1", "2")])
+        self.analyzer = SpyAnalyzer()
+        self.broken, self.odds_calls, self.predicted_from = set(broken), [], []
+
+    def get_real_odds(self, home, away, league):
+        self.odds_calls.append(home)
+        if home in self.broken:
+            raise RuntimeError("the-odds-api en panne")
+        return self.ODDS.get(home)
+
+    def get_predictions_from_analysis(self, match, analysis, real_odds):
+        self.predicted_from.append(dict(match))
+        return super().get_predictions_from_analysis(match, analysis, real_odds)
+
+
+def test_par_defaut_l_ia_ne_recoit_pas_les_cotes(monkeypatch):
+    assert config.AI_SEES_MARKET is False                              # désactivé tant qu'on ne l'a pas demandé
+    generator = OddsGenerator()
+    run_pipeline(collector=Collector(matchday(6)), generator=generator)
+    assert len(generator.analyzer.seen) == 6 and not any("market" in match for match in generator.analyzer.seen)
+
+
+def test_avec_l_option_l_ia_recoit_les_cotes_des_matchs_qui_en_ont(monkeypatch):
+    monkeypatch.setattr(config, "AI_SEES_MARKET", True)
+    generator = OddsGenerator()
+    run_pipeline(collector=Collector(matchday(6)), generator=generator)
+    seen = {match["home_team"]: match for match in generator.analyzer.seen}
+    assert seen["H0"]["market"] == OddsGenerator.ODDS["H0"] and seen["H2"]["market"] == OddsGenerator.ODDS["H2"]
+    assert all("market" not in seen[home] for home in ("H1", "H3", "H4", "H5"))      # pas de cotes : analysé sans cet avis
+    assert not any("market" in match for match in generator.predicted_from)           # les matchs de la chaîne ne sont pas modifiés
+
+
+def test_une_panne_des_cotes_n_empeche_pas_l_analyse(monkeypatch):
+    monkeypatch.setattr(config, "AI_SEES_MARKET", True)
+    generator = OddsGenerator(broken={"H0"})
+    result = run_pipeline(collector=Collector(matchday(6)), generator=generator)
+    assert len(result["combos"]) == 1 and len(generator.analyzer.seen) == 6
+    assert "market" not in next(m for m in generator.analyzer.seen if m["home_team"] == "H0")
+
+
+def test_les_cotes_ne_sont_demandees_que_pour_les_matchs_a_analyser(monkeypatch, shared):
+    monkeypatch.setattr(config, "AI_SEES_MARKET", True)
+    first = OddsGenerator()
+    run_pipeline(collector=Collector(matchday(6)), generator=first, shared=shared)
+    second = OddsGenerator()
+    run_pipeline(collector=Collector(matchday(6)), generator=second, shared=shared)
+    assert second.analyzer.seen == []                                  # tout était déjà analysé (avec les cotes) : rien à payer
+    assert sorted(second.odds_calls) == sorted(m["home_team"] for m in matchday(6)["matches"])      # les cotes ne servent plus qu'aux pronostics
+    assert len(first.odds_calls) == 12                                 # 6 pour l'IA, 6 pour les pronostics (cache disque côté générateur)
+
+
+def test_les_analyses_gardees_sans_les_cotes_sont_refaites_quand_on_active_l_option(monkeypatch, shared):
+    first = OddsGenerator()
+    run_pipeline(collector=Collector(matchday(6)), generator=first, shared=shared)
+    assert len(first.analyzer.seen) == 6
+    monkeypatch.setattr(config, "AI_SEES_MARKET", True)
+    second = OddsGenerator()
+    run_pipeline(collector=Collector(matchday(6)), generator=second, shared=shared)
+    assert len(second.analyzer.seen) == 6                              # l'ancienne analyse n'avait pas vu les cotes : on la refait

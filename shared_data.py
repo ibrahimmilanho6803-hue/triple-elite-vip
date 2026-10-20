@@ -32,10 +32,18 @@ def _norm(name):
     return " ".join((name or "").lower().split())
 
 
+def analysis_version():
+    """Version de la méthode d'analyse : elle change avec le texte envoyé à l'IA (config.AI_PROMPT_VERSION) et avec le fait
+    qu'elle voie ou non l'avis des bookmakers (config.AI_SEES_MARKET). Une estimation gardée par une autre version n'est jamais
+    réutilisée : après un changement de méthode, les matchs sont ré-analysés avec la nouvelle, pas servis par l'ancienne."""
+    return f"{config.AI_PROMPT_VERSION}{'m' if config.AI_SEES_MARKET else ''}"
+
+
 class AnalysisCache:
     """Estimations de l'IA gardées par match : {id du match: sa réponse}. Un fichier JSON du dossier de cache (il survit aux
     redémarrages), avec une copie en mémoire si le disque est inutilisable. Une entrée est refusée si elle est trop ancienne,
-    datée du futur, ou si ses équipes ne sont pas celles du match demandé."""
+    datée du futur, faite par une autre version de la méthode d'analyse (analysis_version), ou si ses équipes ne sont pas celles
+    du match demandé."""
 
     def __init__(self, directory, ttl_seconds, clock=time.time):
         self.directory = directory
@@ -80,6 +88,8 @@ class AnalysisCache:
     def _usable(self, entry, match, now):
         if not isinstance(entry, dict) or not isinstance(entry.get("ia"), dict) or not self._recent(entry, now):
             return False
+        if entry.get("v") != analysis_version():
+            return False                                  # faite par une autre méthode d'analyse (ou avant ce suivi)
         return (_norm(entry.get("home")) == _norm(match.get("home_team"))
                 and _norm(entry.get("away")) == _norm(match.get("away_team")))
 
@@ -104,8 +114,8 @@ class AnalysisCache:
             for match in matches:
                 ia = estimates.get(match["id"])
                 if isinstance(ia, dict):
-                    entries[str(match["id"])] = {"ts": now, "home": match.get("home_team"), "away": match.get("away_team"),
-                                                 "ia": ia}
+                    entries[str(match["id"])] = {"ts": now, "v": analysis_version(), "home": match.get("home_team"),
+                                                 "away": match.get("away_team"), "ia": ia}
             self._save(entries)
 
 

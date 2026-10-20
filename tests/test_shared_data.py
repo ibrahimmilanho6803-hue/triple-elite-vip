@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import config
+import shared_data
 from helpers import FakeClock
 from shared_data import ANALYSES_FILE, AnalysisCache, SharedData
 
@@ -90,6 +91,35 @@ def test_un_fichier_illisible_ne_bloque_rien(cache, tmp_path):
     assert cache.lookup([match(1)]) == {}
     cache.store([match(1)], {"1": {"v1": 50}})                                         # et l'écriture suivante remet tout d'équerre
     assert cache.lookup([match(1)]) == {"1": {"v1": 50}}
+
+
+def test_une_estimation_faite_par_une_autre_methode_d_analyse_n_est_pas_reutilisee(cache, tmp_path, monkeypatch):
+    """Après un changement de la consigne de l'IA, les matchs sont ré-analysés avec la nouvelle, pas servis par l'ancienne."""
+    cache.store([match(1), match(2)], {"1": {"v1": 50}, "2": {"v1": 60}})
+    path = tmp_path / "cache" / ANALYSES_FILE
+    entries = json.loads(path.read_text(encoding="utf-8"))["entries"]
+    assert entries["1"]["v"] == "2" == shared_data.analysis_version()                  # chaque estimation porte sa version
+    del entries["2"]["v"]                                                              # une ancienne estimation, d'avant ce suivi
+    entries["1"]["v"] = "1"                                                            # ou faite avec la première consigne
+    path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    assert cache.lookup([match(1), match(2)]) == {}
+    monkeypatch.setattr(config, "AI_PROMPT_VERSION", 3)                                # et le jour où l'on change la consigne
+    cache.store([match(1)], {"1": {"v1": 51}})
+    assert cache.lookup([match(1)]) == {"1": {"v1": 51}}
+    monkeypatch.setattr(config, "AI_PROMPT_VERSION", 2)
+    assert cache.lookup([match(1)]) == {}
+
+
+def test_l_avis_des_bookmakers_change_la_version_de_l_analyse(cache, monkeypatch):
+    monkeypatch.setattr(config, "AI_SEES_MARKET", False)
+    cache.store([match(1)], {"1": {"v1": 50}})
+    assert shared_data.analysis_version() == str(config.AI_PROMPT_VERSION)
+    monkeypatch.setattr(config, "AI_SEES_MARKET", True)                                # l'IA voit désormais les cotes
+    assert shared_data.analysis_version() == f"{config.AI_PROMPT_VERSION}m" and cache.lookup([match(1)]) == {}
+    cache.store([match(1)], {"1": {"v1": 52}})
+    assert cache.lookup([match(1)]) == {"1": {"v1": 52}}
+    monkeypatch.setattr(config, "AI_SEES_MARKET", False)
+    assert cache.lookup([match(1)]) == {}
 
 
 def test_un_disque_inutilisable_garde_les_estimations_en_memoire(tmp_path):

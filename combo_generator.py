@@ -10,7 +10,8 @@ the-odds-api (résultat 1/N/2 et totaux de buts) sont les vraies cotes des bookm
 (médiane de tous les bookmakers). Sinon, et pour tous les autres paris, la cote est
 ESTIMÉE à partir de la probabilité, avec une marge de bookmaker (voir
 probabilities.implied_odds) : une cote cohérente avec la confiance affichée, et non
-plus une valeur fixe identique pour tous les matchs.
+plus une valeur fixe identique pour tous les matchs. Dans les deux cas, un pronostic dont la
+cote est inférieure à config.MIN_LEG_ODDS n'est jamais proposé (pas de pari « trop sûr » à 1,03).
 """
 import json
 import logging
@@ -86,6 +87,7 @@ class ComboGenerator:
     def __init__(self, analyzer=None):
         self.analyzer = analyzer if analyzer is not None else MatchAnalyzer()
         self.min_confidence = config.MIN_CONFIDENCE
+        self.min_leg_odds = config.MIN_LEG_ODDS
         # Évènements the-odds-api déjà téléchargés pendant cette génération
         # (une requête par championnat, pas une par match).
         self._league_events = {}
@@ -237,18 +239,22 @@ class ComboGenerator:
     # ------------------------------------------------------------------
 
     def get_predictions_from_analysis(self, match, analysis, real_odds=None):
-        """Pronostics retenus pour un match : ceux dont la confiance atteint le
-        seuil minimal. Un match que l'IA n'a pas pu analyser est exclu."""
+        """Pronostics retenus pour un match : ceux dont la confiance atteint le seuil minimal ET dont la cote atteint la cote
+        minimale (config.MIN_LEG_ODDS). Un match que l'IA n'a pas pu analyser est exclu."""
         if analysis.get("fallback"):
             return []
         base = analysis.get("base") or {}
         cap = analysis.get("cap", 100)
         legs = []
         for code in markets.PREDICTION_CODES:
-            probability = market_probability(code, base)
-            if probability is None:
+            estimate = market_probability(code, base)
+            if estimate is None:
                 continue
-            probability = min(probability, cap)
+            # Le plafond (peu de matchs connus) limite la confiance AFFICHÉE ; il ne rend pas un pari plus payant. Une cote
+            # estimée vient donc de la chance réellement estimée : plafonner d'abord affichait 1,29 pour un pari que les
+            # bookmakers paient 1,05, et ce faux 1,29 le faisait choisir (mesuré : la cote totale affichée dépassait de
+            # ~0,2 la cote réellement pariable ; elle la suit à ~0,04 près).
+            probability = min(estimate, cap)
             confidence = int(round(probability))
             if confidence < self.min_confidence:
                 continue
@@ -256,7 +262,9 @@ class ComboGenerator:
             if real_price is not None:
                 odds, source = real_price, "bookmakers"
             else:
-                odds, source = implied_odds(probability, config.ODDS_MARGIN), "estimee"
+                odds, source = implied_odds(estimate, config.ODDS_MARGIN), "estimee"
+            if odds < self.min_leg_odds:
+                continue                    # trop peu payé pour être proposé, même s'il est presque sûr (voir MIN_LEG_ODDS)
             legs.append({
                 "match_id": match["id"],
                 "home_team": match["home_team"],

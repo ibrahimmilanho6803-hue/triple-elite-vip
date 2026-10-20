@@ -9,7 +9,7 @@ import combo_generator
 import config
 from combo_generator import ComboGenerator
 from helpers import FakeAnalyzer, make_all_preds, make_analysis, make_match
-from probabilities import reconcile
+from probabilities import implied_odds, market_probability, reconcile
 
 
 @pytest.fixture()
@@ -69,6 +69,89 @@ def test_cotes_estimees_suivent_la_confiance(gen):
     ordered = sorted(legs, key=lambda leg: leg["probability"])
     odds = [leg["estimated_odds"] for leg in ordered]
     assert odds == sorted(odds, reverse=True)               # plus c'est probable, plus la cote est basse
+
+
+# --------------------------------------------------------------------------
+# Cote minimale d'un pari
+# --------------------------------------------------------------------------
+
+# Un match où l'IA est très sûre de plusieurs paris : sans plancher, ils sortent à 1,01–1,15.
+SAFE_ANALYSIS = {"base": reconcile({"v1": 72, "v2": 8, "1x": 92, "2x": 28, "over_2_5": 70, "under_2_5": 30,
+                                    "over_0_5": 96, "over_1_5": 85, "over_3_5": 40}), "cap": 90}
+
+
+def test_cote_minimale_par_defaut(gen):
+    assert gen.min_leg_odds == config.MIN_LEG_ODDS == 1.25
+
+
+def test_aucun_pari_sous_la_cote_minimale(gen):
+    """Le défaut corrigé : un pari presque sûr à 1,03 servait de « bouche-trou » dans un combiné (il fait monter la chance
+    annoncée sans rien ajouter à la cote), et la cote n'était pas jouable chez le bookmaker."""
+    match = make_match(0)
+    gen.min_leg_odds = 1.0
+    sans_plancher = gen.get_predictions_from_analysis(match, SAFE_ANALYSIS)
+    assert min(leg["estimated_odds"] for leg in sans_plancher) < 1.15            # la preuve que le plancher agit
+    gen.min_leg_odds = config.MIN_LEG_ODDS
+    legs = gen.get_predictions_from_analysis(match, SAFE_ANALYSIS)
+    assert legs and min(leg["estimated_odds"] for leg in legs) >= config.MIN_LEG_ODDS
+    gardes = {leg["type"] for leg in legs}
+    assert gardes < {leg["type"] for leg in sans_plancher}                         # les paris restants sont une partie des autres
+    assert "V1" in gardes and "1X" not in gardes and "TOTAL_0.5+" not in gardes    # 72 % reste, 92 % et 96 % sont écartés
+
+
+def test_le_plafond_de_confiance_ne_gonfle_pas_les_cotes(gen):
+    """Avec peu de matchs connus la confiance affichée est plafonnée (72 %), mais le pari n'en devient pas plus payant : la cote
+    estimée reste celle de la chance réellement estimée. Un pari à 92 % ne devient pas « un pari à 72 % payé 1,29 » (que les
+    bookmakers paieraient 1,05) : il est écarté, et la cote totale affichée reste une cote que l'on peut parier."""
+    match = make_match(0)
+    analysis = {**SAFE_ANALYSIS, "cap": 72}
+    estimate = market_probability("1X", SAFE_ANALYSIS["base"])
+    assert estimate > 90
+    gen.min_leg_odds = 1.0
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, analysis)}
+    assert legs["1X"]["confidence"] == 72 and legs["1X"]["probability"] == 72      # l'affichage reste plafonné
+    assert legs["1X"]["estimated_odds"] == implied_odds(estimate, config.ODDS_MARGIN) < 1.1
+    gen.min_leg_odds = config.MIN_LEG_ODDS
+    gardes = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, analysis)}
+    assert "1X" not in gardes and "TOTAL_0.5+" not in gardes
+    assert gardes["V1"]["estimated_odds"] == implied_odds(72, config.ODDS_MARGIN)       # un pari à 72 % : confiance et cote cohérentes
+
+
+def test_la_cote_minimale_vaut_aussi_pour_les_vraies_cotes(gen):
+    """Un favori « gagne » à 1,04 chez les bookmakers n'est pas proposé ; les marchés mieux payés du même match le restent."""
+    match = make_match(0)
+    real = {"home": 1.04, "draw": 12.0, "away": 30.0, "over_2.5": 1.9, "under_2.5": 1.9}
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, real)}
+    assert "V1" not in legs and legs["TOTAL_2.5+"]["estimated_odds"] == 1.9 and legs["TOTAL_2.5+"]["odds_source"] == "bookmakers"
+    gen.min_leg_odds = 1.0
+    assert {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, real)}["V1"]["estimated_odds"] == 1.04
+
+
+def test_la_cote_minimale_est_atteinte_exactement(gen):
+    """Un pari qui paie pile la cote minimale reste proposé."""
+    match = make_match(0)
+    real = {"home": 1.25, "draw": 7.0, "away": 15.0}
+    gen.min_leg_odds = 1.25
+    assert any(leg["type"] == "V1" and leg["estimated_odds"] == 1.25 for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, real))
+    real["home"] = 1.24
+    assert not any(leg["type"] == "V1" for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, real))
+
+
+def test_aucun_combine_ne_contient_un_pari_sous_la_cote_minimale(gen):
+    """De vraies cotes très basses (grands favoris) sur la moitié des matchs : avant le plancher, beaucoup de combinés en
+    contenaient un. Désormais aucun, et les trois combinés sont toujours là."""
+    rng = random.Random(11)
+    real = {"home": 1.03, "draw": 14.0, "away": 40.0, "over_2.5": 1.12, "under_2.5": 5.0, "over_1.5": 1.02, "under_1.5": 12.0}
+    for round_number in range(8):
+        preds = []
+        for n in range(12):
+            analysis = make_analysis(rng, cap=90, noise=5.0)
+            preds += gen.get_predictions_from_analysis(make_match(n), analysis, dict(real) if n % 2 == 0 else None)
+        combos = gen.build_combos(preds)
+        assert len(combos) == 3, round_number
+        for combo in combos:
+            assert combo["total_odds"] >= config.TARGET_ODDS
+            assert all(leg["estimated_odds"] >= config.MIN_LEG_ODDS for leg in combo["predictions"])
 
 
 # --------------------------------------------------------------------------
@@ -169,6 +252,7 @@ def test_cote_reelle_d_un_match_dont_le_nom_a_des_accents(gen, monkeypatch):
     match = {**make_match(0, league="Süper Lig (Turquie)"), "home_team": "İstanbul Başakşehir", "away_team": "Gaziantep"}
     analysis = {"base": reconcile({"v1": 72, "v2": 8, "1x": 92, "2x": 28, "over_2_5": 70, "under_2_5": 30,
                                    "over_0_5": 96, "over_1_5": 85, "over_3_5": 40}), "cap": 90}
+    gen.min_leg_odds = 1.0              # ce test porte sur la reconnaissance du match : « 1X » cote 1,14, sous la cote minimale
     legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, analysis, real)}
     assert legs["1X"]["odds_source"] == "bookmakers" and legs["1X"]["estimated_odds"] == round(1 / (1 / 1.6 + 1 / 4.0), 2)
 
@@ -206,9 +290,9 @@ def test_vraies_cotes_utilisees_quand_disponibles(gen, monkeypatch):
     assert real and real["home"] == 1.6
     gen.get_real_odds(match["home_team"], match["away_team"], match["league"])
     assert calls == ["soccer_epl"]                          # une seule requête par championnat
-    rng = random.Random(5)
     analysis = {"base": reconcile({"v1": 72, "v2": 8, "1x": 92, "2x": 28, "over_2_5": 70, "under_2_5": 30,
                                    "over_0_5": 96, "over_1_5": 85, "over_3_5": 40}), "cap": 90}
+    gen.min_leg_odds = 1.0              # ce test porte sur l'origine des cotes, pas sur la cote minimale (testée plus bas)
     legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, analysis, real)}
     assert legs["V1"]["estimated_odds"] == 1.6 and legs["V1"]["odds_source"] == "bookmakers"
     assert legs["TOTAL_2.5+"]["odds_source"] == "bookmakers"

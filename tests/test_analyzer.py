@@ -9,6 +9,7 @@ import config
 from analyzerv2 import MatchAnalyzer, parse_ai_json
 from data_collector import DataCollector
 from helpers import poisson_ai
+from probabilities import reconcile
 import random
 
 
@@ -184,7 +185,7 @@ def test_association_par_id_puis_par_noms_exacts(db):
     assert "102" not in matched
 
 
-def test_prompt_contient_ids_definitions_et_contexte(db):
+def save_two_matches():
     collector = DataCollector()
     collector.save_match({"idEvent": "1", "strHomeTeam": "H100", "strAwayTeam": "Z", "intHomeScore": "2",
                           "intAwayScore": "0", "dateEvent": "2026-09-01", "strStatus": "FT"}, "Serie A")
@@ -192,13 +193,108 @@ def test_prompt_contient_ids_definitions_et_contexte(db):
                           "intAwayScore": "1", "dateEvent": "2026-09-08", "strStatus": "FT"}, "Serie A")
     collector.collect_all_data = None
     collector.update_team_stats("H100")
+
+
+def test_prompt_contient_ids_definitions_et_dossier(db):
+    save_two_matches()
     analyzer = MatchAnalyzer(client=FakeClient(lambda p, n: "[]"))
-    prompt = analyzer._build_prompt(matches(1))
+    prompt = analyzer._build_prompt(matches(2))
     assert "MATCH id=100" in prompt and "H100 (domicile)" in prompt
     assert "STRICTEMENT supérieur" in prompt and "au_moins_1_marque_1_5" in prompt
-    assert "2 matchs : 1V 1N 0D" in prompt                # bilan de la saison
-    assert "V H100 2-0 Z" in prompt                       # forme récente
-    assert "H2H : A100 1-1 H100" in prompt
+    assert "H100 (DOMICILE) — saison : 2 matchs, 1V 1N 0D" in prompt        # bilan de la saison
+    assert "V (D) 2-0 Z" in prompt and "N (E) 1-1 A100" in prompt           # forme récente : lieu et adversaire
+    assert "CONFRONTATIONS DIRECTES : 08/09/2026 A100 1-1 H100" in prompt
+    assert "REPÈRE STATISTIQUE" in prompt and "CHAMPIONNAT Serie A" in prompt
+    assert "H101 (DOMICILE) : aucun match connu" in prompt                    # une équipe sans match est dite sans données
+    assert "MARCHÉ" not in prompt.split("MATCHS :")[1]                          # pas de cotes, pas de ligne « marché »
+    analyzer.close()
+
+
+def test_le_dossier_de_chaque_match_est_dans_le_message(db):
+    save_two_matches()
+    analyzer = MatchAnalyzer(client=FakeClient(lambda p, n: "[]"))
+    prompt = analyzer._build_prompt(matches(3))
+    assert ids_in(prompt) == ["100", "101", "102"]
+    assert prompt.count("REPÈRE STATISTIQUE") >= 3 and prompt.rstrip().endswith("guillemets doubles.")
+    analyzer.close()
+
+
+def test_l_avis_des_bookmakers_n_est_montre_que_s_il_est_fourni(db):
+    save_two_matches()
+    analyzer = MatchAnalyzer(client=FakeClient(lambda p, n: "[]"))
+    match = {**matches(1)[0], "market": {"home": 2.0, "draw": 3.5, "away": 4.0, "over_2.5": 1.9, "under_2.5": 1.9}}
+    prompt = analyzer._build_prompt([match])
+    assert "MARCHÉ (cotes médianes de plusieurs bookmakers" in prompt and "plus de 2,5 50 %" in prompt
+    assert "MARCHÉ (" not in analyzer._build_prompt(matches(1)).split("MATCHS :")[1]
+    analyzer.close()
+
+
+def test_la_base_n_est_lue_qu_une_fois_par_generation(db, monkeypatch):
+    built = []
+    real_builder = analyzerv2.DossierBuilder
+
+    def counting(conn):
+        built.append(1)
+        return real_builder(conn)
+
+    monkeypatch.setattr(analyzerv2, "DossierBuilder", counting)
+    analyzer = MatchAnalyzer(client=FakeClient(lambda prompt, n: answer_for(prompt)))
+    assert len(analyzer.analyze_multiple_matches(matches(15))) == 15
+    assert len(built) == 1                                  # 5 lots, une seule lecture de la base
+    analyzer.close()
+
+
+# --------------------------------------------------------------------------
+# La consigne : l'IA analyse avant de chiffrer
+# --------------------------------------------------------------------------
+
+def prompt_example():
+    header = analyzerv2.PROMPT_HEADER
+    return header[header.index("[{"):header.rindex("}]") + 2]
+
+
+def test_la_consigne_demande_l_analyse_avant_les_chiffres():
+    header = analyzerv2.PROMPT_HEADER
+    answer_format = header[header.index("RÉPONSE :"):]
+    assert answer_format.index('"analyse"') < answer_format.index("buts_attendus_domicile") < answer_format.index("v1, v2, 1x, 2x")
+    for topic in ("NIVEAU", "LIEU", "FORME", "REPOS", "CONFRONTATIONS DIRECTES", "REPÈRE STATISTIQUE", "FIABILITÉ"):
+        assert topic in header
+    assert "N'en invente JAMAIS" in header and "compositions" in header and "blessés" in header
+    assert "CALIBRATION" in header
+
+
+def test_l_exemple_de_la_consigne_est_complet_et_coherent():
+    item, = parse_ai_json(prompt_example())
+    keys = ["v1", "v2", "1x", "2x", "over_0_5", "over_1_5", "over_2_5", "over_3_5", "under_0_5", "under_1_5", "under_2_5",
+            "under_3_5", "eq1_over_0_5", "eq2_over_0_5", "au_moins_1_marque_1_5", "au_moins_1_marque_2_5", "au_moins_1_marque_3_5",
+            "btts_oui", "btts_non"]
+    assert list(item)[:6] == ["id", "home_team", "away_team", "analyse", "buts_attendus_domicile", "buts_attendus_exterieur"]
+    assert all(isinstance(item[key], int) for key in keys)
+    assert len(item["analyse"].split()) <= 110 and not any(char in item["analyse"] for char in '"[]{}\n')
+    base = reconcile(item)                                  # les chiffres de l'exemple sont déjà cohérents : rien ne bouge
+    assert base["v1"] == item["v1"] and base["v2"] == item["v2"] and round(base["x"]) == 100 - item["v1"] - item["v2"]
+    assert item["1x"] == item["v1"] + round(base["x"]) and item["2x"] == item["v2"] + round(base["x"])
+    assert item["over_2_5"] + item["under_2_5"] == 100 and item["btts_oui"] + item["btts_non"] == 100
+    assert item["over_1_5"] > item["over_2_5"] > item["over_3_5"]
+
+
+def test_les_reperes_de_poisson_de_la_consigne_sont_justes():
+    totals, scores = analyzerv2._poisson_reference()
+    assert "2,5 → 71 / 46 / 24 %" in totals and "3,0 → 80 / 58 / 35 %" in totals
+    assert "1,0 → 63 %" in scores and "2,0 → 86 %" in scores and "0,6 → 45 %" in scores
+    assert totals in analyzerv2.PROMPT_HEADER and scores in analyzerv2.PROMPT_HEADER
+
+
+def test_les_champs_en_plus_ne_gênent_pas_la_lecture_des_chiffres(db):
+    """L'IA renvoie maintenant du texte (analyse) et des buts attendus avec ses chiffres : tout est conservé, rien ne casse."""
+    answer = json.dumps([{**poisson_ai(random.Random(1)), "id": "100", "home_team": "H100", "away_team": "A100",
+                          "analyse": "A reçoit B. Repère : 55 %. [Incertitude] élevée.", "buts_attendus_domicile": 1.6,
+                          "buts_attendus_exterieur": 1.0}])
+    analyzer = MatchAnalyzer(client=FakeClient(lambda p, n: answer))
+    items = analyzer.analyze_multiple_matches(matches(1))
+    analysis = analyzer.build_analysis_from_ia("H100", "A100", analyzer.match_analyses(matches(1), items)["100"])
+    assert analysis["base"]["v1"] is not None and analysis["base"]["o25"] is not None
+    analyzer.close()
 
 
 # --------------------------------------------------------------------------
@@ -284,3 +380,84 @@ def test_choix_du_modele_par_defaut_et_repli_sans_doublon():
     assert chooser.reject("x") is True                                   # un autre appel avait déjà changé de modèle
     assert chooser.reject("y") is False
     assert analyzerv2.SHARED_MODELS.models[0] == config.IA_MODEL
+
+
+# --------------------------------------------------------------------------
+# Limites de débit de l'API (429, 529)
+# --------------------------------------------------------------------------
+
+class Headers(dict):
+    pass
+
+
+class RateLimited(Exception):
+    def __init__(self, status_code=429, retry_after=None):
+        super().__init__(f"erreur {status_code}")
+        self.status_code = status_code
+        self.response = type("R", (), {"headers": Headers({} if retry_after is None else {"retry-after": retry_after})})()
+
+
+def sleeps_of(monkeypatch):
+    waits = []
+    monkeypatch.setattr(analyzerv2.time, "sleep", lambda seconds: waits.append(seconds))
+    monkeypatch.setattr(analyzerv2.random, "random", lambda: 0.0)
+    return waits
+
+
+def test_une_limite_de_debit_fait_patienter_puis_reessayer_sans_compter_une_tentative(db, monkeypatch):
+    waits = sleeps_of(monkeypatch)
+
+    def responder(prompt, number):
+        if number <= 3:                                     # plus d'essais que IA_MAX_ATTEMPTS, mais ce ne sont pas des échecs
+            raise RateLimited(429, "3")
+        return answer_for(prompt)
+
+    client = FakeClient(responder)
+    analyzer = MatchAnalyzer(client=client)
+    assert len(analyzer.analyze_multiple_matches(matches(3))) == 3
+    assert len(client.calls) == 4 and waits == [3.0, 3.0, 3.0]            # l'attente demandée par l'API (retry-after)
+    analyzer.close()
+
+
+def test_attente_bornee_et_valeur_par_defaut(db, monkeypatch):
+    waits = sleeps_of(monkeypatch)
+    sequence = [RateLimited(429, "600"), RateLimited(529, None), RateLimited(429, "pas un nombre"), RateLimited(429, "0")]
+
+    def responder(prompt, number):
+        if number <= len(sequence):
+            raise sequence[number - 1]
+        return answer_for(prompt)
+
+    analyzer = MatchAnalyzer(client=FakeClient(responder))
+    analyzer.analyze_multiple_matches(matches(3))
+    # 600 s demandées -> plafonnées ; 529 sans en-tête et en-tête illisible -> 5 s ; 0 s -> au moins 1 s. Au plus RETRIES attentes.
+    assert waits[:config.IA_RATE_LIMIT_RETRIES] == [float(config.IA_RATE_LIMIT_MAX_WAIT), 5.0, 5.0][:config.IA_RATE_LIMIT_RETRIES]
+    analyzer.close()
+
+
+def test_une_limite_de_debit_persistante_finit_par_abandonner(db, monkeypatch):
+    waits = sleeps_of(monkeypatch)
+    client = FakeClient(lambda prompt, number: (_ for _ in ()).throw(RateLimited(429, "2")))
+    analyzer = MatchAnalyzer(client=client)
+    assert analyzer.analyze_multiple_matches(matches(3)) == []
+    # IA_RATE_LIMIT_RETRIES attentes gratuites, puis les IA_MAX_ATTEMPTS tentatives habituelles : le total est borné.
+    assert len(client.calls) == config.IA_RATE_LIMIT_RETRIES + config.IA_MAX_ATTEMPTS
+    assert len([w for w in waits if w == 2.0]) == config.IA_RATE_LIMIT_RETRIES
+    analyzer.close()
+
+
+def test_les_autres_erreurs_ne_font_pas_patienter_comme_une_limite_de_debit(db, monkeypatch):
+    waits = sleeps_of(monkeypatch)
+
+    class Broken(Exception):
+        status_code = 500
+
+    def responder(prompt, number):
+        raise Broken("panne")
+
+    client = FakeClient(responder)
+    analyzer = MatchAnalyzer(client=client)
+    assert analyzer.analyze_multiple_matches(matches(3)) == []
+    assert len(client.calls) == config.IA_MAX_ATTEMPTS and 5.0 not in waits and 20.0 not in waits
+    assert analyzer._rate_limit_wait(Broken()) is None and analyzer._rate_limit_wait(ValueError()) is None
+    analyzer.close()

@@ -22,15 +22,20 @@ Ne jamais promettre 80 ou 90 % de réussite sur un combiné : ce n'est pas attei
 Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo_generator.py`) :
 
 1. L'IA ne fait qu'**estimer des probabilités** par match (victoire, double chance, buts, deux équipes qui marquent…)
-   à partir des données récoltées : forme récente, confrontations directes, bilan de saison.
+   à partir d'un **dossier** que le code prépare pour chaque match : niveau des deux équipes, résultats à domicile et à
+   l'extérieur, forme récente pesée par la force des adversaires, repos, confrontations directes, repère statistique (voir
+   « L'analyse de l'IA : un dossier par match »). Elle n'a ni les compositions ni les blessés : la source de données n'en fournit pas.
 2. Le code rend ces estimations **cohérentes** entre elles (un « plus de 2,5 buts » ne peut pas être plus probable
    qu'un « plus de 1,5 »), et calcule les paris composés (« victoire ET plus de 1,5 but ») par produit des probabilités.
 3. La confiance est **plafonnée selon la quantité de données** : moins de 4 matchs connus pour une équipe, jamais plus
    de 60 % ; de 4 à 7 matchs, 72 % ; de 8 à 14, 82 % ; 15 ou plus, 90 %.
-4. Seuls les paris à 65 % ou plus sont gardés ; les combinés sont choisis par **probabilité de réussite**, avec un peu
-   de variété (championnats, types de paris).
+4. Seuls les paris à 65 % ou plus **et payés au moins 1,25** (`MIN_LEG_ODDS`) sont gardés : un pari « presque sûr » à 1,03 ne se
+   joue pas, même quand l'IA a raison. Les combinés sont choisis par **probabilité de réussite**, avec un peu de variété
+   (championnats, types de paris).
 5. Les **cotes** sont les vraies cotes des bookmakers (médiane) si `ODDS_API_KEY` est définie et que le pari est coté ;
-   sinon elles sont estimées par `(1 − 7 %) / probabilité` et affichées avec un « ≈ ». Sans clé de cotes, la cote
+   sinon elles sont estimées par `(1 − 7 %) / probabilité` et affichées avec un « ≈ » (la probabilité est celle que l'IA a
+   réellement estimée, **avant** le plafond du point 3 : le plafond limite la confiance affichée, il ne rend pas un pari plus
+   payant). Sans clé de cotes, la cote
    totale de 2,50 est donc une estimation, pas une cote jouable : le coupon invite le client à la vérifier. Même avec une clé,
    the-odds-api ne cote que le résultat (victoire, double chance) et les totaux de buts du match : les paris « une équipe marque
    plus de 0,5 but », « au moins une équipe marque… », « les deux équipes marquent » et les paris composés gardent toujours leur
@@ -248,6 +253,104 @@ Conséquences :
 - Pour un même match, tous les clients ont la même analyse dans la journée : ce qui change d'un client à l'autre, ce sont les matchs
   retenus et leurs associations dans les combinés.
 
+## L'analyse de l'IA : un dossier par match
+
+Depuis la version 2.4.0, l'IA ne reçoit plus « le bilan de la saison et cinq résultats bruts » : elle reçoit un **dossier** par match
+(`dossier.py`), calculé à partir des matchs terminés de la base (aucun appel réseau, aucun coût), et elle doit **écrire son analyse
+avant de donner ses chiffres** (`analyzerv2.PROMPT_HEADER`). Une IA qui lit des chiffres bien présentés, les compare et les
+justifie, puis seulement les convertit en pourcentages, est plus cohérente qu'une IA à qui l'on demande directement dix-neuf nombres.
+
+**Ce que contient le dossier** (`DossierBuilder.render`) :
+
+- **le championnat** : buts par match (pour l'équipe qui reçoit, pour l'autre), part de victoires à domicile, de nuls et de victoires
+  à l'extérieur, de matchs à plus de 1,5 / 2,5 / 3,5 buts, de matchs où les deux équipes marquent ;
+- **pour chaque équipe** : le bilan de la saison, son **niveau** dans son championnat (rang aux points par match ; force offensive et
+  défensive, où 1,00 est la moyenne et où une défense basse est une bonne défense), ses résultats **à domicile pour l'équipe qui reçoit
+  et à l'extérieur pour l'autre**, ses statistiques de buts (plus de 1,5 / 2,5 / 3,5, les deux marquent, sans encaisser, sans marquer),
+  la moyenne de ses 5 derniers matchs, son **repos** (jours depuis son dernier match) et ses **8 derniers matchs, chacun avec la
+  force de l'adversaire** (« pt/m » : ses points par match, car un 3-0 contre le dernier ne vaut pas un 1-0 contre le premier) ;
+- **les 6 dernières confrontations directes** (toutes saisons) ;
+- **un repère statistique** (plus bas) : les buts attendus de chaque équipe et les probabilités qui en découlent ;
+- **l'avis du marché**, seulement si `AI_SEES_MARKET` est activée (plus bas).
+
+Tout est calculé sur la saison en cours (la plus récente de la base) : une équipe ne se juge pas sur l'an dernier. Les données sont celles
+de la base, remises à jour par la collecte (au plus une fois par heure) avant chaque analyse. Quand elles sont maigres, le dossier le dit
+à l'IA (« ÉCHANTILLON FAIBLE » sous 5 matchs, « aucun match connu cette saison ») et la consigne lui demande de se rapprocher des
+moyennes du championnat.
+
+**Ce que l'IA n'a pas, et ne doit pas inventer.** Les compositions, les blessés et suspendus, l'enjeu du match (titre, maintien, derby),
+la météo : TheSportsDB n'en fournit aucun, même pour un match déjà joué. La consigne le dit à l'IA (n'en inventer aucun, ne citer
+aucun joueur absent du dossier) et en fait une raison de plus de rester mesurée. La seule voie indirecte est l'avis des bookmakers
+(`AI_SEES_MARKET`, plus bas) ; une vraie source de compositions serait une autre API, payante (voir « Limites connues »).
+
+**Le repère statistique** (`dossier.fit_ratings`, `DossierBuilder.baseline`). Un modèle de Poisson : la force offensive et la force
+défensive de chaque équipe sont estimées d'après les buts de TOUS les matchs du championnat, chaque équipe corrigeant les autres
+(marquer trois fois contre une défense poreuse compte moins), et tirées vers la moyenne du championnat tant que l'équipe a peu joué
+(`PRIOR_STRENGTH_GOALS` : 9 buts, soit environ 7 matchs). Il en déduit les buts attendus des deux équipes, puis victoire / nul / défaite,
+lignes de buts, « les deux marquent » et « chaque équipe marque ». Il n'existe pas pour la Ligue des champions (équipes de championnats
+différents) : le dossier le dit, et l'IA s'appuie alors sur le niveau de chaque équipe dans son championnat. L'IA le reçoit comme **un
+point de départ chiffré**, pas comme la réponse : elle le corrige avec sa lecture du dossier et doit expliquer un écart important.
+
+Mesuré sur des saisons passées (Premier League, Liga, Bundesliga et Serie A, 10 saisons, près de 14 000 matchs, chacun prévu avec les
+seuls résultats de sa saison joués avant lui) :
+
+- **le résultat** est mieux prévu que par la simple moyenne du championnat (perte logarithmique plus basse de 0,04 à 0,07 pour une
+  victoire, de 0,01 pour le nul) et **bien calibré** : 74 % annoncés pour une victoire à domicile, 73 % observés ; 84 % annoncés, 85 % observés ;
+- **les buts** (plus de 1,5 / 2,5 / 3,5, les deux équipes marquent) sont bien moins prévisibles : le modèle brut n'y fait presque pas
+  mieux que la moyenne du championnat et était trop sûr de lui (74 % annoncés pour des « plus de 2,5 » qui arrivaient 65 % du temps).
+  Ces quatre chiffres sont donc ramenés à moitié vers la moyenne du championnat (`GOAL_MARKET_SHRINK`), et la consigne dit la même
+  chose à l'IA. Le résultat est l'endroit où l'analyse apporte de l'information ; sur les buts, un bon pronostic reste proche des moyennes.
+
+**La consigne** (`analyzerv2.PROMPT_HEADER`). Elle fait suivre à l'IA, dans l'ordre, les sept regards d'un analyste (niveau, lieu, forme
+pesée par l'adversaire, repos, confrontations directes, repère statistique, fiabilité), puis demande pour chaque match un objet JSON
+dont les clés sont **dans cet ordre** : `id` et équipes, **`analyse`** (5 à 7 phrases courtes, 110 mots au plus, qui citent des chiffres
+du dossier), `buts_attendus_domicile` et `buts_attendus_exterieur`, puis les dix-neuf probabilités. Ce que l'IA écrit avant les chiffres
+guide les chiffres. Les règles de calibration y sont écrites : les pourcentages sont de vraies probabilités (« quand tu écris 70, cela
+arrive 7 fois sur 10 »), jamais plus de 85 pour une victoire ni 93 pour « victoire ou nul », rien sous 3 ni au-dessus de 97 ; deux petites
+tables de Poisson lui évitent de faire ces calculs de tête. Le texte de l'analyse n'est pas montré aux clients ; il est gardé avec
+l'estimation dans `analyses.json` (dossier de cache), ce qui permet de relire pourquoi l'IA a donné tel chiffre. Le code, lui, ne change
+pas : `probabilities.reconcile` rend les chiffres cohérents entre eux, et le plafond de confiance selon la quantité de données s'applique toujours.
+
+**Coût et limites de débit.** Un appel (3 matchs) envoie environ 4 500 jetons et en reçoit environ 1 400 : de l'ordre de 0,023 $ avec
+Sonnet 5.5 (2 $ et 10 $ le million de jetons), soit environ **0,008 $ par match**, et 0,2 à 0,4 $ par jour puisque les analyses sont
+partagées entre clients (estimation, à recouper avec la console Anthropic après quelques jours). Les appels partent par 5 en parallèle.
+Quand l'API répond « trop de requêtes » (429) ou « surchargée » (529), le lot patiente le temps qu'elle indique (au plus
+`IA_RATE_LIMIT_MAX_WAIT`, 20 s) puis réessaie, au plus `IA_RATE_LIMIT_RETRIES` (3) fois, sans que cela compte comme une tentative
+ratée. `IA_TIMEOUT` (75 s par appel) et `IA_MAX_TOKENS` (4 000) laissent de la marge à une réponse plus longue qu'avant.
+
+**Changer la méthode sans servir de vieilles analyses.** L'estimation gardée pour un match (12 h) porte la version de la méthode
+(`AI_PROMPT_VERSION`, suivie de « m » quand l'IA voit le marché). Une estimation faite par une autre version n'est jamais réutilisée :
+après une mise à jour de la consigne, les matchs du jour sont ré-analysés une fois (environ 0,2 $), puis partagés comme avant. Après
+toute modification du texte de la consigne ou du contenu du dossier, augmenter `AI_PROMPT_VERSION` dans `config.py`.
+
+**L'avis du marché (`AI_SEES_MARKET`, désactivé par défaut).** Avec `AI_SEES_MARKET=1` (Render > Environment ; un redémarrage suffit)
+et `ODDS_API_KEY` définie, le dossier d'un match coté contient une ligne « MARCHÉ » : les probabilités tirées des cotes médianes de
+plusieurs bookmakers, marge retirée. Les bookmakers connaissent les compositions et les absences ; l'IA s'en sert comme point de départ
+pour ce que la ligne couvre (résultat et lignes de buts) et ne s'en éloigne que pour une raison lue dans le dossier. À peser avant
+d'activer : les pronostics se rapprochent alors du marché, donc aussi de ses cotes basses sur les favoris. C'est une décision de produit,
+pas un réglage technique. Sans `ODDS_API_KEY`, aucun effet.
+
+## La cote minimale d'un pari
+
+Un client trouvait parfois dans un combiné un pari à 1,03 ou 1,05 : impossible à jouer, et il gonflait la chance annoncée du combiné.
+Trois causes, corrigées en 2.4.0 :
+
+1. rien n'écartait les paris très peu payés : `MIN_LEG_ODDS` (1,25 par défaut) écarte maintenant tout pari dont la cote, réelle ou
+   estimée, est plus basse. Variable facultative : de 1,0 à 2,0, virgule ou point ; une valeur illisible ou hors de ces bornes revient à 1,25 ;
+2. la cote estimée venait de la chance déjà plafonnée par la quantité de données : une équipe peu connue (plafond à 60 %) affichait
+   1,5 pour un pari que les bookmakers paient 1,05, et ce faux 1,5 le faisait choisir. Elle vient maintenant de la chance réellement
+   estimée par l'IA ; le plafond ne limite plus que la confiance affichée ;
+3. les paris déjà presque sûrs, qui servaient de remplissage pour atteindre 2,50, sont écartés par le point 1.
+
+Mesuré par simulation (IA réaliste, 12 ou 18 matchs analysés par génération, 150 à 250 générations par ligne) : avec les vraies cotes
+des bookmakers, 45 à 70 % des combinés contenaient avant un pari sous 1,20 (selon la justesse supposée de l'IA) ; maintenant aucun
+(cote minimale moyenne d'un combiné : 1,28). Il y a
+toujours 3 combinés par génération et une cote totale moyenne proche de 2,5 à 2,8, et **la cote totale affichée suit la cote réellement
+pariable** (2,65 contre 2,64, au lieu de 2,65 contre 2,50). La chance annoncée baisse (environ 39 % au lieu de 42 %) parce qu'elle était
+gonflée par les paris à 1,05 ; la chance réelle d'un combiné est d'environ 30 à 34 %. Cette simulation ne montre **aucun gain à long
+terme** : le rendement espéré par unité misée reste autour de 0,85 (la marge des bookmakers, avec une IA qui en sait moins que le
+marché, hypothèse prudente). La cote minimale rend les cotes affichées honnêtes ; elle ne rend pas les paris rentables.
+
 ## Barre de navigation du bas
 
 Le menu des deux sites est une barre collée en bas de l'écran, avec cinq boutons de même largeur (`templates/_tabbar.html` ;
@@ -315,7 +418,8 @@ page s'ouvre en moins de 1,2 s alors que le démarrage en prend 2 ; mode sans co
 | `email_sender.py` | Envoi de la clé : Brevo (HTTPS) ou Gmail (SMTP), avec nouvelles tentatives |
 | `generation_service.py`, `pipeline.py` | Génération en arrière-plan : un travail et un résultat par client, cache, plafond quotidien, avancement ; matchs du jour et constat « pas de championnat » (`matchday.json`) ; ce qui a déjà été distribué (`served.json`) |
 | `variety.py`, `shared_data.py` | Variété (choix des matchs analysés, matchs déjà reçus) ; données communes à toutes les générations : matchs du jour, collecte, estimations de l'IA gardées par match (`analyses.json`) |
-| `data_collector.py`, `analyzerv2.py` | Données TheSportsDB (matchs du jour, résultats récents), analyse IA (modèles de repli si un nom de modèle n'existe pas) |
+| `data_collector.py`, `analyzerv2.py` | Données TheSportsDB (matchs du jour, résultats récents), analyse IA : consigne, appels en parallèle, attente quand l'API limite le débit, modèles de repli si un nom de modèle n'existe pas |
+| `dossier.py` | Dossier d'un match pour l'IA : niveau des équipes, domicile / extérieur, derniers matchs pesés par l'adversaire, repos, confrontations directes, repère statistique (Poisson), avis du marché en option ; aucun appel réseau |
 | `probabilities.py`, `markets.py`, `combo_generator.py` | Probabilités, catalogue des paris et verdicts, composition des combinés et cotes |
 | `combo_history.py` | Historique : résultats réels des matchs joués, bilan ; chaque client ne voit que ses combinés à venir |
 | `web_common.py`, `privacy.py` | Sécurité commune (en-têtes, anti-CSRF, limitation d'essais), gabarits, e-mails masqués dans les journaux, identifiant opaque d'un client (`client_scope`) |
@@ -340,6 +444,8 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `ANTHROPIC_MODEL` | dashboard | Facultatif. Par défaut `claude-sonnet-5-5` ; si l'API répond « modèle introuvable », `claude-sonnet-5` puis `claude-sonnet-4-5` sont essayés |
 | `SPORTSDB_API_KEY` | dashboard | Ta clé TheSportsDB. Sans elle, la clé de test partagée `123` est utilisée (limitée ; l'ancienne `3` est désactivée) |
 | `ODDS_API_KEY` | dashboard | Facultatif : vraies cotes (the-odds-api.com). Sans elle, cotes estimées |
+| `MIN_LEG_ODDS` | dashboard | Facultatif. Cote minimale d'un pari proposé : 1,25 par défaut, de 1,0 à 2,0 (virgule ou point). Voir « La cote minimale d'un pari » |
+| `AI_SEES_MARKET` | dashboard | Facultatif. `1` : l'IA voit aussi l'avis des bookmakers (cotes médianes, marge retirée) ; sans `ODDS_API_KEY`, aucun effet. Désactivé par défaut (voir « L'analyse de l'IA : un dossier par match ») |
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
 | `FREE_PICK_ENABLED` | dashboard | Facultatif. `0` (ou `non`, `false`, `off`) retire le combiné gratuit : `/gratuit` et ses liens disparaissent. Par défaut : activé |
 | `AUTO_GENERATE_HOUR` | dashboard | Facultatif. Heure UTC (0 à 23) à partir de laquelle une génération automatique part chaque jour s'il n'y en a pas eu. **Appel payant à l'IA** ; absente = désactivée (voir « Pages publiques ») |
@@ -616,6 +722,9 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | « Service momentanément indisponible » à la connexion | La base PostgreSQL est injoignable ou a expiré (offre gratuite) : Render > Postgres |
 | « E-mail ou clé de licence incorrect » alors que le client a bien sa clé | Le visiteur voit toujours ce même message ; le motif exact est dans les logs du service client : `connexion refusée : j***@… (motif)`. `e-mail inconnu` : aucune licence à cette adresse **dans la base de ce service** (faute de frappe dans l'adresse, ou les deux services ne pointent pas vers la même `DATABASE_URL` : au démarrage, chaque service écrit `Base de données des licences initialisée (base <nom>, N licence(s))`, et `python generate_keys.py` l'affiche en tête ; le nom doit être identique des deux côtés). `clé différente (N caractères saisis, 16 attendus)` : clé mal recopiée (le site accepte déjà espaces, majuscules, caractères invisibles, la lettre O pour 0 et I ou L pour 1). Vérifier avec `python generate_keys.py` puis `2` (liste des licences) depuis le Shell du service client, et renvoyer la clé par e-mail avec l'option proposée après `1`. `N lignes pour cet e-mail` à la fin du motif : doublons hérités (`Client@…` et `client@…`) ; la bonne clé fonctionne malgré tout, mais nettoyer avec `4` (supprimer) puis `1` (recréer) |
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
+| Les logs disent `limite de débit de l'API (429)` | L'API Anthropic limite le nombre de jetons par minute du compte (cinq appels en parallèle envoient environ 20 000 jetons). Le site patiente et réessaie seul, jusqu'à 3 fois par lot, sans compter une tentative ratée. Si des analyses échouent quand même : relever le palier du compte dans la console Anthropic, ou baisser `IA_MAX_PARALLEL` dans `config.py` |
+| La première génération après une mise à jour est plus lente | Normal : les analyses gardées par l'ancienne méthode sont ignorées (`AI_PROMPT_VERSION`), les matchs du jour sont ré-analysés une fois. Les générations suivantes retrouvent des analyses partagées |
+| « Aucun combiné assez fiable avec les matchs d'aujourd'hui » plus souvent depuis la 2.4.0 | La cote minimale (`MIN_LEG_ODDS`, 1,25) écarte les paris trop sûrs : un petit jour de championnat, il peut ne rester aucun combiné à 2,50. Les logs disent combien de pronostics sont restés (`… N pronostics, 0 combinés`). Si cela se répète, baisser un peu `MIN_LEG_ODDS` (1,20) dans Render > Environment ; en dessous, les paris à 1,0x reviennent |
 | Un client trouve que les mêmes équipes reviennent, ou voit d'autres combinés que son voisin | Chaque client a ses propres combinés (voir « Les combinés de chaque client, la variété et les analyses partagées »). Les équipes se répètent surtout les petits jours (trêve, peu de matchs) : s'il reste peu de matchs à venir, ceux déjà reçus sont repris faute d'autre choix. Les logs du service client disent combien de matchs étaient disponibles : `génération : N matchs à venir, M retenus, K analysés (… par l'IA, … déjà gardés), … combinés`. Les générations faites avant la version 2.3.0 restent dans l'historique du client avec leurs répétitions d'alors (les matchs reçus avant cette version ne sont pas comptés dans la variété du jour) |
 | « Pas de championnat aujourd'hui », « Trop peu de matchs aujourd'hui » ou « Les matchs d'aujourd'hui ont déjà commencé » | Pas une panne : les combinés ne portent que sur les matchs du jour (UTC) qui n'ont pas commencé, il en faut 3. Logs du service client : `matchs du jour (AAAA-MM-JJ) : N à venir sur M`. Trêve internationale, ou calendrier de TheSportsDB incomplet : le constat est revérifié toutes les 30 minutes. « Les matchs du jour sont momentanément indisponibles » : un championnat n'a pas répondu chez TheSportsDB, réessayer |
 | « Générer les combinés » reste bloqué plusieurs minutes, puis « Une erreur est survenue pendant la génération » | Logs du service client : chaque étape est consignée (`génération : Recherche des matchs du jour… (5 %)`, puis `Collecte…`, `Analyse…`) ; la dernière dit où ça s'est arrêté. `génération perdue (elle dure trop longtemps) : étape « … »` est suivie de la pile du fil bloqué : sa dernière ligne montre l'appel qui ne revient pas. Le clic du client a été rendu (il peut réessayer). `TheSportsDB : N appel(s) sans réponse au bout de 25 s` : TheSportsDB, ou le réseau du serveur, ne répond plus ; l'étape est abandonnée au bout de 25 s et non de 5 minutes. Si cela se répète sans cause visible, redémarrer le service depuis Render |
@@ -644,6 +753,15 @@ dans les journaux ; messages d'erreur sans détail technique ; licence revérifi
   2 000 FCFA) : c'est aussi la preuve que PayDunya accepte une facture de ce montant.
 - Les résultats publics valent ce que valent les scores disponibles chez TheSportsDB : un match dont le score n'est jamais publié
   garde son combiné « en attente » (il n'est ni compté ni affiché), et le bilan lit les 1000 dernières générations (la page dit « depuis le … »).
+- L'IA ne connaît ni les compositions, ni les blessés et suspendus, ni l'enjeu d'un match (titre, maintien, derby) : TheSportsDB n'en
+  fournit pas, même pour un match déjà joué. C'est la plus grande part d'inconnu d'un pronostic. Pistes, à décider : l'avis des
+  bookmakers (`AI_SEES_MARKET`), une API de football payante qui donne les compositions (compte et clé à ouvrir par le propriétaire),
+  ou une recherche sur le web par l'IA (plus lent et plus cher).
+- Les paris sur les buts (plus de X buts, les deux équipes marquent) sont à peine plus prévisibles que la moyenne du championnat, même
+  avec un bon dossier (voir « L'analyse de l'IA ») : une série de combinés perdus sur ces paris n'est pas anormale. Le résultat
+  (victoire, double chance) est le seul pari où l'analyse apporte nettement de l'information.
+- En début de saison, le dossier ne regarde que la saison en cours : avec peu de matchs joués, l'IA est invitée à rester proche des
+  moyennes et le plafond de confiance (60 % sous 4 matchs connus) s'applique, donc moins de paris atteignent le seuil de 65 %.
 - La qualité des pronostics dépend des données de TheSportsDB (calendriers parfois incomplets) et de l'estimation de
   l'IA ; le site affiche donc des probabilités, pas des certitudes. Le verdict « Pas de championnat aujourd'hui » vaut ce que vaut
   ce calendrier, et le « jour » est le jour UTC : un match à 23 h 30 UTC est déjà celui du lendemain à Lagos (UTC+1).
