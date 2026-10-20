@@ -26,6 +26,7 @@
     Math.round(CACHE_MINUTES / 60) + NBSP + 'h). Génère-en de nouveaux.';
   var MSG_NO_MATCH = 'Pas de championnat aujourd’hui';
   var MSG_QUOTA = 'Tu as utilisé tes générations d’aujourd’hui. Reviens demain pour en lancer de nouvelles.';
+  var MSG_KEPT = 'Tes combinés d’avant sont toujours affichés.';
 
   function $(id) { return document.getElementById(id); }
 
@@ -232,16 +233,39 @@
 
   // ------------------------------------------------------------------ génération
 
-  var gen = { busy: false, blocked: false, failures: 0, startedAt: 0, pollTimer: null, expiryTimer: null };
+  // busy : une analyse est en cours (on suit son avancement) ; blocked : rien à lancer (pas de match, plus de génération) ;
+  // replacing : cette analyse est une demande de NOUVEAUX combinés, alors que ceux d'avant sont peut-être encore valables ;
+  // shown : les derniers combinés mis à l'écran (réponse du serveur), pour les remettre si le réseau coupe.
+  var gen = { busy: false, blocked: false, replacing: false, shown: null, failures: 0, startedAt: 0, pollTimer: null, expiryTimer: null };
+
+  // Plus d'analyse en cours ni de relance en attente.
+  function endRun() {
+    gen.busy = false;
+    gen.replacing = false;
+    clearTimeout(gen.pollTimer);
+  }
 
   function clearNotice() { $('notice').textContent = ''; }
 
-  function setNotice(kind, text) {
+  // `more` : une seconde ligne (ce qui reste vrai malgré le message).
+  function setNotice(kind, text, more) {
     var box = $('notice');
     box.textContent = '';
     if (!text) { return; }
     box.appendChild(h('div', { 'class': 'notice notice--' + kind, 'role': kind === 'erreur' ? 'alert' : 'status' },
-      h('p', null, typo(text))));
+      [h('p', null, typo(text)), more ? h('p', null, typo(more)) : null]));
+  }
+
+  function quotaText(quota) {
+    return 'Il te reste ' + quota.left + NBSP + 'génération' + (quota.left > 1 ? 's' : '') +
+      ' aujourd’hui (' + quota.limit + NBSP + 'par jour).';
+  }
+
+  // Même texte que celui du serveur quand il refuse un clic faute de génération.
+  function quotaMessage(limit) {
+    return limit === 1
+      ? 'Tu as utilisé ta génération d’aujourd’hui. Reviens demain pour en lancer une nouvelle.'
+      : 'Tu as utilisé tes ' + limit + NBSP + 'générations d’aujourd’hui. Reviens demain pour en lancer de nouvelles.';
   }
 
   // Générations qui restent au client aujourd'hui : c'est le serveur qui compte, ici on n'affiche que son décompte.
@@ -249,14 +273,13 @@
     var box = $('generate-quota');
     if (!quota || typeof quota.left !== 'number') { return; }
     box.hidden = quota.left <= 0;
-    box.textContent = 'Il te reste ' + quota.left + NBSP + 'génération' + (quota.left > 1 ? 's' : '') +
-      ' aujourd’hui (' + quota.limit + NBSP + 'par jour).';
+    box.textContent = quotaText(quota);
   }
 
   function showIdle(message, quota) {
-    gen.busy = false;
+    endRun();
     gen.blocked = false;
-    clearTimeout(gen.pollTimer);
+    gen.shown = null;
     $('progress').hidden = true;
     $('results').hidden = true;
     $('no-match').hidden = true;
@@ -269,9 +292,9 @@
 
   // Pas de championnat aujourd'hui (ou trop peu de matchs) : rien à générer, et le clic n'a rien coûté.
   function showNoMatch(d) {
-    gen.busy = false;
+    endRun();
     gen.blocked = true;
-    clearTimeout(gen.pollTimer);
+    gen.shown = null;
     $('progress').hidden = true;
     $('results').hidden = true;
     $('generate').hidden = true;
@@ -283,9 +306,9 @@
 
   // Les générations du jour sont toutes utilisées : le bouton est grisé, le message dit quand revenir.
   function showQuota(d) {
-    gen.busy = false;
+    endRun();
     gen.blocked = true;
-    clearTimeout(gen.pollTimer);
+    gen.shown = null;
     $('progress').hidden = true;
     $('results').hidden = true;
     $('no-match').hidden = true;
@@ -299,6 +322,7 @@
   function showProgress(progress) {
     var percent = Math.max(1, Math.min(100, parseInt(progress && progress.percent, 10) || 1));
     gen.blocked = false;
+    closeConfirm(false);
     $('generate').hidden = true;
     $('results').hidden = true;
     $('no-match').hidden = true;
@@ -308,9 +332,9 @@
   }
 
   function showError(message, quota) {
-    gen.busy = false;
+    endRun();
     gen.blocked = false;
-    clearTimeout(gen.pollTimer);
+    gen.shown = null;
     $('progress').hidden = true;
     $('results').hidden = true;
     $('no-match').hidden = true;
@@ -322,14 +346,18 @@
   }
 
   function showResults(data) {
-    gen.busy = false;
+    endRun();
     gen.blocked = false;
-    clearTimeout(gen.pollTimer);
+    var same = !!gen.shown && gen.shown.generated_at === data.generated_at;          // les mêmes combinés qu'à l'écran juste avant
+    if (!same) { hist.loadedAt = 0; }                                               // de nouveaux combinés sont entrés dans l'historique
+    gen.shown = data;
     $('progress').hidden = true;
     $('generate').hidden = true;
     $('no-match').hidden = true;
     clearNotice();
-    if (data.stale && data.notice) { setNotice('info', data.notice); }
+    // Les combinés qu'on lui rend alors qu'il en a demandé de nouveaux : la raison, et ce qui reste vrai.
+    if (data.again_error) { setNotice('erreur', data.again_error, MSG_KEPT); }
+    else if (data.notice) { setNotice('info', data.notice, data.stale ? '' : MSG_KEPT); }
 
     var combos = data.combos || [];
     var grid = $('results-grid');
@@ -355,8 +383,57 @@
       append(metaBox, bit);
     });
     if (bits.length) { metaBox.appendChild(document.createTextNode('.')); }
+    setRegenerate(data, same);
     $('results').hidden = false;
     scheduleExpiry(data);
+  }
+
+  // ------------------------------------------------------------------ de nouveaux combinés (la deuxième génération du jour)
+
+  // Sous les combinés affichés : « Générer de nouveaux combinés » tant qu'il reste des générations au client aujourd'hui,
+  // sinon le message qui dit quand revenir. Le serveur décide de tout (il compte, et refuse au besoin) : ici on ne fait qu'afficher.
+  function setRegenerate(data, same) {
+    var quota = data.quota;
+    var known = !!quota && typeof quota.left === 'number';
+    var exhausted = known && quota.left <= 0;
+    if (!same) { closeConfirm(false); }                    // d'autres combinés : la question posée sur les précédents ne tient plus
+    if (data.stale) {                                       // limite d'analyses du jour atteinte côté serveur : rien à relancer
+      closeConfirm(false);
+      $('regenerate').hidden = true;
+      return;
+    }
+    $('btn-regenerate').hidden = exhausted;
+    if (exhausted) { closeConfirm(false); }
+    $('regenerate-note').hidden = !known;
+    $('regenerate-note').textContent = !known ? '' : exhausted ? quotaMessage(quota.limit) : quotaText(quota);
+    if (!$('regenerate-confirm').hidden) { fillConfirm(); }
+    $('regenerate').hidden = false;
+  }
+
+  function fillConfirm() {
+    var quota = gen.shown && gen.shown.quota;
+    var text = '';
+    if (quota && typeof quota.left === 'number') {          // (compteur illisible : le serveur ne compte pas, on n'annonce rien)
+      text = (quota.left > 1
+        ? 'Cela compte pour 1' + NBSP + 'de tes générations du jour' + NBSP + ': il t’en restera ' + (quota.left - 1) + '.'
+        : 'Cela compte pour ta dernière génération d’aujourd’hui.') + ' ';
+    }
+    $('regenerate-confirm-text').textContent =
+      text + 'Les combinés affichés seront remplacés, mais tu les retrouves dans l’onglet Historique.';
+  }
+
+  function openConfirm() {
+    if (gen.busy || !$('regenerate-confirm').hidden) { return; }
+    fillConfirm();
+    $('regenerate-confirm').hidden = false;
+    $('btn-regenerate').setAttribute('aria-expanded', 'true');
+    $('btn-regenerate-yes').focus();
+  }
+
+  function closeConfirm(refocus) {
+    $('regenerate-confirm').hidden = true;
+    $('btn-regenerate').setAttribute('aria-expanded', 'false');
+    if (refocus) { $('btn-regenerate').focus(); }
   }
 
   // Quand les combinés cessent d'être valables (cache écoulé ou match commencé), on le dit.
@@ -407,6 +484,8 @@
       schedulePoll();
     } else if (d.state === 'done') {
       showResults(d);
+    } else if (gen.replacing) {
+      replaceFailed(d, fromPoll);
     } else if (d.state === 'no_match') {
       showNoMatch(d);
     } else if (d.state === 'quota') {
@@ -420,19 +499,51 @@
     }
   }
 
+  // La demande de NOUVEAUX combinés n'a rien donné (panne, plus de génération, plus de match) : on dit pourquoi et on remet à
+  // l'écran les combinés d'avant, s'ils sont toujours valables.
+  function replaceFailed(d, fromPoll) {
+    var kind = 'erreur', text, more = MSG_KEPT;
+    if (d.state === 'quota') { kind = 'info'; text = d.message || MSG_QUOTA; more = ''; }
+    else if (d.state === 'no_match') { kind = 'info'; text = [d.title, d.message].filter(Boolean).join('. '); }
+    else if (d.state === 'idle' && fromPoll) { text = MSG_LOST; }
+    else { text = d.error || MSG_GENERIC; }
+    backFromReplace(kind, text, more);
+  }
+
+  // Ce que le serveur tient pour valable maintenant fait foi (les combinés d'avant ont pu expirer, ou un autre onglet les avoir
+  // remplacés) ; réseau coupé : on remet ce qui était à l'écran.
+  function backFromReplace(kind, text, more) {
+    request('GET', '/api/generate/status').then(function (r) {
+      if (sessionLost(r)) { return; }
+      var d = r.data || {};
+      if (d.state === 'done') { showResults(d); setNotice(kind, text, more); }
+      else if (d.state === 'running') { adoptRunning(d); }
+      else if (d.state === 'no_match') { showNoMatch(d); }
+      else if (d.state === 'quota') { showQuota(d); }
+      else { showError(text, d.quota); }
+    }, function () {
+      if (gen.shown) { showResults(gen.shown); setNotice(kind, text, more); } else { showError(text); }
+    });
+  }
+
   function schedulePoll() {
     clearTimeout(gen.pollTimer);
     gen.pollTimer = setTimeout(poll, POLL_DELAY);
   }
 
+  // On renonce à suivre l'analyse : le bouton « Réessayer », ou les combinés d'avant s'il s'agissait d'en demander de nouveaux.
+  function giveUp(text) {
+    if (gen.replacing) { backFromReplace('erreur', text, MSG_KEPT); } else { showError(text); }
+  }
+
   function poll() {
-    if (Date.now() - gen.startedAt > POLL_MAX_DURATION) { showError(MSG_TOO_LONG); return; }
+    if (Date.now() - gen.startedAt > POLL_MAX_DURATION) { giveUp(MSG_TOO_LONG); return; }
     request('GET', '/api/generate/status').then(function (r) {
       gen.failures = 0;
       onState(r, true);
     }, function () {
       gen.failures += 1;
-      if (gen.failures >= POLL_MAX_FAILURES) { showError(MSG_NETWORK); } else { schedulePoll(); }
+      if (gen.failures >= POLL_MAX_FAILURES) { giveUp(MSG_NETWORK); } else { schedulePoll(); }
     });
   }
 
@@ -445,6 +556,20 @@
     $('btn-generate').disabled = true;
     showProgress({ percent: 1, message: 'Démarrage de l’analyse…' });
     request('POST', '/api/generate').then(function (r) { onState(r, false); }, function () { showError(MSG_NETWORK); });
+  }
+
+  // « Oui, de nouveaux combinés » : une nouvelle analyse alors que les combinés affichés sont encore valables.
+  function startRegeneration() {
+    if (gen.busy) { return; }
+    closeConfirm(false);
+    gen.busy = true;
+    gen.replacing = true;
+    gen.failures = 0;
+    gen.startedAt = Date.now();
+    clearNotice();
+    showProgress({ percent: 1, message: 'Démarrage de l’analyse…' });
+    request('POST', '/api/generate/again').then(function (r) { onState(r, false); },
+      function () { backFromReplace('erreur', MSG_NETWORK, MSG_KEPT); });
   }
 
   // ------------------------------------------------------------------ historique
@@ -549,6 +674,12 @@
   });
 
   $('btn-generate').addEventListener('click', startGeneration);
+  $('btn-regenerate').addEventListener('click', openConfirm);
+  $('btn-regenerate-yes').addEventListener('click', startRegeneration);
+  $('btn-regenerate-no').addEventListener('click', function () { closeConfirm(true); });
+  $('regenerate-confirm').addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { event.preventDefault(); closeConfirm(true); }
+  });
   $('btn-to-combos').addEventListener('click', function () { selectTab('combos', true); });
 
   document.addEventListener('visibilitychange', function () {

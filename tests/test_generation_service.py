@@ -606,3 +606,163 @@ def test_le_vrai_collecteur_est_appele_sans_argument(dirs, monkeypatch):
     monkeypatch.setattr(data_collector, "DataCollector", Collector)
     assert GenerationService._real_matchday() == {"day": "x", "matches": [], "total": 0, "complete": True}
     assert calls == [1]
+
+
+# --------------------------------------------------------------------------
+# De nouveaux combinés alors que les premiers sont encore frais (la 2e génération du jour)
+# --------------------------------------------------------------------------
+
+class Numbered(Pipeline):
+    """Chaque appel rend des combinés qui se distinguent par leur cote totale : 2,6 au premier, 3,6 au deuxième..."""
+
+    def __call__(self, progress=None, variety=None):
+        result = super().__call__(progress, variety)
+        result["combos"][0]["total_odds"] = round(1.6 + self.calls, 2)
+        return result
+
+
+def first_odds(state):
+    return state["combos"][0]["total_odds"]
+
+
+def test_de_nouveaux_combines_relancent_une_analyse_alors_que_les_premiers_sont_frais(dirs):
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    service.request_generation()
+    wait(service)
+    assert first_odds(service.status()) == 2.6
+    # Sans `again`, le clic rend les combinés frais (comportement d'avant, rien n'est relancé).
+    assert service.request_generation()["state"] == "done" and pipeline.calls == 1
+    # Avec `again`, les combinés frais ne répondent plus à la demande : une vraie nouvelle analyse démarre.
+    assert service.status(again=True) == {"state": "idle"}
+    clock.now += 600
+    started = service.request_generation(again=True)
+    assert started["state"] == "running" and started["started"] is True
+    wait(service)
+    assert pipeline.calls == 2 and first_odds(service.status()) == 3.6
+    assert len(os.listdir(dirs[1])) == 2                       # les premiers combinés restent dans l'historique
+
+
+def test_de_nouveaux_combines_rejoignent_le_travail_en_cours_sans_en_lancer_un_second(dirs):
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    service.request_generation()
+    wait(service)
+    clock.now += 600
+    pipeline.gate.clear()
+    assert service.request_generation(again=True)["started"] is True
+    joined = service.request_generation(again=True)
+    assert joined["state"] == "running" and "started" not in joined
+    assert service.status()["state"] == "running"              # le suivi d'avancement (sans `again`) ne montre pas les anciens
+    pipeline.gate.set()
+    wait(service)
+    assert pipeline.calls == 2 and first_odds(service.status()) == 3.6
+
+
+@pytest.mark.parametrize("error, message", [
+    (GenerationError("L'IA est en panne. Réessaie plus tard."), "L'IA est en panne. Réessaie plus tard."),
+    (RuntimeError("détail interne"), generation_service.MSG_GENERIC_ERROR),
+])
+def test_de_nouveaux_combines_en_echec_gardent_les_premiers_et_disent_pourquoi(dirs, error, message):
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    service.request_generation()
+    wait(service)
+    premiers = service.status()["combos"]
+    clock.now += 600
+    pipeline.error = error
+    refunds = Refunds(service)
+    assert service.request_generation(refund=refunds, again=True)["started"] is True
+    wait(service)
+    assert refunds.calls == 1 and refunds.states == ["running"]            # le clic est rendu avant que l'échec ne se voie
+    state = service.status()
+    assert state["state"] == "done" and state["combos"] == premiers and state["again_error"] == message
+    assert "détail interne" not in json.dumps(state)
+    assert len(os.listdir(dirs[1])) == 1
+    # Pendant la pause qui suit l'échec, une nouvelle demande ne relance rien.
+    assert service.request_generation(again=True) == {"state": "error", "error": message}
+    assert pipeline.calls == 2
+    # La pause passée, les premiers combinés reviennent seuls, et une nouvelle demande peut partir.
+    clock.now += generation_service.FAILURE_COOLDOWN_SECONDS + 1
+    state = service.status()
+    assert state["state"] == "done" and "again_error" not in state and state["combos"] == premiers
+    pipeline.error = None
+    assert service.request_generation(again=True)["started"] is True
+    wait(service)
+    assert first_odds(service.status()) == 4.6
+
+
+def test_de_nouveaux_combines_un_jour_ou_les_matchs_manquent_gardent_les_premiers_avec_un_message(dirs):
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    service.request_generation()
+    wait(service)
+    premiers = service.status()["combos"]
+    clock.now += 600
+    pipeline.error = NoMatchToday(6, 2, "2027-01-15")
+    refunds = Refunds(service)
+    service.request_generation(refund=refunds, again=True)
+    wait(service)
+    assert refunds.calls == 1 and service.generations_today() == 1       # le clic et le plafond du jour sont rendus
+    state = service.status()
+    assert state["state"] == "done" and state["combos"] == premiers
+    assert "again_error" not in state and "stale" not in state
+    assert state["notice"] == ("Trop peu de matchs aujourd'hui. Il reste moins de trois matchs à venir aujourd'hui : "
+                               "pas assez pour composer un combiné de trois matchs. Reviens demain.")
+    # Le constat du jour tient : il répond aux demandes de NOUVEAUX combinés (rien ne part), pas à l'affichage des premiers.
+    clock.now += generation_service.FAILURE_COOLDOWN_SECONDS + 1
+    assert "notice" not in service.status() and service.status()["combos"] == premiers
+    answer = service.request_generation(again=True)
+    assert answer["state"] == "no_match" and answer["reason"] == "few" and "started" not in answer
+    assert pipeline.calls == 2
+
+
+def test_un_echec_plus_ancien_que_les_combines_ou_illisible_n_est_pas_signale(dirs):
+    service = make(dirs, Numbered())
+    service.request_generation()
+    wait(service)
+    generated = service._read("last_generation.json")["generated_ts"]
+    for job in ({"state": "error", "message": "ancien", "finished_ts": generated - 5},      # antérieur aux combinés
+                {"state": "error", "message": "sans date"},
+                {"state": "error", "message": "date absurde", "finished_ts": "hier"},
+                {"state": "no_match", "finished_ts": generated - 5}):
+        service._write("job.json", job)
+        state = service.status()
+        assert state["state"] == "done" and "again_error" not in state and "notice" not in state, job
+
+
+def test_de_nouveaux_combines_a_la_limite_d_analyses_du_jour_rendent_les_premiers(dirs, monkeypatch):
+    monkeypatch.setattr(config, "MAX_GENERATIONS_PAR_JOUR", 1)
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    service.request_generation()
+    wait(service)
+    clock.now += 600
+    stale = service.request_generation(again=True)
+    assert stale["state"] == "done" and stale["stale"] is True and stale["notice"] == generation_service.MSG_DAILY_LIMIT
+    assert "started" not in stale and first_odds(stale) == 2.6 and pipeline.calls == 1
+
+
+def test_de_nouveaux_combines_d_un_client_ne_touchent_pas_ceux_d_un_autre(dirs):
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    for client in ("alice@exemple.com", "bob@exemple.com"):
+        assert service.request_generation(client=client)["started"] is True
+        wait(service)
+    assert first_odds(service.status("alice@exemple.com")) == 2.6 and first_odds(service.status("bob@exemple.com")) == 3.6
+    clock.now += 600
+    assert service.request_generation(client="alice@exemple.com", again=True)["started"] is True
+    wait(service)
+    assert first_odds(service.status("alice@exemple.com")) == 4.6
+    assert first_odds(service.status("bob@exemple.com")) == 3.6              # ceux de Bob n'ont pas bougé
+    assert service.status("bob@exemple.com", again=True) == {"state": "idle"}
+
+
+def test_sans_combines_frais_la_demande_de_nouveaux_combines_est_la_generation_normale(dirs):
+    clock, pipeline = Clock(), Numbered()
+    service = make(dirs, pipeline, clock)
+    assert service.status(again=True) == {"state": "idle"}
+    started = service.request_generation(again=True)
+    assert started["state"] == "running" and started["started"] is True
+    wait(service)
+    assert first_odds(service.status()) == 2.6 and pipeline.calls == 1

@@ -193,6 +193,21 @@ répond, dans l'espace client comme sur `/gratuit` :
   épuisé ses générations les voit quand même.
 - Le client lit « Tu peux lancer 2 générations par jour », puis « Il te reste 1 génération aujourd'hui (2 par jour) » ; une fois
   épuisées, le bouton est grisé avec « Tu as utilisé tes 2 générations d'aujourd'hui. Reviens demain pour en lancer de nouvelles. »
+- **La deuxième génération se fait sans attendre l'expiration des premiers combinés** (version 2.4.2). Avant, les combinés restaient
+  affichés 3 heures (ou jusqu'au premier coup d'envoi) et le bouton « Générer » n'était plus là : un client ne pouvait pas utiliser sa
+  deuxième génération du jour. Sous les combinés, il y a maintenant **« Générer de nouveaux combinés »**, avec le nombre de générations
+  qui lui restent. Il demande confirmation (« Cela compte pour 1 de tes générations du jour… Les combinés affichés seront remplacés,
+  mais tu les retrouves dans l'onglet Historique »), puis une vraie analyse repart. Côté serveur : `POST /api/generate/again` (mêmes
+  protections que `/api/generate`) ; `GenerationService.status(client, again=True)` ignore les combinés frais du client.
+  - **Même compte que le premier clic** : seul le clic qui démarre une analyse en consomme une ; deux onglets ne lancent qu'une analyse ;
+    la troisième demande est refusée (`quota`) sans aucun appel payant, et les combinés restent affichés avec le message.
+  - **Un échec ne fait rien perdre.** Si la nouvelle analyse n'aboutit pas (panne de l'IA, trop peu de matchs), le clic est rendu et
+    **les combinés d'avant restent affichés**, avec la raison : `again_error` (panne, en rouge) ou `notice` (pas assez de matchs, en
+    neutre) dans la réponse de `/api/generate/status`, pendant la pause de 2 minutes qui suit l'échec. Pendant cette pause, un nouveau
+    clic ne relance rien.
+  - **Les premiers combinés ne sont pas perdus** : chaque génération est rangée dans l'historique du client (`results/combo_<date>_<identifiant>.json`).
+  - Si le plafond d'analyses du jour (commun à tous) est atteint, les combinés du client restent affichés avec l'avis habituel et le bouton
+    disparaît ; son clic n'est pas compté.
 - **Si la base est injoignable**, personne n'est bloqué à tort : l'analyse est autorisée sans être comptée (le plafond du jour, commun à
   tous, borne de toute façon la dépense).
 - Changer la limite : `CLIENT_GENERATIONS_PER_DAY` dans `config.py` (textes et décompte suivent), puis envoyer sur `main`. Voir ou
@@ -756,6 +771,7 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | La génération échoue ou « L'analyse IA est momentanément indisponible » | Logs du service client : clé `ANTHROPIC_API_KEY`, crédit du compte Anthropic, nom du modèle (`modèle introuvable` : un modèle de repli est essayé) |
 | Les logs disent `limite de débit de l'API (429)` | L'API Anthropic limite le nombre de jetons par minute du compte (cinq appels en parallèle envoient environ 20 000 jetons). Le site patiente et réessaie seul, jusqu'à 3 fois par lot, sans compter une tentative ratée. Si des analyses échouent quand même : relever le palier du compte dans la console Anthropic, ou baisser `IA_MAX_PARALLEL` dans `config.py` |
 | La première génération après une mise à jour est plus lente | Normal : les analyses gardées par l'ancienne méthode sont ignorées (`AI_PROMPT_VERSION`), les matchs du jour sont ré-analysés une fois. Les générations suivantes retrouvent des analyses partagées |
+| Un client dit qu'il ne peut pas générer une deuxième fois | Depuis la 2.4.2, tant que ses combinés sont valables, il n'y a plus de bouton « Générer » : c'est **« Générer de nouveaux combinés »**, sous ses combinés (avec confirmation). S'il n'y est pas : il a déjà utilisé ses 2 générations du jour (le message le dit sous les combinés), ou sa page date d'avant la mise à jour (la recharger). Les logs disent `génération (de nouveaux combinés) demandée par j***@… : running (lancée)`, puis `génération refusée à j***@… : 2 sur 2 utilisées aujourd'hui` s'il insiste |
 | « Aucun combiné assez fiable avec les matchs d'aujourd'hui » plus souvent depuis la 2.4.0 | La cote minimale (`MIN_LEG_ODDS`, 1,25) écarte les paris trop sûrs : un petit jour de championnat, il peut ne rester aucun combiné à 2,50. Les logs disent combien de pronostics sont restés (`… N pronostics, 0 combinés`). Si cela se répète, baisser un peu `MIN_LEG_ODDS` (1,20) dans Render > Environment ; en dessous, les paris à 1,0x reviennent |
 | Un client trouve que les mêmes équipes reviennent, ou voit d'autres combinés que son voisin | Chaque client a ses propres combinés (voir « Les combinés de chaque client, la variété et les analyses partagées »). Les équipes se répètent surtout les petits jours (trêve, peu de matchs) : s'il reste peu de matchs à venir, ceux déjà reçus sont repris faute d'autre choix. Les logs du service client disent combien de matchs étaient disponibles : `génération : N matchs à venir, M retenus, K analysés (… par l'IA, … déjà gardés), … combinés`. Les générations faites avant la version 2.3.0 restent dans l'historique du client avec leurs répétitions d'alors (les matchs reçus avant cette version ne sont pas comptés dans la variété du jour) |
 | « Pas de championnat aujourd'hui », « Trop peu de matchs aujourd'hui » ou « Les matchs d'aujourd'hui ont déjà commencé » | Pas une panne : les combinés ne portent que sur les matchs du jour (UTC) qui n'ont pas commencé, il en faut 3. Logs du service client : `matchs du jour (AAAA-MM-JJ) : N à venir sur M`. Trêve internationale, ou calendrier de TheSportsDB incomplet : le constat est revérifié toutes les 30 minutes. « Les matchs du jour sont momentanément indisponibles » : un championnat n'a pas répondu chez TheSportsDB, réessayer |

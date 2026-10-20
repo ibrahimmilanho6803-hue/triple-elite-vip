@@ -454,6 +454,19 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
 .legend { margin-top: 28px; color: var(--craie); font-size: 0.875rem; max-width: 80ch; }
 .legend p + p { margin-top: 6px; }
 
+/* de nouveaux combinés pendant que les premiers sont affichés (la 2e génération du jour) */
+.regenerate { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--ligne); }
+.regenerate__row { display: flex; align-items: center; flex-wrap: wrap; }
+.regenerate__note { margin: 10px 0 0; color: var(--craie); font-size: 0.9375rem; max-width: 80ch; }
+.regenerate__confirm {
+  margin-top: 16px; max-width: 62ch; padding: 16px 18px;
+  border-left: 3px solid var(--or); background: var(--nuit-2); border-radius: 0 var(--rayon) var(--rayon) 0;
+}
+.regenerate__confirm p + p { margin-top: 6px; }
+.regenerate__title { font-weight: 650; }
+.regenerate__actions { display: flex; flex-wrap: wrap; margin-top: 14px; }
+.regenerate__actions .btn { margin: 0 12px 8px 0; }
+
 /* ------------------------------------------------------------------ le coupon */
 .slip { width: 100%; max-width: 460px; display: flex; flex-direction: column; }
 
@@ -702,6 +715,7 @@ html { scroll-padding-bottom: calc(var(--tabbar-h) + 16px); }      /* un lien at
   .public { padding-bottom: 56px; }
   .public__title { margin-top: 40px; }
   .share__row .btn { flex: 1 1 100%; margin-right: 0; }
+  .regenerate__row .btn, .regenerate__actions .btn { flex: 1 1 100%; margin-right: 0; }
   .bilan { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bilan > div { padding: 16px; }
   .bilan > div:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--ligne); }

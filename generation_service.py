@@ -12,7 +12,9 @@ l'historique (latest). Ce que les générations partagent, ce sont des données 
 les matchs du jour, les derniers résultats et surtout l'estimation de l'IA pour chaque match, faite une seule fois.
 
 - cache : les combinés d'un client lui sont réaffichés pendant CACHE_MINUTES (et tant qu'aucun de leurs matchs n'a commencé) ;
-  il ne voit rien de plus qu'un bouton avant d'avoir cliqué ;
+  il ne voit rien de plus qu'un bouton avant d'avoir cliqué. Il peut aussi demander DE NOUVEAUX combinés alors que les siens sont
+  encore frais (`again`) : c'est ce qui rend utile sa deuxième génération du jour sans attendre l'expiration des premiers. Les
+  premiers restent dans l'historique ; si la nouvelle analyse n'aboutit pas, ils restent affichés (`again_error` ou `notice` le dit) ;
 - un seul travail à la fois PAR portée : des clics répétés d'un même client ne multiplient pas les appels payants ;
 - plafond quotidien (MAX_GENERATIONS_PAR_JOUR) : filet de sécurité sur les générations qui ont réellement appelé l'IA ;
 - après un échec, une courte pause évite de relancer aussitôt toute la chaîne pour ce client ;
@@ -528,17 +530,40 @@ class GenerationService:
         data.update(extra)
         return data
 
-    def status(self, client=None):
+    def _again_outcome(self, entry, job):
+        """Ce qu'il faut ajouter à la réponse « done » quand la demande de NOUVEAUX combinés qui vient d'avoir lieu n'a rien donné
+        alors que ceux du client sont toujours frais : {"again_error": texte} après une panne, {"notice": texte} quand il n'y a
+        pas (assez) de matchs, {} sinon. Vaut pendant la pause qui suit l'échec (FAILURE_COOLDOWN_SECONDS). Sans cela, le client
+        verrait ses anciens combinés revenir sans savoir que la nouvelle analyse n'a pas eu lieu (son clic, lui, est rendu)."""
+        if not job or job.get("state") not in ("error", "no_match"):
+            return {}
+        try:
+            finished, generated = float(job["finished_ts"]), float(entry["generated_ts"])
+        except (KeyError, TypeError, ValueError):
+            return {}
+        if finished <= generated or self.clock() - finished >= FAILURE_COOLDOWN_SECONDS:
+            return {}
+        if job["state"] == "error":
+            return {"again_error": job.get("message") or MSG_GENERIC_ERROR}
+        verdict = self.no_match_today()
+        if verdict:
+            return {"notice": f"{verdict['title']}. {verdict['message']}"}
+        return {"again_error": MSG_GENERIC_ERROR}
+
+    def status(self, client=None, again=False):
         """État courant pour ce client (e-mail ; None : la génération automatique), sans jamais démarrer de travail. Un client
-        ne voit que SES combinés."""
+        ne voit que SES combinés.
+
+        again : le client veut de NOUVEAUX combinés. Ses combinés encore frais ne répondent plus à sa demande (« done ») : on regarde
+        alors le reste comme s'ils n'existaient pas (travail en cours, pause après un échec, jour sans match, sinon « idle »)."""
         scope = self.scope_of(client)
         entry, fresh = self._cached(scope)
         job = self._job(scope)
         if job and job.get("state") == "running":
             return {"state": "running", "progress": {
                 "step": job.get("step", ""), "percent": job.get("percent", 0), "message": job.get("message", "")}}
-        if fresh:
-            return self._result("done", entry, cached=True)
+        if fresh and not again:
+            return self._result("done", entry, cached=True, **self._again_outcome(entry, job))
         if job and job.get("state") == "error" \
                 and self.clock() - float(job.get("finished_ts", 0)) < FAILURE_COOLDOWN_SECONDS:
             return {"state": "error", "error": job.get("message", MSG_GENERIC_ERROR)}
@@ -547,9 +572,10 @@ class GenerationService:
             return {"state": "no_match", **verdict}
         return {"state": "idle"}
 
-    def request_generation(self, client=None, refund=None):
+    def request_generation(self, client=None, refund=None, again=False):
         """Clic du client (e-mail ; None : la génération automatique) : sert SES combinés s'ils sont frais, sinon démarre (ou
-        rejoint) son travail.
+        rejoint) son travail. Avec `again`, le client demande de NOUVEAUX combinés : ses combinés encore frais ne le dispensent
+        plus d'une analyse (voir status).
 
         Quand CE clic démarre une analyse, la réponse porte "started": True. `refund` : fonction appelée (sans argument) si
         cette analyse n'aboutit à aucun combiné (panne, pas de match aujourd'hui) : elle rend au client le clic qui l'a
@@ -557,7 +583,7 @@ class GenerationService:
         à rendre : l'appelant ne les compte pas."""
         scope = self.scope_of(client)
         with self._lock:
-            current = self.status(client)
+            current = self.status(client, again=again)
             if current["state"] != "idle":
                 return current
             if self.generations_today() >= config.MAX_GENERATIONS_PAR_JOUR:

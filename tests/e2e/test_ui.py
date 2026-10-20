@@ -24,7 +24,7 @@ import license_manager  # noqa: E402
 from helpers import join_jobs  # noqa: E402
 from paydunya import PayDunyaError  # noqa: E402
 from pipeline import GenerationError, NoMatchToday  # noqa: E402
-from site_fakes import EMAIL, KEY, history_with, make_pipeline  # noqa: E402
+from site_fakes import EMAIL, KEY, history_with, make_pipeline, sample_combos  # noqa: E402
 
 def norm(text):
     """Texte sur une seule ligne, insécables compris (le site en met avant « % », « € », « : »...)."""
@@ -392,6 +392,252 @@ class TestGenerationsDuJourEtJourSansChampionnat:
             phone_page.goto(site.url + path)
             expect(phone_page.locator(".empty__title")).to_be_visible()
         assert no_horizontal_overflow(phone_page)
+
+
+def run_twice(odds=9.99, error=None, delay=0.05):
+    """Chaîne simulée en deux temps : le 1er appel donne les combinés habituels (cote totale 2,55 au premier coupon), le 2e
+    (« de nouveaux combinés ») d'autres combinés (cote totale `odds` au premier) ou, avec `error`, un échec."""
+    combos = sample_combos()
+    combos[0]["total_odds"] = odds
+    runs = [make_pipeline(delay=0.05), make_pipeline(delay=delay, combos=combos, error=error)]
+    state = {"calls": 0}
+
+    def pipeline(progress=None, variety=None):
+        state["calls"] += 1
+        return runs[min(state["calls"], 2) - 1](progress, variety)
+
+    pipeline.state = state
+    return pipeline
+
+
+def first_slip(page):
+    return norm(page.locator("#results-grid .slip").first.inner_text())
+
+
+def ask_for_new_combos(page):
+    page.click("#btn-regenerate")
+    page.click("#btn-regenerate-yes")
+
+
+class TestDeNouveauxCombines:
+    """Après une première génération, les combinés restent affichés (sans bouton « Générer ») : la deuxième génération du jour
+    passe par « Générer de nouveaux combinés », avec une confirmation."""
+
+    def test_apres_la_premiere_generation_le_bouton_de_nouveaux_combines_est_la(self, page, site):
+        log_in_and_generate(page, site)
+        expect(page.locator("#generate")).to_be_hidden()               # le bouton « Générer » ne revient pas sous les combinés
+        expect(page.locator("#regenerate")).to_be_visible()
+        expect(page.locator("#btn-regenerate")).to_have_text("Générer de nouveaux combinés")
+        expect(page.locator("#btn-regenerate")).to_be_enabled()
+        assert norm(page.locator("#regenerate-note").inner_text()) == "Il te reste 1 génération aujourd’hui (2 par jour)."
+        expect(page.locator("#regenerate-confirm")).to_be_hidden()
+        page.reload()                                                  # et il est toujours là au rechargement
+        expect(page.locator("#btn-regenerate")).to_be_visible()
+        assert norm(page.locator("#regenerate-note").inner_text()) == "Il te reste 1 génération aujourd’hui (2 par jour)."
+        assert site.pipeline.state["calls"] == 1 and used_today(site) == 1
+
+    def test_la_confirmation_dit_ce_qui_va_se_passer_et_peut_etre_annulee(self, page, site):
+        log_in_and_generate(page, site)
+        page.click("#btn-regenerate")
+        expect(page.locator("#regenerate-confirm")).to_be_visible()
+        expect(page.locator("#btn-regenerate")).to_have_attribute("aria-expanded", "true")
+        expect(page.locator("#btn-regenerate-yes")).to_be_focused()
+        text = norm(page.locator("#regenerate-confirm").inner_text())
+        assert "Remplacer ces combinés par de nouveaux ?" in text
+        assert "Cela compte pour ta dernière génération d’aujourd’hui." in text
+        assert "Les combinés affichés seront remplacés, mais tu les retrouves dans l’onglet Historique." in text
+        page.click("#btn-regenerate-no")                               # « Non » referme et rend la main au bouton
+        expect(page.locator("#regenerate-confirm")).to_be_hidden()
+        expect(page.locator("#btn-regenerate")).to_be_focused()
+        expect(page.locator("#btn-regenerate")).to_have_attribute("aria-expanded", "false")
+        page.click("#btn-regenerate")
+        expect(page.locator("#regenerate-confirm")).to_be_visible()
+        page.keyboard.press("Escape")                                  # Échap aussi
+        expect(page.locator("#regenerate-confirm")).to_be_hidden()
+        expect(page.locator("#btn-regenerate")).to_be_focused()
+        expect(page.locator("#results-grid .slip")).to_have_count(3)   # rien n'a changé, rien n'est parti, rien n'est compté
+        assert site.pipeline.state["calls"] == 1 and used_today(site) == 1
+
+    def test_la_confirmation_annonce_combien_il_en_restera(self, page, site, monkeypatch):
+        monkeypatch.setattr(config, "CLIENT_GENERATIONS_PER_DAY", 3)
+        log_in_and_generate(page, site)
+        assert norm(page.locator("#regenerate-note").inner_text()) == "Il te reste 2 générations aujourd’hui (3 par jour)."
+        page.click("#btn-regenerate")
+        text = norm(page.locator("#regenerate-confirm").inner_text())
+        assert "Cela compte pour 1 de tes générations du jour : il t’en restera 1." in text
+
+    def test_de_nouveaux_combines_remplacent_les_premiers_et_la_deuxieme_generation_est_comptee(self, page, start_site):
+        site = start_site(pipeline=run_twice())
+        enter(page, site)
+        page.click("#btn-generate")
+        expect(page.locator("#results")).to_be_visible()
+        assert "Cote totale 2,55" in first_slip(page)
+        ask_for_new_combos(page)
+        expect(page.locator("#progress")).to_be_visible()              # une vraie analyse, avec son avancement
+        expect(page.locator("#results")).to_be_hidden()
+        expect(page.locator("#results")).to_be_visible()
+        assert "Cote totale 9,99" in first_slip(page)                  # les nouveaux combinés ont pris la place des premiers
+        expect(page.locator("#results-grid .slip")).to_have_count(3)
+        expect(page.locator("#notice .notice")).to_have_count(0)
+        # Les deux générations sont utilisées : plus de bouton, le message dit quand revenir.
+        expect(page.locator("#btn-regenerate")).to_be_hidden()
+        expect(page.locator("#regenerate-confirm")).to_be_hidden()
+        assert norm(page.locator("#regenerate-note").inner_text()) == (
+            "Tu as utilisé tes 2 générations d’aujourd’hui. Reviens demain pour en lancer de nouvelles.")
+        assert used_today(site) == 2 and site.pipeline.state["calls"] == 2
+        page.reload()
+        assert "Cote totale 9,99" in first_slip(page)
+        expect(page.locator("#btn-regenerate")).to_be_hidden()
+        assert site.pipeline.state["calls"] == 2
+
+    def test_la_confirmation_ne_reste_pas_ouverte_quand_d_autres_combines_arrivent(self, page, start_site, monkeypatch):
+        monkeypatch.setattr(config, "CLIENT_GENERATIONS_PER_DAY", 3)
+        site = start_site(pipeline=run_twice(delay=0.4))
+        log_in_and_generate(page, site)
+        page.click("#btn-regenerate")
+        expect(page.locator("#regenerate-confirm")).to_be_visible()
+        # Un autre appareil du client demande de nouveaux combinés pendant que la question est posée ici.
+        site.service.request_generation(client=EMAIL, again=True)
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")        # (le client revient sur l'onglet)
+        expect(page.locator("#results-grid .slip").first).to_contain_text("9,99")
+        expect(page.locator("#regenerate")).to_be_visible()
+        expect(page.locator("#regenerate-confirm")).to_be_hidden()                       # la question ne porte plus sur ces combinés
+        expect(page.locator("#btn-regenerate")).to_have_attribute("aria-expanded", "false")
+
+    def test_au_clavier(self, page, start_site):
+        site = start_site(pipeline=run_twice())
+        log_in_and_generate(page, site)
+        page.focus("#btn-regenerate")
+        page.keyboard.press("Enter")
+        expect(page.locator("#btn-regenerate-yes")).to_be_focused()
+        page.keyboard.press("Enter")
+        expect(page.locator("#results-grid .slip").first).to_contain_text("9,99")
+        assert used_today(site) == 2
+
+    def test_le_rechargement_en_plein_travail_retrouve_l_avancement_puis_les_nouveaux_combines(self, page, start_site):
+        site = start_site(pipeline=run_twice(delay=0.4))
+        log_in_and_generate(page, site)
+        ask_for_new_combos(page)
+        expect(page.locator("#progress")).to_be_visible()
+        page.reload()
+        expect(page.locator("#results-grid .slip").first).to_contain_text("9,99")
+        assert site.pipeline.state["calls"] == 2 and used_today(site) == 2
+
+    def test_de_nouveaux_combines_en_panne_remettent_les_premiers_avec_la_raison(self, page, start_site):
+        site = start_site(pipeline=run_twice(error=GenerationError("L'IA ne répond pas. Réessaie plus tard.")))
+        log_in_and_generate(page, site)
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("L’IA ne répond pas")
+        expect(page.locator("#notice")).to_contain_text("Tes combinés d’avant sont toujours affichés.")
+        expect(page.locator("#progress")).to_be_hidden()
+        expect(page.locator("#results")).to_be_visible()
+        assert "Cote totale 2,55" in first_slip(page)                  # les premiers combinés sont toujours là
+        expect(page.locator("#btn-regenerate")).to_be_enabled()
+        # Le clic est rendu, et le compteur le montre.
+        assert norm(page.locator("#regenerate-note").inner_text()) == "Il te reste 1 génération aujourd’hui (2 par jour)."
+        assert used_today(site) == 1 and site.pipeline.state["calls"] == 2
+        # Pendant la courte pause qui suit une panne, un nouveau clic ne relance rien et dit la même chose.
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("L’IA ne répond pas")
+        expect(page.locator("#results")).to_be_visible()
+        assert site.pipeline.state["calls"] == 2 and used_today(site) == 1
+
+    def test_la_panne_se_voit_aussi_apres_un_rechargement_en_plein_travail(self, page, start_site):
+        site = start_site(pipeline=run_twice(error=GenerationError("L'IA ne répond pas. Réessaie plus tard."), delay=0.4))
+        log_in_and_generate(page, site)
+        ask_for_new_combos(page)
+        expect(page.locator("#progress")).to_be_visible()
+        page.reload()
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("L’IA ne répond pas")
+        assert "Cote totale 2,55" in first_slip(page)
+        assert used_today(site) == 1
+
+    def test_un_jour_ou_les_matchs_manquent_les_premiers_combines_restent_avec_un_message_neutre(self, page, start_site):
+        site = start_site(pipeline=run_twice(error=NoMatchToday(6, 2, "2026-10-20")))
+        log_in_and_generate(page, site)
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--info")).to_contain_text("Trop peu de matchs aujourd’hui")
+        expect(page.locator("#notice .notice--erreur")).to_have_count(0)   # ce n'est pas une panne
+        expect(page.locator("#notice")).to_contain_text("Tes combinés d’avant sont toujours affichés.")
+        expect(page.locator("#results")).to_be_visible()
+        assert "Cote totale 2,55" in first_slip(page)
+        assert used_today(site) == 1 and site.service.generations_today() == 1
+
+    def test_une_page_restee_ouverte_apprend_au_clic_que_la_limite_est_atteinte(self, page, site):
+        log_in_and_generate(page, site)
+        site.licenses.usage[(EMAIL, site.service.today())] = 2         # la deuxième génération a été utilisée sur un autre appareil
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--info")).to_contain_text("Tu as utilisé tes 2 générations d’aujourd’hui")
+        expect(page.locator("#results")).to_be_visible()
+        expect(page.locator("#btn-regenerate")).to_be_hidden()
+        assert "Tes combinés d’avant" not in page.locator("#notice").inner_text()
+        assert site.pipeline.state["calls"] == 1
+
+    def test_les_combines_expires_laissent_la_place_au_bouton_generer(self, page, site):
+        """Si les combinés ne sont plus valables (page restée ouverte), la demande de nouveaux combinés revient au bouton
+        « Générer » au lieu de ressusciter des combinés périmés."""
+        log_in_and_generate(page, site)
+        forget_combos(site)
+        site.service.pipeline = make_pipeline(delay=0.05, error=GenerationError("L'IA ne répond pas. Réessaie plus tard."))
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("L’IA ne répond pas")
+        expect(page.locator("#btn-generate")).to_have_text("Réessayer")
+        expect(page.locator("#results")).to_be_hidden()
+
+    def test_reseau_coupe_au_clic_les_premiers_combines_restent(self, page, site):
+        log_in_and_generate(page, site)
+        page.route("**/api/generate/again", lambda route: route.abort())
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("Connexion impossible")
+        expect(page.locator("#notice")).to_contain_text("Tes combinés d’avant sont toujours affichés.")
+        expect(page.locator("#results")).to_be_visible()
+        assert "Cote totale 2,55" in first_slip(page)
+        assert site.pipeline.state["calls"] == 1 and used_today(site) == 1
+
+    def test_erreur_du_serveur_au_clic_les_premiers_combines_restent(self, page, start_site):
+        site = start_site(pipeline=run_twice())
+        log_in_and_generate(page, site)
+        page.route("**/api/generate/again", lambda route: route.fulfill(
+            status=500, content_type="application/json", body='{"error": "Une erreur est survenue. Réessaie dans un instant."}'))
+        ask_for_new_combos(page)
+        expect(page.locator("#notice .notice--erreur")).to_contain_text("Une erreur est survenue")
+        expect(page.locator("#results")).to_be_visible()
+        assert "Cote totale 2,55" in first_slip(page)
+        assert site.pipeline.state["calls"] == 1 and used_today(site) == 1
+        page.unroute("**/api/generate/again")
+        ask_for_new_combos(page)                                       # et la demande suivante, elle, aboutit
+        expect(page.locator("#results-grid .slip").first).to_contain_text("9,99")
+        assert site.pipeline.state["calls"] == 2 and used_today(site) == 2
+
+    def test_session_perdue_au_clic_renvoie_vers_la_connexion(self, page, site, context):
+        log_in_and_generate(page, site)
+        context.clear_cookies()
+        ask_for_new_combos(page)
+        expect(page).to_have_url(re.compile(r"/login\?raison=session$"))
+
+    def test_compteur_illisible_le_bouton_est_la_sans_annoncer_de_decompte(self, page, start_site):
+        site = start_site(pipeline=run_twice())
+        site.licenses.usage_down = True                                # la base des compteurs ne répond pas : personne n'est bloqué
+        log_in_and_generate(page, site)
+        expect(page.locator("#btn-regenerate")).to_be_visible()
+        expect(page.locator("#regenerate-note")).to_be_hidden()
+        page.click("#btn-regenerate")
+        text = norm(page.locator("#regenerate-confirm").inner_text())
+        assert "Cela compte" not in text
+        assert "Les combinés affichés seront remplacés, mais tu les retrouves dans l’onglet Historique." in text
+        page.click("#btn-regenerate-yes")
+        expect(page.locator("#results-grid .slip").first).to_contain_text("9,99")
+
+    def test_sur_telephone_les_boutons_tiennent_dans_l_ecran(self, phone_page, site):
+        log_in_and_generate(phone_page, site)
+        expect(phone_page.locator("#btn-regenerate")).to_be_visible()
+        assert no_horizontal_overflow(phone_page)
+        phone_page.click("#btn-regenerate")
+        expect(phone_page.locator("#regenerate-confirm")).to_be_visible()
+        assert no_horizontal_overflow(phone_page)
+        for name in ("#btn-regenerate-yes", "#btn-regenerate-no"):
+            box = phone_page.locator(name).bounding_box()
+            assert box["x"] >= 0 and box["x"] + box["width"] <= 390 + 0.5, (name, box)
 
 
 class TestPagesPubliques:

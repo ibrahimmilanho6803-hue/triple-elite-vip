@@ -68,6 +68,23 @@
       <div id="results" hidden>
         <p class="results__meta" id="results-meta"></p>
         <div class="results__grid" id="results-grid"></div>
+
+        {# De nouveaux combinés pendant que les premiers sont encore affichés : la 2e génération du jour. Rempli et montré par dashboard.js. #}
+        <div class="regenerate" id="regenerate" hidden>
+          <div class="regenerate__row">
+            <button class="btn btn--ligne" type="button" id="btn-regenerate" aria-expanded="false" aria-controls="regenerate-confirm">Générer de nouveaux combinés</button>
+          </div>
+          <p class="regenerate__note" id="regenerate-note"></p>
+          <div class="regenerate__confirm" id="regenerate-confirm" role="group" aria-labelledby="regenerate-confirm-title" hidden>
+            <p class="regenerate__title" id="regenerate-confirm-title">Remplacer ces combinés par de nouveaux&nbsp;?</p>
+            <p id="regenerate-confirm-text"></p>
+            <div class="regenerate__actions">
+              <button class="btn btn--or" type="button" id="btn-regenerate-yes">Oui, de nouveaux combinés</button>
+              <button class="btn btn--ligne" type="button" id="btn-regenerate-no">Non, garder ceux-ci</button>
+            </div>
+          </div>
+        </div>
+
         <div class="legend">
           <p><strong>Confiance</strong>&nbsp;: probabilité estimée que le pronostic se réalise. <strong>Chance estimée</strong>&nbsp;: probabilité que les trois pronostics se réalisent ensemble.</p>
           {% if odds_bookmaker %}

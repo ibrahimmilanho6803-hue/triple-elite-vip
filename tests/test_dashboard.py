@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -344,7 +345,8 @@ def test_base_de_licences_en_panne_a_la_connexion(env):
 def test_sans_session_les_pages_redirigent_et_l_api_refuse(env):
     page = env.client.get("/app")
     assert page.status_code == 302 and page.headers["Location"].endswith("/login?raison=session")
-    for method, path in (("get", "/api/generate/status"), ("get", "/api/history"), ("post", "/api/generate")):
+    for method, path in (("get", "/api/generate/status"), ("get", "/api/history"), ("post", "/api/generate"),
+                         ("post", "/api/generate/again")):
         response = getattr(env.client, method)(path, headers=AJAX)
         assert response.status_code == 401 and response.get_json()["raison"] == "session", path
 
@@ -444,10 +446,12 @@ def test_requete_venant_d_un_autre_site_refusee(env):
 
 def test_actions_de_l_interface_exigent_l_en_tete(env):
     login(env.client)
-    response = env.client.post("/api/generate")
-    assert response.status_code == 400
-    assert env.pipeline.state["calls"] == 0
-    assert env.client.post("/api/generate", headers={**AJAX, "Origin": "https://pirate.example"}).status_code == 403
+    for path in ("/api/generate", "/api/generate/again"):
+        response = env.client.post(path)
+        assert response.status_code == 400
+        assert env.pipeline.state["calls"] == 0
+        assert env.client.post(path, headers={**AJAX, "Origin": "https://pirate.example"}).status_code == 403
+        assert env.client.get(path, headers=AJAX).status_code == 405
 
 
 def test_anciennes_routes_supprimees(env):
@@ -596,6 +600,13 @@ def post_generate(env, client=None):
     return response.get_json()
 
 
+def post_again(env, client=None):
+    """Clic sur « Générer de nouveaux combinés » (les combinés du client sont encore frais)."""
+    response = (client or env.client).post("/api/generate/again", headers=AJAX)
+    assert response.status_code == 200
+    return response.get_json()
+
+
 def status_of(env, client=None):
     return (client or env.client).get("/api/generate/status").get_json()
 
@@ -616,7 +627,8 @@ def test_le_clic_qui_demarre_une_analyse_consomme_une_generation(timed):
     wait_for_job(timed)
     assert used(timed) == 1                                            # l'analyse a abouti : le clic est bien consommé
     done = status_of(timed)
-    assert done["state"] == "done" and "quota" not in done              # les combinés s'affichent, plus de bouton
+    # Les combinés s'affichent, plus de bouton « Générer » : le décompte sert au bouton « Générer de nouveaux combinés ».
+    assert done["state"] == "done" and done["quota"] == {"limit": 2, "used": 1, "left": 1}
 
 
 def test_afficher_ses_combines_deja_prets_ou_rejoindre_son_travail_ne_coute_rien(timed):
@@ -685,6 +697,190 @@ def test_deux_analyses_par_jour_puis_le_message_et_aucun_appel_payant(timed):
     assert status_of(timed) == {"state": "idle", "quota": {"limit": 2, "used": 0, "left": 2}}
     assert post_generate(timed)["started"] is True
     wait_for_job(timed)
+
+
+def other_combos(total=9.99):
+    """Des combinés qui se distinguent de ceux de `sample_combos` (cote totale du premier)."""
+    combos = sample_combos(NOW)
+    combos[0]["total_odds"] = total
+    return combos
+
+
+def first_generation(env):
+    """Le client se connecte et génère une première fois : ses combinés sont frais (affichés, sans bouton « Générer »)."""
+    login(env.client)
+    assert post_generate(env)["started"] is True
+    wait_for_job(env)
+    assert status_of(env)["state"] == "done"
+
+
+def history_files(env):
+    return sorted(os.listdir(env.service.results_dir))
+
+
+def test_de_nouveaux_combines_remplacent_les_premiers_et_comptent_la_deuxieme_generation(timed):
+    """Le défaut signalé : après une première génération, les combinés restaient affichés et on ne pouvait pas en générer
+    une deuxième. Le clic sur « Générer de nouveaux combinés » lance une vraie nouvelle analyse, la deuxième du jour."""
+    first_generation(timed)
+    premiers = status_of(timed)["combos"]
+    # Le bouton « Générer » n'existe plus (les combinés sont frais) : un clic dessus rend les combinés, sans rien compter.
+    cache = post_generate(timed)
+    assert cache["state"] == "done" and cache["combos"] == premiers and "started" not in cache
+    assert used(timed) == 1 and timed.pipeline.state["calls"] == 1
+    # « De nouveaux combinés » : une nouvelle analyse, comptée.
+    timed.clock.advance(minutes=30)
+    timed.service.pipeline = make_pipeline(delay=0.0, combos=other_combos())
+    started = post_again(timed)
+    assert started["state"] == "running" and started["started"] is True
+    assert started["quota"] == {"limit": 2, "used": 2, "left": 0}
+    wait_for_job(timed)
+    assert used(timed) == 2 and timed.service.pipeline.state["calls"] == 1
+    done = status_of(timed)
+    assert done["state"] == "done" and done["combos"][0]["total_odds"] == 9.99 and done["combos"] != premiers
+    assert done["quota"] == {"limit": 2, "used": 2, "left": 0}
+    assert "again_error" not in done and "notice" not in done
+    # Les premiers combinés ne sont pas perdus : ils sont dans l'historique du client, avec les nouveaux.
+    assert len(history_files(timed)) == 2
+
+
+def test_de_nouveaux_combines_ne_changent_rien_pour_les_autres_clients(timed):
+    autre = dashboard_client(timed, "autre@exemple.com")
+    assert post_generate(timed, autre)["started"] is True
+    wait_for_job(timed)
+    pour_l_autre = status_of(timed, autre)["combos"]
+    first_generation(timed)
+    timed.clock.advance(minutes=30)
+    timed.service.pipeline = make_pipeline(delay=0.0, combos=other_combos())
+    assert post_again(timed)["started"] is True
+    wait_for_job(timed)
+    assert status_of(timed)["combos"][0]["total_odds"] == 9.99
+    assert status_of(timed, autre)["combos"] == pour_l_autre                       # les siens n'ont pas bougé
+    assert used(timed, "autre@exemple.com") == 1 and used(timed) == 2
+
+
+def test_la_troisieme_generation_est_refusee_sans_rien_perdre(timed):
+    first_generation(timed)
+    timed.clock.advance(minutes=30)
+    assert post_again(timed)["started"] is True
+    wait_for_job(timed)
+    calls = timed.service.pipeline.state["calls"]
+    garde = status_of(timed)
+    assert garde["state"] == "done" and garde["quota"]["left"] == 0               # l'écran n'offre plus que le message
+    refused = post_again(timed)
+    assert refused["state"] == "quota" and refused["quota"] == {"limit": 2, "used": 2, "left": 0}
+    assert refused["message"] == ("Tu as utilisé tes 2 générations d'aujourd'hui. "
+                                  "Reviens demain pour en lancer de nouvelles.")
+    assert timed.service.pipeline.state["calls"] == calls and used(timed) == 2     # aucun appel payant
+    assert status_of(timed)["combos"] == garde["combos"]                          # et les combinés sont toujours là
+
+
+def test_de_nouveaux_combines_en_panne_rendent_le_clic_et_gardent_les_premiers(timed):
+    first_generation(timed)
+    premiers = status_of(timed)["combos"]
+    timed.clock.advance(minutes=30)
+    timed.service.pipeline = make_pipeline(delay=0.0, error=GenerationError("L'IA ne répond pas. Réessaie plus tard."))
+    started = post_again(timed)
+    assert started["started"] is True and started["quota"]["used"] == 2
+    wait_for_job(timed)
+    assert used(timed) == 1                                                       # rien de nouveau n'a été livré : clic rendu
+    garde = status_of(timed)
+    assert garde["state"] == "done" and garde["combos"] == premiers               # les premiers sont toujours là...
+    assert garde["again_error"] == "L'IA ne répond pas. Réessaie plus tard."       # ...et le client sait pourquoi
+    assert garde["quota"] == {"limit": 2, "used": 1, "left": 1}
+    assert len(history_files(timed)) == 1
+    # Pendant la pause qui suit l'échec, un nouveau clic ne relance rien et ne coûte rien.
+    calls = timed.service.pipeline.state["calls"]
+    pause = post_again(timed)
+    assert pause["state"] == "error" and pause["error"] == "L'IA ne répond pas. Réessaie plus tard."
+    assert pause["quota"]["used"] == 1 and used(timed) == 1
+    assert timed.service.pipeline.state["calls"] == calls
+    # Le bouton « Générer » (combinés frais) rend simplement les combinés, avec la même explication.
+    assert post_generate(timed)["again_error"] == garde["again_error"] and used(timed) == 1
+    # La pause passée, plus de message, et une nouvelle demande part.
+    timed.clock.advance(seconds=FAILURE_COOLDOWN_SECONDS + 1)
+    sans = status_of(timed)
+    assert sans["state"] == "done" and "again_error" not in sans and sans["combos"] == premiers
+    timed.service.pipeline = make_pipeline(delay=0.0, combos=other_combos(7.77))
+    assert post_again(timed)["started"] is True
+    wait_for_job(timed)
+    assert status_of(timed)["combos"][0]["total_odds"] == 7.77 and used(timed) == 2
+
+
+def test_de_nouveaux_combines_sans_assez_de_matchs_gardent_les_premiers_avec_un_message(timed):
+    first_generation(timed)
+    premiers = status_of(timed)["combos"]
+    timed.clock.advance(minutes=30)
+    timed.service.pipeline = make_pipeline(delay=0.0, error=NoMatchToday(6, 2, TODAY))
+    assert post_again(timed)["started"] is True
+    wait_for_job(timed)
+    assert used(timed) == 1 and timed.service.generations_today() == 1             # le client et le plafond du jour sont rendus
+    garde = status_of(timed)
+    assert garde["state"] == "done" and garde["combos"] == premiers and "again_error" not in garde
+    assert garde["notice"].startswith("Trop peu de matchs aujourd'hui. Il reste moins de trois matchs")
+    assert "stale" not in garde                                                   # ce n'est pas la limite d'analyses du jour
+    # Le constat du jour tient : la pause passée, un nouveau clic reçoit le verdict, sans rien lancer ni compter.
+    timed.clock.advance(seconds=FAILURE_COOLDOWN_SECONDS + 1)
+    assert "notice" not in status_of(timed)
+    verdict = post_again(timed)
+    assert verdict["state"] == "no_match" and verdict["reason"] == "few" and "started" not in verdict
+    assert used(timed) == 1 and timed.service.pipeline.state["calls"] == 1
+
+
+def test_de_nouveaux_combines_demandes_depuis_deux_onglets_ne_lancent_qu_une_analyse(timed):
+    first_generation(timed)
+    timed.clock.advance(minutes=30)
+    gate = threading.Event()
+
+    def slow(progress=None, variety=None):
+        gate.wait(5)
+        return {"combos": other_combos(), "meta": {"day": TODAY, "day_total": 9, "matches_total": 9}}
+
+    timed.service.pipeline = slow
+    assert post_again(timed)["started"] is True
+    second = post_again(timed)                                                    # l'autre onglet rejoint le travail en cours
+    assert second["state"] == "running" and "started" not in second and used(timed) == 2
+    assert status_of(timed)["state"] == "running"                                 # (et le suivi d'avancement le voit)
+    gate.set()
+    wait_for_job(timed)
+    assert used(timed) == 2 and status_of(timed)["combos"][0]["total_odds"] == 9.99
+
+
+def test_limite_d_analyses_du_jour_atteinte_les_combines_restent_et_le_clic_est_rendu(timed):
+    first_generation(timed)
+    for _ in range(config.MAX_GENERATIONS_PAR_JOUR):
+        timed.service._count_generation()
+    calls = timed.service.pipeline.state["calls"]
+    response = post_again(timed)
+    assert response["state"] == "done" and response["stale"] is True and "limite d'analyses" in response["notice"]
+    assert "started" not in response and used(timed) == 1                          # rien n'est parti, rien n'est compté
+    assert response["quota"] == {"limit": 2, "used": 1, "left": 1}
+    assert timed.service.pipeline.state["calls"] == calls
+
+
+def test_un_compteur_illisible_ne_bloque_pas_non_plus_de_nouveaux_combines(timed, caplog):
+    first_generation(timed)
+    timed.licenses.usage_down = True
+    timed.clock.advance(minutes=30)
+    timed.service.pipeline = make_pipeline(delay=0.0, combos=other_combos())
+    assert "quota" not in status_of(timed)
+    with caplog.at_level(logging.ERROR):
+        started = post_again(timed)
+    assert started["state"] == "running" and started["started"] is True and "quota" not in started
+    wait_for_job(timed)
+    assert status_of(timed)["combos"][0]["total_odds"] == 9.99
+
+
+def test_de_nouveaux_combines_avec_des_combines_expires_se_comportent_comme_la_generation_normale(timed):
+    """Si les combinés ne sont plus frais (page restée ouverte), le bouton « de nouveaux combinés » démarre l'analyse comme
+    le bouton « Générer » : une seule génération comptée."""
+    first_generation(timed)
+    timed.clock.advance(hours=4)
+    timed.service.pipeline = make_pipeline(delay=0.0, combos=other_combos())
+    started = post_again(timed)
+    assert started["started"] is True and started["quota"] == {"limit": 2, "used": 2, "left": 0}
+    wait_for_job(timed)
+    assert used(timed) == 2 and status_of(timed)["combos"][0]["total_odds"] == 9.99
+
 
 
 def test_chaque_client_a_ses_propres_generations(timed):
@@ -833,6 +1029,16 @@ def test_l_espace_annonce_les_generations_du_jour(timed):
     html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ")
     assert "Tu peux lancer 2 générations par jour." in html and 'id="generate-quota"' in html
     assert "matchs du jour" in html and "jusqu’à trois combinés" in html and 'id="no-match"' in html
+
+
+def test_l_espace_contient_le_bloc_de_nouveaux_combines_cache_tant_que_le_script_ne_le_montre_pas(timed):
+    login(timed.client)
+    html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ")
+    assert re.search(r'<div class="regenerate" id="regenerate" hidden>', html)
+    assert re.search(r'<div class="regenerate__confirm" id="regenerate-confirm"[^>]* hidden>', html)
+    assert ">Générer de nouveaux combinés</button>" in html and ">Oui, de nouveaux combinés</button>" in html
+    assert ">Non, garder ceux-ci</button>" in html and "Remplacer ces combinés par de nouveaux ?" in html
+    assert 'id="btn-generate"' in html and ">Générer les combinés</button>" in html      # le bouton de la première génération reste
 
 
 def test_les_reponses_de_generation_ne_sont_pas_mises_en_cache(timed):

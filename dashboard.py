@@ -303,7 +303,8 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
     # ------------------------------------------------------------------
     # Générations : chaque client en a CLIENT_GENERATIONS_PER_DAY par jour (jour UTC). Seul le clic qui démarre vraiment
     # une analyse en consomme une ; afficher des combinés déjà prêts, rejoindre un travail en cours, un jour sans match
-    # ou une analyse qui n'aboutit pas ne coûtent rien au client.
+    # ou une analyse qui n'aboutit pas ne coûtent rien au client. Tant que ses combinés sont frais, le bouton « Générer »
+    # n'est plus là : /api/generate/again est le bouton « Générer de nouveaux combinés » (même compte, même clic rendu).
     # Chaque client a SON travail et SES combinés (generation_service) : tout ce que le service rend ici est celui du client
     # connecté, désigné par son e-mail de session. Rien de ce qu'un autre client a généré n'arrive jusqu'à lui.
     # ------------------------------------------------------------------
@@ -319,20 +320,19 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
         return quota_view(used, config.CLIENT_GENERATIONS_PER_DAY)
 
     def with_quota(state, email):
-        """Ajoute le compteur du client aux états où il sert à l'affichage (le bouton est visible)."""
-        if state.get("state") in ("idle", "error"):
+        """Ajoute le compteur du client aux états où il sert à l'affichage : le bouton « Générer » est visible (« idle »,
+        « error »), ou le bouton « Générer de nouveaux combinés » sous les combinés affichés (« done »)."""
+        if state.get("state") in ("idle", "error", "done"):
             quota = quota_for(email)
             if quota is not None:
                 return {**state, "quota": quota}
         return state
 
-    @app.post("/api/generate")
-    @login_required
-    @ajax_only
-    def api_generate():
+    def start_generation(again):
+        """Clic du client. again : « de nouveaux combinés » alors que les siens sont encore frais (sinon ils lui sont rendus)."""
         email = session.get("email")
         who = web.mask_email(email)
-        current = service.status(email)
+        current = service.status(email, again=again)
         if current["state"] != "idle":
             # Combinés prêts, travail en cours, pause après un échec, pas de championnat aujourd'hui : rien à compter.
             log.info("génération demandée par %s : %s", who, current["state"])
@@ -347,7 +347,7 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
             log.exception("compteur de générations indisponible : analyse autorisée sans être comptée")
             allowed = True
         if not allowed:
-            current = service.status(email)           # entre-temps, un autre clic (de lui) a peut-être déjà tout réglé
+            current = service.status(email, again=again)       # entre-temps, un autre clic (de lui) a peut-être déjà tout réglé
             if current["state"] != "idle":
                 return jsonify(with_quota(current, email))
             log.info("génération refusée à %s : %d sur %d utilisées aujourd'hui", who, used, limit)
@@ -355,21 +355,34 @@ def create_app(lm=None, service=None, history_loader=None, showcase=None, daily=
 
         # `refund` : rend ce clic si l'analyse qu'il lance n'aboutit à aucun combiné (panne, pas de match aujourd'hui).
         refund = (lambda: lm.release_generation(email, day)) if reserved else None
-        response = service.request_generation(client=email, refund=refund)
+        response = service.request_generation(client=email, refund=refund, again=again)
         if reserved and not response.get("started"):
             lm.release_generation(email, day)         # ce clic n'a rien démarré (travail déjà lancé par un autre, plafond...)
             used -= 1
-        if used is not None and response.get("state") != "done":
+        if used is not None:
             response["quota"] = quota_view(used, limit)
-        log.info("génération demandée par %s : %s%s", who, response.get("state"), " (lancée)" if response.get("started") else "")
+        log.info("génération %sdemandée par %s : %s%s", "(de nouveaux combinés) " if again else "", who, response.get("state"),
+                 " (lancée)" if response.get("started") else "")
         return jsonify(response)
+
+    @app.post("/api/generate")
+    @login_required
+    @ajax_only
+    def api_generate():
+        return start_generation(again=False)
+
+    @app.post("/api/generate/again")
+    @login_required
+    @ajax_only
+    def api_generate_again():
+        return start_generation(again=True)
 
     @app.get("/api/generate/status")
     @login_required
     def api_generate_status():
         email = session.get("email")
         state = service.status(email)
-        if state["state"] in ("idle", "error"):
+        if state["state"] in ("idle", "error", "done"):
             quota = quota_for(email)
             if quota is not None:
                 if state["state"] == "idle" and quota["left"] <= 0:
