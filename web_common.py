@@ -458,6 +458,8 @@ def install_templating(app, *, home_url, login_url, conditions_url, pwa=False):
             "league_count": number_word(len(config.LEAGUES)),
             "league_names": join_fr([config.LEAGUE_CARDS[name][0] for name in config.LEAGUES]),
             "league_cards": [config.LEAGUE_CARDS[name] for name in config.LEAGUES],
+            # Le bookmaker dont les cotes s'affichent (voir config.ODDS_BOOKMAKER), ou "" quand aucun n'est choisi.
+            "odds_bookmaker": config.ODDS_BOOKMAKER_LABEL if config.ODDS_BOOKMAKER else "",
             "target_odds": f"{config.TARGET_ODDS:.2f}".replace(".", ","),
             "min_confidence": config.MIN_CONFIDENCE,
             "cache_minutes": config.CACHE_MINUTES,

@@ -32,10 +32,11 @@ Comment les chiffres sont fabriqués (détails dans `probabilities.py` et `combo
 4. Seuls les paris à 65 % ou plus **et payés au moins 1,25** (`MIN_LEG_ODDS`) sont gardés : un pari « presque sûr » à 1,03 ne se
    joue pas, même quand l'IA a raison. Les combinés sont choisis par **probabilité de réussite**, avec un peu de variété
    (championnats, types de paris).
-5. Les **cotes** sont les vraies cotes des bookmakers (médiane) si `ODDS_API_KEY` est définie et que le pari est coté ;
-   sinon elles sont estimées par `(1 − 7 %) / probabilité` et affichées avec un « ≈ » (la probabilité est celle que l'IA a
-   réellement estimée, **avant** le plafond du point 3 : le plafond limite la confiance affichée, il ne rend pas un pari plus
-   payant). Sans clé de cotes, la cote
+5. Les **cotes** sont celles de 1xBet, le bookmaker des clients (voir « Les cotes 1xBet ») : si `ODDS_API_KEY` est définie et que
+   1xBet cote le pari, sa cote s'affiche **sans signe**. Sinon la cote est indicative et porte un « ≈ » : la médiane des autres
+   bookmakers quand ils cotent le pari mais pas 1xBet, ou, quand personne ne le cote, une estimation `(1 − 7 %) / probabilité`
+   (la probabilité est celle que l'IA a réellement estimée, **avant** le plafond du point 3 : le plafond limite la confiance
+   affichée, il ne rend pas un pari plus payant). Sans clé de cotes, la cote
    totale de 2,50 est donc une estimation, pas une cote jouable : le coupon invite le client à la vérifier. Même avec une clé,
    the-odds-api ne cote que le résultat (victoire, double chance) et les totaux de buts du match : les paris « une équipe marque
    plus de 0,5 but », « au moins une équipe marque… », « les deux équipes marquent » et les paris composés gardent toujours leur
@@ -351,6 +352,36 @@ gonflée par les paris à 1,05 ; la chance réelle d'un combiné est d'environ 3
 terme** : le rendement espéré par unité misée reste autour de 0,85 (la marge des bookmakers, avec une IA qui en sait moins que le
 marché, hypothèse prudente). La cote minimale rend les cotes affichées honnêtes ; elle ne rend pas les paris rentables.
 
+## Les cotes 1xBet
+
+Les clients jouent chez 1xBet. Une cote affichée doit donc être celle qu'ils trouveront chez lui, et non une médiane de bookmakers
+européens qui ne se retrouve peut-être nulle part. Depuis la version 2.4.1 :
+
+- **D'où vient la cote** : the-odds-api rend, pour chaque match, les cotes de tous les bookmakers de la région `eu` que nous demandions
+  déjà ; 1xBet y a la clé `onexbet`. On lit simplement son bloc dans la même réponse : aucune requête ni aucun crédit en plus.
+- **Ce qui s'affiche** : si 1xBet cote le pari, **sa cote, sans signe**. Sinon la cote est indicative et porte un « ≈ » : la médiane des
+  autres bookmakers quand ils cotent le pari, ou l'estimation de notre modèle quand personne ne le cote (buts d'une seule équipe, « les
+  deux équipes marquent », paris combinés). Au sein d'un même combiné, chaque pari porte donc l'origine de sa propre cote.
+- **La cote minimale suit** : `MIN_LEG_ODDS` (1,25) s'applique à la cote affichée. Un pari à 1,40 en médiane mais à 1,20 chez 1xBet n'est
+  pas proposé, puisque le client ne pourrait pas le jouer à 1,40.
+- **Le résultat 1/N/2 n'est pris chez 1xBet que s'il cote les trois issues** : une double chance se calcule avec deux cotes du **même**
+  bookmaker, jamais l'une de 1xBet et l'autre d'un autre.
+- **Les totaux de buts** : chaque bookmaker ne renvoie que sa ligne principale (en général 2,5). Les lignes 1,5 et 3,5 sont donc le plus
+  souvent indicatives (« ≈ »), comme les paris sur les buts d'une équipe.
+- **Réglage** : `ODDS_BOOKMAKER` (Render > Environment). Absente : `onexbet`. Une autre clé de la liste de the-odds-api
+  (the-odds-api.com/sports-odds-data/bookmaker-apis.html) la remplace ; `1xbet` est accepté pour `onexbet`. **Vide** : aucun bookmaker de
+  référence, la médiane de tous les bookmakers fait foi, sans « ≈ », comme avant la 2.4.1.
+- **Dans les logs du service client**, à chaque génération : `cotes des N pronostics proposés : X relevées chez 1xBet, Y médiane des
+  bookmakers (≈), Z estimées (≈)`. C'est la mesure de ce que voit le client : si X reste proche de 0, 1xBet n'est pas dans la réponse de
+  the-odds-api (clé, région, ou bookmaker retiré de leur liste). Quand 1xBet ne cote pas du tout un match :
+  `cotes onexbet : <domicile> – <extérieur> (<championnat>) absent chez ce bookmaker : médiane des autres, cotes marquées ≈`.
+- **Les pages publiques ne nomment aucun bookmaker** (accueil, résultats, combiné gratuit, conditions, connexion, site de paiement) : 1xBet
+  n'est cité que dans la légende de l'espace abonné. Un test le garantit. C'est voulu : les règles de publicité et des boutiques
+  d'applications sur les paris sont plus strictes pour une page ouverte à tous.
+- **Limite** : une cote bouge entre le moment où elle est relevée (6 heures au plus : cache de the-odds-api) et celui où le client parie. La
+  légende de l'espace abonné le dit : « vérifie-la chez ton bookmaker avant de parier ». Les résultats publics ne comptent que des pronostics
+  gagnés ou perdus, jamais des gains en argent.
+
 ## Barre de navigation du bas
 
 Le menu des deux sites est une barre collée en bas de l'écran, avec cinq boutons de même largeur (`templates/_tabbar.html` ;
@@ -444,6 +475,7 @@ Ne jamais mettre une clé dans le code ni dans Git.
 | `ANTHROPIC_MODEL` | dashboard | Facultatif. Par défaut `claude-sonnet-5-5` ; si l'API répond « modèle introuvable », `claude-sonnet-5` puis `claude-sonnet-4-5` sont essayés |
 | `SPORTSDB_API_KEY` | dashboard | Ta clé TheSportsDB. Sans elle, la clé de test partagée `123` est utilisée (limitée ; l'ancienne `3` est désactivée) |
 | `ODDS_API_KEY` | dashboard | Facultatif : vraies cotes (the-odds-api.com). Sans elle, cotes estimées |
+| `ODDS_BOOKMAKER` | dashboard | Facultatif. Le bookmaker dont la cote s'affiche sans « ≈ » : 1xBet (`onexbet`) si la variable est absente ; une autre clé the-odds-api la remplace ; **vide** = aucun, la médiane de tous les bookmakers fait foi. Voir « Les cotes 1xBet » |
 | `MIN_LEG_ODDS` | dashboard | Facultatif. Cote minimale d'un pari proposé : 1,25 par défaut, de 1,0 à 2,0 (virgule ou point). Voir « La cote minimale d'un pari » |
 | `AI_SEES_MARKET` | dashboard | Facultatif. `1` : l'IA voit aussi l'avis des bookmakers (cotes médianes, marge retirée) ; sans `ODDS_API_KEY`, aucun effet. Désactivé par défaut (voir « L'analyse de l'IA : un dossier par match ») |
 | `DATA_DIR` | dashboard | Dossier du disque persistant (`/var/data`) : historique des matchs, combinés générés, cache |
@@ -729,8 +761,8 @@ Les journaux sont dans Render > le service > **Logs** (les e-mails y sont masqu�
 | « Pas de championnat aujourd'hui », « Trop peu de matchs aujourd'hui » ou « Les matchs d'aujourd'hui ont déjà commencé » | Pas une panne : les combinés ne portent que sur les matchs du jour (UTC) qui n'ont pas commencé, il en faut 3. Logs du service client : `matchs du jour (AAAA-MM-JJ) : N à venir sur M`. Trêve internationale, ou calendrier de TheSportsDB incomplet : le constat est revérifié toutes les 30 minutes. « Les matchs du jour sont momentanément indisponibles » : un championnat n'a pas répondu chez TheSportsDB, réessayer |
 | « Générer les combinés » reste bloqué plusieurs minutes, puis « Une erreur est survenue pendant la génération » | Logs du service client : chaque étape est consignée (`génération : Recherche des matchs du jour… (5 %)`, puis `Collecte…`, `Analyse…`) ; la dernière dit où ça s'est arrêté. `génération perdue (elle dure trop longtemps) : étape « … »` est suivie de la pile du fil bloqué : sa dernière ligne montre l'appel qui ne revient pas. Le clic du client a été rendu (il peut réessayer). `TheSportsDB : N appel(s) sans réponse au bout de 25 s` : TheSportsDB, ou le réseau du serveur, ne répond plus ; l'étape est abandonnée au bout de 25 s et non de 5 minutes. Si cela se répète sans cause visible, redémarrer le service depuis Render |
 | Un client ne peut plus générer (« Tu as utilisé tes 2 générations ») | Normal : 2 par jour UTC et par client (voir « Matchs du jour et générations des clients »). Lui en rendre une : `DELETE FROM generation_usage WHERE email = '…' AND day = '…'`. Log `compteur de générations illisible` : la base ne répond pas, personne n'est bloqué pour autant |
-| Les cotes sont toutes précédées de « ≈ » | `ODDS_API_KEY` absente, ou quota de the-odds-api atteint (`the-odds-api <sport> : HTTP …` dans les logs) : c'est normal, ce sont des cotes estimées |
-| Certains paris ont un « ≈ » et d'autres non | Normal : seuls le résultat (victoire, double chance) et les totaux de buts ont une vraie cote (voir « Ce que le site promet, et ce qu'il ne promet pas », point 5). Si un de ces paris garde un « ≈ », cherche dans les logs `cotes réelles : <domicile> – <extérieur> (<championnat>) introuvable parmi les N match(s) cotés par the-odds-api` : le match n'est pas encore coté chez eux, ou son nom s'écrit autrement (au-delà des accents et des tirets, déjà ignorés) |
+| Les cotes sont toutes précédées de « ≈ » | `ODDS_API_KEY` absente, ou quota de the-odds-api atteint (`the-odds-api <sport> : HTTP …` dans les logs) : ce sont alors des cotes estimées. Avec une clé qui répond : la ligne `cotes des N pronostics proposés : 0 relevées chez 1xBet…` dit que 1xBet n'est pas dans la réponse de the-odds-api (voir « Les cotes 1xBet ») ; les cotes sont alors la médiane des autres bookmakers, ou des estimations |
+| Certains paris ont un « ≈ » et d'autres non | Normal : sans « ≈ », c'est la cote de 1xBet ; avec « ≈ », elle est indicative. Seuls le résultat (victoire, double chance) et les totaux de buts peuvent avoir la cote de 1xBet (voir « Ce que le site promet, et ce qu'il ne promet pas », point 5 ; les lignes 1,5 et 3,5 n'y sont le plus souvent pas). Si un de ces paris garde un « ≈ », cherche dans les logs `cotes réelles : <domicile> – <extérieur> (<championnat>) introuvable parmi les N match(s) cotés par the-odds-api` : le match n'est pas encore coté chez eux, ou son nom s'écrit autrement (au-delà des accents et des tirets, déjà ignorés) ; ou `cotes onexbet : … absent chez ce bookmaker` : 1xBet ne cote pas ce match |
 | La page « Combiné gratuit » est vide | Normal tant que la génération automatique n'a pas eu lieu avec les matchs d'aujourd'hui (voir « Pages publiques ») : elle seule l'alimente, pas les clics des abonnés ; vérifier que `AUTO_GENERATE_HOUR` est définie. Si la génération automatique du jour existe et que la page reste vide : tous ses combinés ont un match qui commence dans moins de 15 minutes, ou `FREE_PICK_ENABLED=0` |
 | Une page publique (résultats, combiné gratuit) paraît un peu ancienne | Le navigateur les garde 60 secondes (voir « Rapidité des boutons ») : actualiser la page, ou mettre `PUBLIC_PAGE_CACHE_SECONDS=0` sur Render |
 | `/resultats` répond « momentanément indisponibles » | Les fichiers d'historique sont illisibles (disque `DATA_DIR`) : logs du service client, ligne `vitrine : bilan public impossible à calculer`. La page revient seule dès que l'historique est lisible ; un bilan déjà calculé reste affiché malgré une panne |

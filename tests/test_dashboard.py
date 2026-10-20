@@ -807,12 +807,25 @@ def test_l_espace_annonce_que_les_combines_sont_personnels(timed):
     assert "partagés entre tous les abonnés" not in html
 
 
-def test_la_legende_dit_quand_une_cote_est_reelle_ou_estimee(timed):
-    """Le défaut signalé par un client : certaines cotes ont un « ≈ » et d'autres non, sans que la page l'explique."""
+def test_la_legende_dit_quand_une_cote_est_celle_de_1xbet_ou_indicative(timed):
+    """Le défaut signalé par un client : certaines cotes ont un « ≈ » et d'autres non, sans que la page l'explique. Le client
+    joue chez 1xBet : une cote sans « ≈ » est la sienne, un « ≈ » dit qu'elle est indicative."""
+    login(timed.client)
+    html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ").replace(" ", " ")
+    assert "Une cote <strong>sans</strong> « ≈ » est la cote relevée chez 1xBet." in html
+    assert "faute de cote 1xBet pour ce pari" in html and "les deux équipes marquent" in html
+    assert "moyenne d'autres bookmakers" in html.replace("’", "'") and "vérifie-la chez ton bookmaker avant de parier" in html
+    assert "plusieurs bookmakers" not in html
+
+
+def test_la_legende_sans_bookmaker_de_reference_reste_celle_d_avant(timed, monkeypatch):
+    """ODDS_BOOKMAKER vide : la médiane de tous les bookmakers fait foi, la page ne nomme aucun bookmaker."""
+    monkeypatch.setattr(config, "ODDS_BOOKMAKER", "")
     login(timed.client)
     html = timed.client.get("/app").get_data(as_text=True).replace("&nbsp;", " ").replace(" ", " ")
     assert "Une cote <strong>sans</strong> « ≈ » est la cote réelle relevée chez plusieurs bookmakers." in html
     assert "estimée par notre modèle, faute de cote réelle pour ce pari" in html and "les deux équipes marquent" in html
+    assert "1xBet" not in html
 
 
 def test_l_espace_annonce_les_generations_du_jour(timed):

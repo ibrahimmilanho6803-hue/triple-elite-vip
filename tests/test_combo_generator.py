@@ -117,10 +117,15 @@ def test_le_plafond_de_confiance_ne_gonfle_pas_les_cotes(gen):
     assert gardes["V1"]["estimated_odds"] == implied_odds(72, config.ODDS_MARGIN)       # un pari à 72 % : confiance et cote cohérentes
 
 
+def with_reference(odds):
+    """Les cotes d'un match telles que get_real_odds les rend quand le bookmaker de référence (1xBet) cote les mêmes paris, au même prix."""
+    return {**odds, "reference": dict(odds)}
+
+
 def test_la_cote_minimale_vaut_aussi_pour_les_vraies_cotes(gen):
     """Un favori « gagne » à 1,04 chez les bookmakers n'est pas proposé ; les marchés mieux payés du même match le restent."""
     match = make_match(0)
-    real = {"home": 1.04, "draw": 12.0, "away": 30.0, "over_2.5": 1.9, "under_2.5": 1.9}
+    real = with_reference({"home": 1.04, "draw": 12.0, "away": 30.0, "over_2.5": 1.9, "under_2.5": 1.9})
     legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, real)}
     assert "V1" not in legs and legs["TOTAL_2.5+"]["estimated_odds"] == 1.9 and legs["TOTAL_2.5+"]["odds_source"] == "bookmakers"
     gen.min_leg_odds = 1.0
@@ -158,16 +163,27 @@ def test_aucun_combine_ne_contient_un_pari_sous_la_cote_minimale(gen):
 # Vraies cotes (the-odds-api)
 # --------------------------------------------------------------------------
 
+def odds_book(key, home, away, h=None, d=None, a=None, over=None, under=None, line=2.5):
+    """Un bookmaker de the-odds-api (sa clé, son résultat 1/N/2 et ses totaux de buts), avec seulement ce qu'il cote."""
+    markets = []
+    outcomes = [{"name": name, "price": price} for name, price in ((home, h), ("Draw", d), (away, a)) if price is not None]
+    if outcomes:
+        markets.append({"key": "h2h", "outcomes": outcomes})
+    totals = [{"name": name, "price": price, "point": line} for name, price in (("Over", over), ("Under", under))
+              if price is not None]
+    if totals:
+        markets.append({"key": "totals", "outcomes": totals})
+    return {"key": key, "markets": markets}
+
+
 def odds_event(home="Arsenal", away="Chelsea"):
-    def book(h, d, a, over, under):
-        return {"markets": [
-            {"key": "h2h", "outcomes": [{"name": home, "price": h}, {"name": "Draw", "price": d},
-                                          {"name": away, "price": a}]},
-            {"key": "totals", "outcomes": [{"name": "Over", "price": over, "point": 2.5},
-                                             {"name": "Under", "price": under, "point": 2.5}]}]}
+    """Trois bookmakers. Médianes : 1,60 / 4,00 / 5,50, plus de 2,5 à 1,90, moins de 2,5 à 1,90. 1xBet (le deuxième) est à la
+    médiane partout sauf pour le match nul, qu'il paie 4,20."""
+    def book(key, h, d, a, over, under):
+        return odds_book(key, home, away, h, d, a, over, under)
     return {"home_team": home, "away_team": away,
-            "bookmakers": [book(1.50, 4.0, 6.0, 1.80, 2.00), book(1.60, 4.2, 5.5, 1.90, 1.90),
-                           book(1.70, 3.8, 5.0, 2.00, 1.80)]}
+            "bookmakers": [book("pinnacle", 1.50, 4.0, 6.0, 1.80, 2.00), book("onexbet", 1.60, 4.2, 5.5, 1.90, 1.90),
+                           book("bet365", 1.70, 3.8, 5.0, 2.00, 1.80)]}
 
 
 def test_cotes_reelles_mediane_des_bookmakers():
@@ -254,7 +270,7 @@ def test_cote_reelle_d_un_match_dont_le_nom_a_des_accents(gen, monkeypatch):
                                    "over_0_5": 96, "over_1_5": 85, "over_3_5": 40}), "cap": 90}
     gen.min_leg_odds = 1.0              # ce test porte sur la reconnaissance du match : « 1X » cote 1,14, sous la cote minimale
     legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, analysis, real)}
-    assert legs["1X"]["odds_source"] == "bookmakers" and legs["1X"]["estimated_odds"] == round(1 / (1 / 1.6 + 1 / 4.0), 2)
+    assert legs["1X"]["odds_source"] == "bookmakers" and legs["1X"]["estimated_odds"] == round(1 / (1 / 1.6 + 1 / 4.2), 2)
 
 
 def test_match_introuvable_chez_the_odds_api_est_note_dans_les_journaux(gen, monkeypatch, caplog):
@@ -297,6 +313,128 @@ def test_vraies_cotes_utilisees_quand_disponibles(gen, monkeypatch):
     assert legs["V1"]["estimated_odds"] == 1.6 and legs["V1"]["odds_source"] == "bookmakers"
     assert legs["TOTAL_2.5+"]["odds_source"] == "bookmakers"
     assert legs["TOTAL_1.5+"]["odds_source"] == "estimee"
+
+
+# --------------------------------------------------------------------------
+# Cotes du bookmaker de référence (1xBet)
+# --------------------------------------------------------------------------
+
+def test_le_bookmaker_de_reference_est_1xbet_par_defaut():
+    assert config.ODDS_BOOKMAKER == "onexbet" and config.ODDS_BOOKMAKER_LABEL == "1xBet"
+
+
+def test_cotes_d_un_seul_bookmaker():
+    event = odds_event()
+    onexbet = ComboGenerator._bookmaker_odds(event, "onexbet")
+    assert onexbet == {"home": 1.6, "draw": 4.2, "away": 5.5, "over_2.5": 1.9, "under_2.5": 1.9}   # le nul : 4,2, pas la médiane (4,0)
+    assert ComboGenerator._bookmaker_odds(event, "pinnacle")["home"] == 1.5
+    assert ComboGenerator._bookmaker_odds(event, "unibet") == {}                    # ce bookmaker ne cote pas ce match
+    assert ComboGenerator._bookmaker_odds(event, "") == {} and ComboGenerator._bookmaker_odds(event, None) == {}
+    assert ComboGenerator._extract_odds(event)["draw"] == 4.0                      # la médiane, elle, reste celle de tous
+
+
+def test_la_cle_du_bookmaker_se_lit_sans_tenir_compte_des_majuscules():
+    event = {"home_team": "Arsenal", "away_team": "Chelsea",
+             "bookmakers": [odds_book(" OneXBet ", "Arsenal", "Chelsea", 1.6, 4.2, 5.5, 1.9, 1.9)]}
+    assert ComboGenerator._bookmaker_odds(event, "onexbet")["home"] == 1.6
+    sans_cle = odds_book("", "Arsenal", "Chelsea", 1.6, 4.2, 5.5, 1.9, 1.9)
+    del sans_cle["key"]
+    assert ComboGenerator._bookmaker_odds({"home_team": "Arsenal", "away_team": "Chelsea", "bookmakers": [sans_cle]}, "onexbet") == {}
+
+
+def test_le_resultat_d_un_bookmaker_n_est_garde_que_s_il_cote_les_trois_issues():
+    """Une double chance « 1X » calculée avec le « 1 » de 1xBet et le « N » d'un autre bookmaker ne serait chez aucun des deux."""
+    event = {"home_team": "Arsenal", "away_team": "Chelsea", "bookmakers": [
+        odds_book("onexbet", "Arsenal", "Chelsea", h=1.6, a=5.5, over=1.9, under=1.9),          # pas de cote du match nul
+        odds_book("pinnacle", "Arsenal", "Chelsea", 1.5, 4.0, 6.0, 1.8, 2.0)]}
+    assert ComboGenerator._bookmaker_odds(event, "onexbet") == {"over_2.5": 1.9, "under_2.5": 1.9}   # les totaux restent
+    assert ComboGenerator._bookmaker_odds(event, "pinnacle")["draw"] == 4.0
+    assert ComboGenerator._extract_odds(event)["draw"] == 4.0                                   # la médiane garde, elle, le nul de Pinnacle
+
+
+def test_les_cotes_invalides_d_un_bookmaker_sont_ignorees():
+    event = {"home_team": "Arsenal", "away_team": "Chelsea", "bookmakers": [
+        {"key": "onexbet", "markets": [{"key": "h2h", "outcomes": [
+            {"name": "Arsenal", "price": 0}, {"name": "Draw", "price": None}, {"name": "Chelsea", "price": "x"}]}]}]}
+    assert ComboGenerator._bookmaker_odds(event, "onexbet") == {}
+
+
+def test_get_real_odds_ajoute_les_cotes_du_bookmaker_de_reference(gen, monkeypatch):
+    monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
+    monkeypatch.setattr(ComboGenerator, "_load_events", lambda self, sport: [odds_event("Domicile 0", "Extérieur 0")])
+    real = gen.get_real_odds("Domicile 0", "Extérieur 0", "Premier League")
+    assert real["home"] == 1.6 and real["draw"] == 4.0                       # la médiane de tous les bookmakers (inchangée)
+    assert real["reference"] == {"home": 1.6, "draw": 4.2, "away": 5.5, "over_2.5": 1.9, "under_2.5": 1.9}      # et 1xBet
+
+
+def test_bookmaker_de_reference_absent_du_match_est_note_dans_les_journaux(gen, monkeypatch, caplog):
+    """1xBet ne cote pas tous les matchs : la médiane des autres sert alors, ses cotes portent « ≈ », et le journal le dit."""
+    monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
+    event = {"home_team": "Arsenal", "away_team": "Chelsea", "bookmakers": [
+        odds_book("pinnacle", "Arsenal", "Chelsea", 1.5, 4.0, 6.0, 1.8, 2.0),
+        odds_book("bet365", "Arsenal", "Chelsea", 1.7, 3.8, 5.0, 2.0, 1.8)]}
+    monkeypatch.setattr(ComboGenerator, "_load_events", lambda self, sport: [event])
+    with caplog.at_level(logging.INFO, logger="combo_generator"):
+        real = gen.get_real_odds("Arsenal", "Chelsea", "Premier League")
+    assert real and "reference" not in real and real["home"] == 1.6
+    assert "cotes onexbet : Arsenal – Chelsea (Premier League) absent chez ce bookmaker" in caplog.text
+    assert "cle-de-test" not in caplog.text
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(make_match(0), SAFE_ANALYSIS, real)}
+    assert legs["V1"]["odds_source"] == "mediane" and legs["V1"]["estimated_odds"] == 1.6
+
+
+def test_origine_des_cotes_1xbet_puis_mediane_puis_estimation():
+    priced = ComboGenerator._priced
+    real = {"home": 1.6, "draw": 4.0, "away": 5.5, "over_2.5": 1.9, "under_2.5": 1.9,
+            "reference": {"home": 1.55, "draw": 4.1, "away": 5.8, "over_2.5": 1.85}}      # 1xBet ne cote pas « moins de 2,5 »
+    assert priced("V1", real) == (1.55, "bookmakers")                                       # sa cote, pas la médiane
+    assert priced("1X", real) == (round(1 / (1 / 1.55 + 1 / 4.1), 2), "bookmakers")         # calculée avec ses deux cotes
+    assert priced("TOTAL_2.5+", real) == (1.85, "bookmakers")
+    assert priced("TOTAL_2.5-", real) == (1.9, "mediane")                                   # il ne la cote pas : médiane, avec « ≈ »
+    assert priced("TOTAL_1.5+", real) == (None, None)                                       # personne ne la cote : estimation
+    assert priced("BTTS_OUI", real) == (None, None)
+    assert priced("V1", None) == (None, None) and priced("V1", {}) == (None, None)
+    # Sans « reference » (1xBet ne cote pas du tout ce match) : tout vient de la médiane, donc tout porte « ≈ ».
+    assert priced("V1", {"home": 1.6, "draw": 4.0, "away": 5.5}) == (1.6, "mediane")
+
+
+def test_sans_bookmaker_de_reference_la_mediane_fait_foi(gen, monkeypatch, caplog):
+    """ODDS_BOOKMAKER vide : le comportement d'avant la version 2.4.1, la médiane de tous les bookmakers, sans « ≈ »."""
+    monkeypatch.setattr(config, "ODDS_BOOKMAKER", "")
+    monkeypatch.setenv("ODDS_API_KEY", "cle-de-test")
+    monkeypatch.setattr(ComboGenerator, "_load_events", lambda self, sport: [odds_event("Domicile 0", "Extérieur 0")])
+    with caplog.at_level(logging.INFO, logger="combo_generator"):
+        real = gen.get_real_odds("Domicile 0", "Extérieur 0", "Premier League")
+    assert real and "reference" not in real and "absent chez ce bookmaker" not in caplog.text
+    assert ComboGenerator._priced("V1", real) == (1.6, "bookmakers")
+    gen.min_leg_odds = 1.0
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(make_match(0, league="Premier League"), SAFE_ANALYSIS, real)}
+    assert legs["V1"]["odds_source"] == "bookmakers" and legs["V1"]["estimated_odds"] == 1.6
+    assert legs["1X"]["odds_source"] == "bookmakers" and legs["1X"]["estimated_odds"] == round(1 / (1 / 1.6 + 1 / 4.0), 2)   # le nul médian
+    assert legs["TOTAL_1.5+"]["odds_source"] == "estimee"
+
+
+def test_la_cote_de_1xbet_decide_de_la_cote_minimale(gen):
+    """Le client joue chez 1xBet : un pari à 1,40 en médiane mais à 1,20 chez lui n'est pas jouable ; et l'inverse."""
+    match = make_match(0)
+    chez_lui_trop_bas = {"home": 1.40, "draw": 5.0, "away": 9.0, "reference": {"home": 1.20, "draw": 5.5, "away": 10.0}}
+    assert "V1" not in {leg["type"] for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, chez_lui_trop_bas)}
+    chez_lui_assez = {"home": 1.20, "draw": 5.5, "away": 10.0, "reference": {"home": 1.40, "draw": 5.0, "away": 9.0}}
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, chez_lui_assez)}
+    assert legs["V1"]["estimated_odds"] == 1.40 and legs["V1"]["odds_source"] == "bookmakers"
+
+
+def test_un_combine_garde_l_origine_de_chaque_cote(gen):
+    """Dans un même combiné, la cote 1xBet n'a pas de « ≈ », la médiane et l'estimation en ont un : l'origine suit le pari."""
+    match = make_match(0)
+    real = {"home": 1.6, "draw": 4.0, "away": 5.5, "over_2.5": 1.9, "under_2.5": 1.9,
+            "reference": {"over_2.5": 1.85, "under_2.5": 1.95}}                             # 1xBet ne cote que les totaux
+    gen.min_leg_odds = 1.0              # ce test porte sur l'origine des cotes : « plus de 1,5 » (85 %, estimé à 1,09) doit rester visible
+    legs = {leg["type"]: leg for leg in gen.get_predictions_from_analysis(match, SAFE_ANALYSIS, real)}
+    assert legs["TOTAL_2.5+"]["odds_source"] == "bookmakers" and legs["TOTAL_2.5+"]["estimated_odds"] == 1.85
+    assert legs["V1"]["odds_source"] == "mediane" and legs["V1"]["estimated_odds"] == 1.6
+    assert legs["TOTAL_1.5+"]["odds_source"] == "estimee"
+    assert {leg["odds_source"] for leg in legs.values()} == {"bookmakers", "mediane", "estimee"}
 
 
 def test_sans_cle_pas_de_requete(gen, monkeypatch):

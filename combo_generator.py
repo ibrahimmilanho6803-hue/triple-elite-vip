@@ -6,8 +6,10 @@
   qu'il a déjà reçus aujourd'hui (voir variety.py).
 
 Sur les cotes : si ODDS_API_KEY est définie, les cotes des marchés couverts par
-the-odds-api (résultat 1/N/2 et totaux de buts) sont les vraies cotes des bookmakers
-(médiane de tous les bookmakers). Sinon, et pour tous les autres paris, la cote est
+the-odds-api (résultat 1/N/2 et totaux de buts) sont les vraies cotes des bookmakers :
+celles du bookmaker de référence (config.ODDS_BOOKMAKER, 1xBet) quand il cote le pari,
+sinon la médiane de tous les bookmakers, affichée avec un « ≈ » (origine « mediane »).
+Sinon, et pour tous les autres paris, la cote est
 ESTIMÉE à partir de la probabilité, avec une marge de bookmaker (voir
 probabilities.implied_odds) : une cote cohérente avec la confiance affichée, et non
 plus une valeur fixe identique pour tous les matchs. Dans les deux cas, un pronostic dont la
@@ -118,12 +120,14 @@ class ComboGenerator:
         return round(1 / (1 / odds_a + 1 / odds_b), 2)
 
     @staticmethod
-    def _extract_odds(event):
-        """Cotes médianes (sur tous les bookmakers) d'un évènement the-odds-api :
-        home / draw / away, over_<ligne> / under_<ligne>."""
+    def _collect_prices(event, bookmaker_key=None):
+        """{clé: [cotes, une par bookmaker]} d'un évènement the-odds-api : home / draw / away, over_<ligne> / under_<ligne>.
+        `bookmaker_key` : ne lire que ce bookmaker (sa clé chez the-odds-api, par exemple « onexbet »)."""
         home_api, away_api = event.get("home_team"), event.get("away_team")
         prices = defaultdict(list)
         for bookmaker in event.get("bookmakers") or []:
+            if bookmaker_key and str(bookmaker.get("key") or "").strip().lower() != bookmaker_key:
+                continue
             for market in bookmaker.get("markets") or []:
                 key = market.get("key")
                 for outcome in market.get("outcomes") or []:
@@ -143,7 +147,26 @@ class ComboGenerator:
                             continue
                         if name in ("Over", "Under"):
                             prices[f"{name.lower()}_{float(point):g}"].append(price)
-        return {k: round(statistics.median(v), 2) for k, v in prices.items() if v}
+        return prices
+
+    @classmethod
+    def _extract_odds(cls, event):
+        """Cotes médianes (sur tous les bookmakers) d'un évènement the-odds-api :
+        home / draw / away, over_<ligne> / under_<ligne>."""
+        return {k: round(statistics.median(v), 2) for k, v in cls._collect_prices(event).items() if v}
+
+    @classmethod
+    def _bookmaker_odds(cls, event, bookmaker_key):
+        """Cotes d'UN bookmaker (sa clé chez the-odds-api) pour un évènement, de la même forme que _extract_odds mais
+        seulement pour ce qu'il cote ; {} s'il ne cote rien de ce match. Le résultat 1/N/2 n'est gardé que s'il cote les trois
+        issues : une double chance calculée avec deux issues de deux bookmakers différents ne serait chez aucun des deux."""
+        if not bookmaker_key:
+            return {}
+        odds = {k: round(statistics.median(v), 2) for k, v in cls._collect_prices(event, bookmaker_key).items() if v}
+        if not all(key in odds for key in ("home", "draw", "away")):
+            for key in ("home", "draw", "away"):
+                odds.pop(key, None)
+        return odds
 
     def _cache_path(self, sport):
         return os.path.join(ODDS_CACHE_DIR, f"odds_{sport}.json")
@@ -186,7 +209,9 @@ class ComboGenerator:
         return events
 
     def get_real_odds(self, home_team, away_team, league=None):
-        """Vraies cotes (médiane des bookmakers) du match, ou None."""
+        """Vraies cotes du match, ou None : la médiane des bookmakers (home / draw / away, over_<ligne> / under_<ligne>), et, sous
+        la clé "reference", celles du bookmaker de référence (config.ODDS_BOOKMAKER, 1xBet) pour ce qu'il cote. La médiane sert de
+        repli, et d'avis du marché à l'IA (config.AI_SEES_MARKET)."""
         if not _odds_api_key():
             return None
         sport = self.LEAGUE_TO_ODDS_SPORT.get(league)
@@ -202,6 +227,13 @@ class ComboGenerator:
                         and self._same_team(away_team, event.get("away_team"))):
                     odds = self._extract_odds(event)
                     if odds:
+                        if config.ODDS_BOOKMAKER:
+                            reference = self._bookmaker_odds(event, config.ODDS_BOOKMAKER)
+                            if reference:
+                                odds["reference"] = reference
+                            else:
+                                log.info("cotes %s : %s – %s (%s) absent chez ce bookmaker : médiane des autres, cotes marquées ≈",
+                                         config.ODDS_BOOKMAKER, home_team, away_team, league)
                         return odds
         if searched:
             # Pas de réponse de l'API (clé, quota) : déjà signalé par _load_events. Ici elle a répondu, mais sans ce match : il
@@ -234,6 +266,23 @@ class ComboGenerator:
             return price if _valid_price(price) else None
         return None
 
+    @classmethod
+    def _priced(cls, code, real_odds):
+        """(cote, origine) d'un pronostic coté par the-odds-api, ou (None, None) :
+        - « bookmakers » : la cote du bookmaker de référence (config.ODDS_BOOKMAKER) ; quand aucun n'est choisi, la médiane de
+          tous les bookmakers, comme avant la version 2.4.1 ;
+        - « mediane » : la médiane des bookmakers, faute de la cote du bookmaker de référence. Elle est affichée avec un « ≈ » :
+          chez lui, le client peut trouver un autre prix."""
+        if not real_odds:
+            return None, None
+        price = cls._market_price(code, real_odds.get("reference"))
+        if price is not None:
+            return price, "bookmakers"
+        price = cls._market_price(code, real_odds)
+        if price is None:
+            return None, None
+        return price, ("mediane" if config.ODDS_BOOKMAKER else "bookmakers")
+
     # ------------------------------------------------------------------
     # Pronostics d'un match
     # ------------------------------------------------------------------
@@ -258,10 +307,8 @@ class ComboGenerator:
             confidence = int(round(probability))
             if confidence < self.min_confidence:
                 continue
-            real_price = self._market_price(code, real_odds)
-            if real_price is not None:
-                odds, source = real_price, "bookmakers"
-            else:
+            odds, source = self._priced(code, real_odds)
+            if odds is None:
                 odds, source = implied_odds(estimate, config.ODDS_MARGIN), "estimee"
             if odds < self.min_leg_odds:
                 continue                    # trop peu payé pour être proposé, même s'il est presque sûr (voir MIN_LEG_ODDS)

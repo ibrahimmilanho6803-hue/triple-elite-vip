@@ -65,7 +65,7 @@ def main(argv=None):
         print("\n\n".join(format_combo(n, combo) for n, combo in enumerate(combos, 1)))
         meta = result["meta"]
         print(f"\n{meta['matches_analyzed']}/{meta['matches_total']} matchs analysés, "
-              f"{meta['real_odds_legs']}/{meta['total_legs']} cotes réelles (≈ = cote estimée).")
+              f"{meta['real_odds_legs']}/{meta['total_legs']} cotes relevées chez le bookmaker (≈ = cote indicative).")
     if args.save:
         print(f"Ajouté à l'historique : {save_to_history(combos)}", file=sys.stderr)
     return 0

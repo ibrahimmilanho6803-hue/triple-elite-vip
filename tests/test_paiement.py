@@ -87,6 +87,12 @@ def test_page_d_offres_prix_et_formulaire(env):
     assert "Support Telegram" not in page and "style=" not in page and "onclick" not in page
 
 
+def test_le_site_de_paiement_ne_nomme_aucun_bookmaker(env):
+    """Le nom du bookmaker des clients (1xBet) n'est cité que dans l'espace abonné, jamais sur une page ouverte à tous."""
+    for path in ("/paiement", "/", "/page-inconnue"):
+        assert "1xbet" not in text(env.client.get(path)).lower(), path
+
+
 def test_la_page_demande_d_accepter_les_conditions(env):
     page = text(env.client.get("/paiement"))
     assert '<input type="checkbox" id="accept" name="accept" value="1" required>' in page      # jamais cochée d'avance

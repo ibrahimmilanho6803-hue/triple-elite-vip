@@ -168,6 +168,15 @@ def test_un_jour_de_championnat_la_chaine_donne_les_combines_du_jour():
     assert meta["total_legs"] == 6 and meta["real_odds_legs"] == 1 and meta["duration_seconds"] >= 0
 
 
+def test_le_journal_dit_d_ou_viennent_les_cotes_proposees(caplog):
+    """Combien de cotes 1xBet, de médianes (≈) et d'estimations (≈) : c'est ce qui dit combien de « ≈ » le client voit."""
+    legs = [{"match_id": "0", "odds_source": "bookmakers"}, {"match_id": "1", "odds_source": "mediane"},
+            {"match_id": "2", "odds_source": "estimee"}]
+    with caplog.at_level(logging.INFO, logger="pipeline"):
+        run_pipeline(collector=Collector(matchday(6)), generator=Generator([{"predictions": legs, "total_odds": 2.7}]))
+    assert "cotes des 3 pronostics proposés : 1 relevées chez 1xBet, 1 médiane des bookmakers (≈), 1 estimées (≈)" in caplog.text
+
+
 def test_le_total_du_jour_compte_aussi_les_matchs_deja_commences():
     day = matchday(4, total=9)                                       # 9 matchs aujourd'hui, 5 ont commencé, 4 restent
     result = run_pipeline(collector=Collector(day), generator=Generator([combo("0", "1", "2")]))

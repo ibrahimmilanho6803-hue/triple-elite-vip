@@ -56,7 +56,7 @@
       {% if r.lost_unfinished %}
       <p>{{ r.lost_unfinished }} combiné{{ 's' if r.lost_unfinished > 1 }} déjà perdu{{ 's' if r.lost_unfinished > 1 }} {{ 'comptent' if r.lost_unfinished > 1 else 'compte' }} dans le bilan&nbsp;; {{ 'ils s’afficheront' if r.lost_unfinished > 1 else 'il s’affichera' }} ci-dessous quand tous {{ 'leurs' if r.lost_unfinished > 1 else 'ses' }} matchs seront joués.</p>
       {% endif %}
-      <p>Les cotes précédées de «&nbsp;≈&nbsp;» sont estimées par notre modèle, pas celles d’un bookmaker. Ce bilan compte des pronostics gagnés ou perdus, jamais des gains en argent.</p>
+      <p>Les cotes précédées de «&nbsp;≈&nbsp;» sont des estimations, pas la cote relevée chez le bookmaker. Ce bilan compte des pronostics gagnés ou perdus, jamais des gains en argent.</p>
     </div>
 
     {% if r.recent %}

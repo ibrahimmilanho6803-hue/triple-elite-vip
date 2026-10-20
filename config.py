@@ -220,6 +220,28 @@ AUTO_GENERATE_MAX_ATTEMPTS = 3    # tentatives par jour (une panne de l'IA ne do
 # La marge imite celle d'un bookmaker (les cotes réelles sont plus basses que 1/p).
 ODDS_MARGIN = 0.07
 
+# Bookmaker de RÉFÉRENCE : celui chez qui jouent les clients (1xBet). Sa cote s'affiche, sans « ≈ », quand il cote le pari ; sinon
+# la cote reste indicative (médiane des autres bookmakers, ou estimation) et porte le signe « ≈ » : le client sait qu'elle peut
+# différer de ce qu'il verra chez lui. C'est la clé du bookmaker chez the-odds-api (liste : the-odds-api.com/sports-odds-data/
+# bookmaker-apis.html) : « onexbet » est 1xBet, de la région « eu » que nous demandons déjà, donc sans crédit en plus.
+# Variable ODDS_BOOKMAKER (Render > Environment) : absente = 1xBet ; VIDE = aucun bookmaker de référence, la médiane de tous les
+# bookmakers fait foi, sans « ≈ » (le comportement d'avant la version 2.4.1).
+ODDS_BOOKMAKER_ALIASES = {"1xbet": "onexbet"}
+ODDS_BOOKMAKER_LABELS = {"onexbet": "1xBet"}
+
+
+def parse_bookmaker(raw, default):
+    """Clé the-odds-api du bookmaker de référence lue dans l'environnement, en minuscules (« 1xBet » est accepté pour
+    « onexbet »). `default` si la variable est absente, "" si elle est vide (aucun bookmaker de référence)."""
+    if raw is None:
+        return default
+    key = str(raw).strip().lower()
+    return ODDS_BOOKMAKER_ALIASES.get(key, key)
+
+
+ODDS_BOOKMAKER = parse_bookmaker(os.environ.get("ODDS_BOOKMAKER"), "onexbet")
+ODDS_BOOKMAKER_LABEL = ODDS_BOOKMAKER_LABELS.get(ODDS_BOOKMAKER, ODDS_BOOKMAKER)       # nom lu par le client
+
 # --- IA ---
 IA_MODEL = os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5-5"
 # Modèles de repli, essayés dans l'ordre si l'API répond « modèle introuvable » (nom erroné, modèle retiré) :
@@ -302,7 +324,7 @@ PAIEMENT_URL = (os.environ.get("PAIEMENT_BASE_URL") or "https://paiement.triple-
 
 # --- Produit / tarifs ---
 PRODUCT_NAME = "Triple Elite VIP"
-VERSION = "2.4.0"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
+VERSION = "2.4.1"              # affichée par /health : permet de vérifier en ligne quelle version est déployée
 
 # Prix des offres, en FCFA : c'est la monnaie de nos clients et la seule que PayDunya encaisse (Orange Money, MTN, Moov,
 # Wave, carte : leur API ne propose aucune facture en euros). Ces montants sont affichés tels quels sur les pages de vente

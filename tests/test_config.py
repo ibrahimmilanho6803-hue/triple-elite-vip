@@ -69,6 +69,22 @@ def test_cote_minimale_par_pari():
     assert 1.0 <= config.MIN_LEG_ODDS <= 2.0
 
 
+def test_bookmaker_de_reference_lu_dans_un_texte():
+    parse = config.parse_bookmaker
+    assert parse(None, "onexbet") == "onexbet"                                       # absent : le défaut
+    assert parse("", "onexbet") == "" and parse("   ", "onexbet") == ""              # vide : aucun bookmaker de référence
+    assert parse("1xBet", "onexbet") == parse(" 1XBET ", "onexbet") == parse("OneXBet", "onexbet") == "onexbet"
+    assert parse("Pinnacle", "onexbet") == "pinnacle"                                # une autre clé the-odds-api est gardée telle quelle
+
+
+def test_le_bookmaker_de_reference_est_1xbet_par_defaut_et_se_change_par_variable_d_environnement():
+    assert config.ODDS_BOOKMAKER == "onexbet" and config.ODDS_BOOKMAKER_LABEL == "1xBet"      # rien dans l'environnement des tests
+    assert read_config("config.ODDS_BOOKMAKER") == "'onexbet'"
+    assert read_config("config.ODDS_BOOKMAKER", ODDS_BOOKMAKER="1xBet") == "'onexbet'"
+    assert read_config("config.ODDS_BOOKMAKER", ODDS_BOOKMAKER="") == "''"                   # vide : aucun, la médiane fait foi
+    assert read_config("config.ODDS_BOOKMAKER_LABEL", ODDS_BOOKMAKER="pinnacle") == "'pinnacle'"
+
+
 def test_liste_d_adresses_de_test():
     assert config.parse_email_list(" A@x.com, b@y.com;C@Z.com  d@w.org ,, ") == {"a@x.com", "b@y.com", "c@z.com", "d@w.org"}
     assert config.parse_email_list("") == frozenset() and config.parse_email_list(None) == frozenset()

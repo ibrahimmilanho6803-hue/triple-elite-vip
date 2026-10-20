@@ -11,6 +11,7 @@ site), l'estimation de l'IA pour un match est faite une seule fois et réutilis�
 suit le nombre de matchs du jour, pas le nombre de clients. Sans `shared` (main.py, tests), tout est refait à chaque appel."""
 import logging
 import time
+from collections import Counter
 from contextlib import contextmanager
 
 import config
@@ -220,6 +221,12 @@ def run_pipeline(progress=None, collector=None, generator=None, variety=None, sh
             raise GenerationError("Aucun combiné assez fiable avec les matchs d'aujourd'hui. Réessaie demain.")
 
         legs = [leg for combo in combos for leg in combo["predictions"]]
+        origins = Counter(leg["odds_source"] for leg in legs)
+        # Dans les journaux : de quelle origine sont les cotes proposées (voir ComboGenerator._priced) ; c'est ce qui dit combien
+        # de cotes 1xBet la génération a trouvées, donc combien de « ≈ » le client voit.
+        log.info("cotes des %d pronostics proposés : %d relevées chez %s, %d médiane des bookmakers (≈), %d estimées (≈)",
+                 len(legs), origins["bookmakers"], config.ODDS_BOOKMAKER_LABEL or "les bookmakers",
+                 origins["mediane"], origins["estimee"])
         meta = {
             "day": matchday.get("day"),
             "day_total": matchday.get("total", len(upcoming)),     # matchs du jour vus, commencés ou non

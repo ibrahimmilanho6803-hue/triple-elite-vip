@@ -568,6 +568,14 @@ def test_toutes_les_pages_publiques_gardent_l_avertissement_sur_les_paris(site):
         assert "jamais une garantie de résultat" in page and "interdits aux moins de 18 ans" in page, path
 
 
+def test_les_pages_publiques_ne_nomment_aucun_bookmaker(site):
+    """Le nom du bookmaker des clients (1xBet) n'apparaît que dans l'espace abonné, jamais sur les pages ouvertes à tous
+    (publicité, règles des boutiques d'applications) : ici, une cote « ≈ » est seulement dite estimée."""
+    publish_generation(site)
+    for path in ("/", "/resultats", "/gratuit", "/conditions", "/login", "/sitemap.xml", "/page-inconnue"):
+        assert "1xbet" not in raw(site.client.get(path)).lower(), path
+
+
 # --------------------------------------------------------------------------
 # Offres : l'essai de 7 jours est proposé là où le visiteur juge le service
 # --------------------------------------------------------------------------
